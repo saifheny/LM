@@ -1,0 +1,10 @@
+{
+  "name": "مكتبتي التعليمية",
+  "short_name": "مكتبتي",
+  "lang": "ar",
+  "dir": "rtl",
+  "display": "standalone",
+  "start_url": "./",
+  "theme_color": "#12233F",
+  "background_color": "#000000"
+}
