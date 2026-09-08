@@ -1,10 +1,10 @@
 {
-  "name": "مكتبتي التعليمية",
-  "short_name": "مكتبتي",
+  "name": "مكتبة سيف هاني التكنولوجية",
+  "short_name": "مكتبة سيف هاني",
   "lang": "ar",
   "dir": "rtl",
   "display": "standalone",
   "start_url": "./",
-  "theme_color": "#12233F",
-  "background_color": "#000000"
+  "theme_color": "#f8fafd",
+  "background_color": "#ffffff"
 }

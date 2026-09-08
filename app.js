@@ -18,128 +18,264 @@ const db = getDatabase(app);
 const booksRef = ref(db, 'books');
 const settingsRef = ref(db, 'settings');
 
+// ── التصنيفات التكنولوجية والبرمجية (Tech & Programming Categories) ──
 const CATEGORIES = {
-    primary: {
-        name: 'المرحلة الابتدائية',
-        icon: 'fas fa-child-reaching',
-        image: 'https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=800&q=80',
+    programming: {
+        name: 'لغات البرمجة | Programming',
+        shortName: 'برمجة • Code',
+        icon: 'fas fa-code',
         subcategories: {
-            grade_1: 'الصف الأول الابتدائي', grade_2: 'الصف الثاني الابتدائي',
-            grade_3: 'الصف الثالث الابتدائي', grade_4: 'الصف الرابع الابتدائي',
-            grade_5: 'الصف الخامس الابتدائي', grade_6: 'الصف السادس الابتدائي'
+            python: 'بايثون (Python)',
+            javascript: 'جافا سكريبت وتيب سكريبت (JS & TS)',
+            cpp: 'سي بلس بلس (C++)',
+            csharp: 'سي شارب و .NET (C#)',
+            java: 'جافا (Java)',
+            golang: 'جو (Go - Golang)',
+            rust: 'رست (Rust)',
+            php: 'بي إتش بي (PHP & Laravel)'
         }
     },
-    preparatory: {
-        name: 'المرحلة الإعدادية',
-        icon: 'fas fa-school',
-        image: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?w=800&q=80',
+    ai: {
+        name: 'الذكاء الاصطناعي | AI & ML',
+        shortName: 'ذكاء اصطناعي • AI',
+        icon: 'fas fa-brain',
         subcategories: {
-            prep_1: 'الصف الأول الإعدادي', prep_2: 'الصف الثاني الإعدادي', prep_3: 'الصف الثالث الإعدادي'
+            machine_learning: 'تعلم الآلة (Machine Learning)',
+            deep_learning: 'التعلم العميق (Deep Learning)',
+            llms_prompt: 'النماذج التوليدية وهندسة الأوامر (LLMs & Prompts)',
+            computer_vision: 'معالجة اللغات ورؤية الحاسوب (NLP & Vision)'
         }
     },
-    secondary: {
-        name: 'المرحلة الثانوية',
-        icon: 'fas fa-graduation-cap',
-        image: 'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=800&q=80',
+    web: {
+        name: 'تطوير الويب | Web Development',
+        shortName: 'تطوير ويب • Web',
+        icon: 'fas fa-globe',
         subcategories: {
-            secondary_1: 'الصف الأول الثانوي', secondary_2: 'الصف الثاني الثانوي',
-            secondary_3: 'الصف الثالث الثانوي'
+            frontend: 'واجهات أمامية (React & Frontend)',
+            backend: 'خوادم وواجهات برمجية (Backend & APIs)',
+            fullstack: 'تطوير ويب شامل (Full-Stack)'
         }
     },
-    enrichment: {
-        name: 'مواد إثرائية ومراجعات',
-        icon: 'fas fa-lightbulb',
-        image: 'https://images.unsplash.com/photo-1453738773917-9c3eff1db985?w=800&q=80',
+    mobile: {
+        name: 'تطبيقات الموبايل | Mobile Apps',
+        shortName: 'موبايل • Mobile',
+        icon: 'fas fa-mobile-screen-button',
         subcategories: {
-            revision: 'مراجعات نهائية', worksheets: 'أوراق عمل',
-            exams: 'نماذج امتحانات', teachers: 'أدلة المعلم'
+            flutter: 'فلاتر ودارت (Flutter & Dart)',
+            react_native: 'رياكت نيتف (React Native)',
+            android_kotlin: 'أندرويد كوتلن (Kotlin)',
+            ios_swift: 'آيفون وسويفت (Swift)'
+        }
+    },
+    security: {
+        name: 'الأمن السيبراني | Cyber Security',
+        shortName: 'أمن سيبراني • Cyber',
+        icon: 'fas fa-shield-halved',
+        subcategories: {
+            ethical_hacking: 'اختبار الاختراق الأخلاقي (Ethical Hacking)',
+            network_sec: 'أمن الشبكات وحمايتها (Network Security)',
+            web_sec: 'أمان تطبيقات الويب (Web App Security)'
+        }
+    },
+    data: {
+        name: 'علم البيانات | Data Science',
+        shortName: 'علم البيانات • Data',
+        icon: 'fas fa-chart-pie',
+        subcategories: {
+            data_analysis: 'تحليل البيانات وإحصاء (Data Analysis)',
+            databases_sql: 'قواعد البيانات (SQL & Databases)',
+            big_data: 'البيانات الضخمة (Big Data)'
+        }
+    },
+    systems: {
+        name: 'السيرفرات والسحابية | Cloud & DevOps',
+        shortName: 'سيرفرات • DevOps',
+        icon: 'fas fa-server',
+        subcategories: {
+            docker_k8s: 'دوكر وكوبرنيتس (Docker & K8s)',
+            linux_admin: 'أنظمة لينكس وخوادم (Linux Admin)',
+            aws_cloud: 'الحوسبة السحابية (Cloud & AWS)'
         }
     }
 };
 
-const CATEGORY_IMAGES = {
-    primary: ['https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=400&q=75'],
-    preparatory: ['https://images.unsplash.com/photo-1509062522246-3755977927d7?w=400&q=75'],
-    secondary: ['https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=400&q=75'],
-    enrichment: ['https://images.unsplash.com/photo-1453738773917-9c3eff1db985?w=400&q=75']
+// مكتبة الكتب التكنولوجية الافتراضية للمؤلف سيف هاني
+const DEFAULT_TECH_BOOKS = {
+    "tech-book-01": {
+        title: "احترف بايثون من الصفر حتى الاحتراف | Python Masterclass",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "python",
+        icon: "fab fa-python",
+        coverColor: "#2563eb",
+        downloadLink: "https://t.me/ThalostaBot?start=iXNSVeZk",
+        description: "دليل عملي وتطبيقي شامل لاحتراف لغة بايثون من البدايات الأساسية وهياكل البيانات وحتى البرمجة الكائنية المتقدمة وبناء المشاريع والأتمتة.",
+        createdAt: 1787000001000,
+        updatedAt: 1787000001000
+    },
+    "tech-book-02": {
+        title: "دليل جافا سكريبت وتطوير الويب الحديث | Modern JS & TS",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "javascript",
+        icon: "fab fa-js-square",
+        coverColor: "#d97706",
+        downloadLink: "https://t.me/ThalostaBot?start=7ilfeDjT",
+        description: "مرجع متقدم يغطي أحدث معايير JavaScript ES6+، الدوال غير المتزامنة، وهندسة تطبيقات الويب التفاعلية القوية مع TypeScript.",
+        createdAt: 1787000002000,
+        updatedAt: 1787000002000
+    },
+    "tech-book-03": {
+        title: "البرمجة بلغة C++ وهياكل البيانات | C++ & Data Structures",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "cpp",
+        icon: "fas fa-laptop-code",
+        coverColor: "#0284c7",
+        downloadLink: "https://t.me/ThalostaBot?start=ysuvYi3B",
+        description: "المرجع التأسيسي الرائد للبرمجة عالية السرعة والكفاءة بلغة C++، إدارة الذاكرة، الخوارزميات، وهياكل البيانات المتقدمة.",
+        createdAt: 1787000003000,
+        updatedAt: 1787000003000
+    },
+    "tech-book-04": {
+        title: "تطوير التطبيقات بلغة C# و .NET Core | C# Enterprise",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "csharp",
+        icon: "fas fa-code",
+        coverColor: "#7c3aed",
+        downloadLink: "https://t.me/ThalostaBot?start=ZeCYLmZ0",
+        description: "بناء تطبيقات المؤسسات وقواعد البيانات وواجهات RESTful APIs المتطورة والموثوقة باستخدام لغة سي شارب وبيئة .NET Core.",
+        createdAt: 1787000004000,
+        updatedAt: 1787000004000
+    },
+    "tech-book-05": {
+        title: "البرمجة الكائنية الشاملة بلغة Java & Spring Boot",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "java",
+        icon: "fab fa-java",
+        coverColor: "#ea580c",
+        downloadLink: "https://t.me/ThalostaBot?start=xtLm96UV",
+        description: "دليل احترافي لتصميم وهندسة البرمجيات الكائنية OOP بلغة جافا، بناء الخدمات المصغرة Microservices وتطبيقات الويب السحابية.",
+        createdAt: 1787000005000,
+        updatedAt: 1787000005000
+    },
+    "tech-book-06": {
+        title: "تطوير تطبيقات الموبايل بـ Flutter & Dart",
+        author: "سيف هاني",
+        category: "mobile",
+        subcategory: "flutter",
+        icon: "fas fa-mobile-screen-button",
+        coverColor: "#0284c7",
+        downloadLink: "https://t.me/ThalostaBot?start=xtLm96UV",
+        description: "بناء تطبيقات Android و iOS بكود برمجي موحد فائق السرعة، مع تصميم واجهات عصرية وإدارة متقدمة للحالة State Management.",
+        createdAt: 1787000006000,
+        updatedAt: 1787000006000
+    },
+    "tech-book-07": {
+        title: "هندسة الأنظمة والخدمات بلغة Go (Golang)",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "golang",
+        icon: "fab fa-golang",
+        coverColor: "#00c6ff",
+        downloadLink: "https://t.me/ThalostaBot?start=xtLm96UV",
+        description: "إتقان البرمجة المتزامنة Concurrency ومعالجة تدفقات البيانات الضخمة وبناء خوادم الويب فائقة الاستجابة بلغة جو من جوجل.",
+        createdAt: 1787000007000,
+        updatedAt: 1787000007000
+    },
+    "tech-book-08": {
+        title: "البرمجة الآمنة عالية الأداء بلغة Rust",
+        author: "سيف هاني",
+        category: "programming",
+        subcategory: "rust",
+        icon: "fab fa-rust",
+        coverColor: "#dc2626",
+        downloadLink: "https://t.me/ThalostaBot?start=xtLm96UV",
+        description: "بناء برمجيات الأنظمة المعقدة بأمان تام في إدارة الذاكرة دون جامع نفايات Memory Safety، مع سرعة تضاهي لغة C و C++.",
+        createdAt: 1787000008000,
+        updatedAt: 1787000008000
+    },
+    "tech-book-09": {
+        title: "مدخل شامل إلى الذكاء الاصطناعي والتعلم العميق | AI & ML",
+        author: "سيف هاني",
+        category: "ai",
+        subcategory: "deep_learning",
+        icon: "fas fa-brain",
+        coverColor: "#2563eb",
+        downloadLink: "https://t.me/ThalostaBot?start=ExMGDmSE",
+        description: "أسس بناء وتدريب الشبكات العصبية، نماذج التعلم العميق، النماذج اللغوية التوليدية LLMs، وتطبيقات الذكاء الاصطناعي الحديثة.",
+        createdAt: 1787000009000,
+        updatedAt: 1787000009000
+    },
+    "tech-book-10": {
+        title: "الأمن السيبراني واختبار الاختراق الأخلاقي | Ethical Hacking",
+        author: "سيف هاني",
+        category: "security",
+        subcategory: "ethical_hacking",
+        icon: "fas fa-shield-halved",
+        coverColor: "#059669",
+        downloadLink: "https://t.me/ThalostaBot?start=vtQswMzB",
+        description: "اكتشاف الثغرات الأمنية، تحليل حزم الشبكات، اختبار اختراق التطبيقات والأنظمة، وتأمين البنية التحتية المعلوماتية.",
+        createdAt: 1787000010000,
+        updatedAt: 1787000010000
+    },
+    "tech-book-11": {
+        title: "تطوير تطبيقات الويب المتكاملة | Full-Stack Web Development",
+        author: "سيف هاني",
+        category: "web",
+        subcategory: "fullstack",
+        icon: "fas fa-globe",
+        coverColor: "#0284c7",
+        downloadLink: "https://t.me/ThalostaBot?start=aUtPPIuG",
+        description: "بناء تطبيقات ويب إنتاجية كاملة من الصفر مع ربط قواعد البيانات وواجهات برمجة التطبيقات ونشرها على خوادم السحابة.",
+        createdAt: 1787000011000,
+        updatedAt: 1787000011000
+    },
+    "tech-book-12": {
+        title: "علم وتحليل البيانات الضخمة | Data Science & Big Data",
+        author: "سيف هاني",
+        category: "data",
+        subcategory: "data_analysis",
+        icon: "fas fa-chart-pie",
+        coverColor: "#7c3aed",
+        downloadLink: "https://t.me/ThalostaBot?start=ExMGDmSE",
+        description: "تحليل البيانات واستخلاص الرؤى، إنشاء المخططات الإحصائية التفاعلية، ومعالجة مجموعات البيانات الكبيرة واستكشاف الأنماط.",
+        createdAt: 1787000012000,
+        updatedAt: 1787000012000
+    }
 };
 
 const ICON_DATABASE = {
     programming: [
+        'fab fa-python', 'fab fa-js-square', 'fab fa-react', 'fab fa-node-js',
+        'fab fa-java', 'fab fa-php', 'fab fa-rust', 'fab fa-golang',
+        'fab fa-html5', 'fab fa-css3-alt', 'fab fa-vuejs', 'fab fa-docker',
+        'fab fa-git-alt', 'fab fa-github', 'fab fa-linux', 'fab fa-aws',
         'fas fa-code', 'fas fa-laptop-code', 'fas fa-terminal', 'fas fa-database',
-        'fas fa-server', 'fas fa-microchip', 'fas fa-network-wired', 'fas fa-code-branch',
-        'fas fa-bug', 'fas fa-gear', 'fas fa-gears', 'fas fa-file-code',
-        'fab fa-python', 'fab fa-js-square', 'fab fa-html5', 'fab fa-css3-alt',
-        'fab fa-react', 'fab fa-node-js', 'fab fa-java', 'fab fa-php',
-        'fab fa-git-alt', 'fab fa-github', 'fab fa-docker', 'fab fa-linux',
-        'fab fa-android', 'fab fa-apple', 'fab fa-windows', 'fab fa-aws',
-        'fas fa-cloud', 'fas fa-shield-halved', 'fas fa-lock', 'fas fa-key',
-        'fas fa-plug', 'fas fa-cube', 'fas fa-cubes', 'fas fa-sitemap',
-        'fab fa-swift', 'fab fa-rust', 'fab fa-golang', 'fab fa-vuejs'
+        'fas fa-server', 'fas fa-microchip', 'fas fa-network-wired', 'fas fa-code-branch'
     ],
     ai: [
-        'fas fa-robot', 'fas fa-brain', 'fas fa-microchip', 'fas fa-chart-line',
-        'fas fa-chart-bar', 'fas fa-chart-pie', 'fas fa-diagram-project',
-        'fas fa-network-wired', 'fas fa-eye', 'fas fa-language',
-        'fas fa-wand-magic-sparkles', 'fas fa-atom', 'fas fa-dna',
-        'fas fa-microscope', 'fas fa-flask', 'fas fa-calculator',
-        'fas fa-square-root-variable', 'fas fa-infinity', 'fas fa-magnifying-glass-chart',
-        'fas fa-table-cells', 'fas fa-filter', 'fas fa-bolt', 'fas fa-lightbulb',
-        'fas fa-puzzle-piece', 'fas fa-gears', 'fas fa-satellite',
-        'fas fa-satellite-dish', 'fas fa-wave-square', 'fas fa-project-diagram',
-        'fas fa-share-nodes'
+        'fas fa-brain', 'fas fa-robot', 'fas fa-microchip', 'fas fa-diagram-project',
+        'fas fa-chart-line', 'fas fa-chart-bar', 'fas fa-chart-pie', 'fas fa-atom',
+        'fas fa-wand-magic-sparkles', 'fas fa-dna', 'fas fa-infinity', 'fas fa-bolt'
     ],
     books: [
-        'fas fa-book', 'fas fa-book-open', 'fas fa-book-reader',
-        'fas fa-bookmark', 'fas fa-book-atlas', 'fas fa-book-bible',
-        'fas fa-book-journal-whills', 'fas fa-book-medical',
-        'fas fa-book-open-reader', 'fas fa-book-quran',
-        'fas fa-book-skull', 'fas fa-book-tanakh',
-        'fas fa-swatchbook', 'fas fa-scroll', 'fas fa-newspaper',
-        'fas fa-file-lines', 'fas fa-file-pdf', 'fas fa-graduation-cap',
-        'fas fa-chalkboard-user', 'fas fa-school', 'fas fa-pen-fancy',
-        'fas fa-pen-nib', 'fas fa-marker', 'fas fa-highlighter',
-        'fas fa-spell-check', 'fas fa-glasses'
+        'fas fa-book', 'fas fa-book-open', 'fas fa-bookmark', 'fas fa-book-journal-whills',
+        'fas fa-file-pdf', 'fas fa-file-code', 'fas fa-scroll', 'fas fa-swatchbook'
     ],
     science: [
-        'fas fa-atom', 'fas fa-flask', 'fas fa-vial', 'fas fa-microscope',
-        'fas fa-dna', 'fas fa-biohazard', 'fas fa-radiation',
-        'fas fa-temperature-half', 'fas fa-magnet', 'fas fa-virus',
-        'fas fa-bacteria', 'fas fa-disease', 'fas fa-seedling',
-        'fas fa-leaf', 'fas fa-tree', 'fas fa-earth-americas',
-        'fas fa-earth-africa', 'fas fa-meteor', 'fas fa-moon',
-        'fas fa-sun', 'fas fa-star', 'fas fa-rocket',
-        'fas fa-satellite', 'fas fa-shuttle-space', 'fas fa-user-astronaut'
+        'fas fa-atom', 'fas fa-flask', 'fas fa-microscope', 'fas fa-satellite',
+        'fas fa-rocket', 'fas fa-dna', 'fas fa-gear', 'fas fa-gears'
     ],
     design: [
-        'fas fa-palette', 'fas fa-paintbrush', 'fas fa-pen-ruler',
-        'fas fa-bezier-curve', 'fas fa-vector-square', 'fas fa-crop-simple',
-        'fas fa-object-group', 'fas fa-object-ungroup', 'fas fa-layer-group',
-        'fas fa-eye-dropper', 'fas fa-fill-drip', 'fas fa-wand-magic',
-        'fas fa-image', 'fas fa-camera', 'fas fa-film',
-        'fas fa-video', 'fas fa-photo-film', 'fas fa-icons',
-        'fas fa-shapes', 'fas fa-draw-polygon', 'fas fa-ruler-combined',
-        'fas fa-compass-drafting', 'fas fa-swatchbook', 'fab fa-figma',
-        'fab fa-sketch'
+        'fas fa-palette', 'fas fa-paintbrush', 'fas fa-pen-ruler', 'fas fa-bezier-curve',
+        'fas fa-layer-group', 'fas fa-crop-simple', 'fab fa-figma'
     ],
     misc: [
-        'fas fa-heart', 'fas fa-star', 'fas fa-fire', 'fas fa-bolt',
-        'fas fa-crown', 'fas fa-gem', 'fas fa-trophy', 'fas fa-medal',
-        'fas fa-award', 'fas fa-certificate', 'fas fa-shield',
-        'fas fa-flag', 'fas fa-bell', 'fas fa-envelope',
-        'fas fa-comment', 'fas fa-comments', 'fas fa-message',
-        'fas fa-hand-sparkles', 'fas fa-hands-clapping',
-        'fas fa-thumbs-up', 'fas fa-face-smile', 'fas fa-music',
-        'fas fa-headphones', 'fas fa-gamepad', 'fas fa-chess',
-        'fas fa-dice', 'fas fa-puzzle-piece', 'fas fa-compass',
-        'fas fa-map', 'fas fa-location-dot', 'fas fa-house',
-        'fas fa-building', 'fas fa-city', 'fas fa-mountain-sun',
-        'fas fa-water', 'fas fa-umbrella', 'fas fa-snowflake',
-        'fas fa-cloud-sun', 'fas fa-rainbow', 'fas fa-plane',
-        'fas fa-car', 'fas fa-bicycle', 'fas fa-train',
-        'fas fa-ship', 'fas fa-helicopter', 'fas fa-utensils',
-        'fas fa-mug-hot', 'fas fa-cookie', 'fas fa-pizza-slice',
-        'fas fa-burger'
+        'fas fa-shield-halved', 'fas fa-lock', 'fas fa-key', 'fas fa-cloud',
+        'fas fa-star', 'fas fa-fire', 'fas fa-award', 'fas fa-certificate'
     ]
 };
 
@@ -150,6 +286,10 @@ let currentFilter = 'all';
 let selectedBooks = new Set();
 let adminTapCount = 0;
 let adminTapTimer = null;
+
+// Download countdown timer interval
+let downloadTimerInterval = null;
+let currentDownloadBook = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initParticles();
@@ -165,7 +305,6 @@ function loadSettings() {
     onValue(settingsRef, (snapshot) => {
         globalSettings = snapshot.val() || {};
 
-        // Populate admin inputs
         const setVal = (id, key) => {
             const el = document.getElementById(id);
             if (el) el.value = globalSettings[key] || '';
@@ -175,14 +314,13 @@ function loadSettings() {
         setVal('globalRedditLink',   'redditLink');
         setVal('globalGithubLink',   'githubLink');
 
-        // Update all social icon links across the page
         updateSocialLinks();
     });
 }
 
 function updateSocialLinks() {
     const map = [
-        { ids: ['footerFbLink', 'aboutFbLink'], key: 'facebookLink'  },
+        { ids: ['footerFbLink', 'aboutFbLink', 'fbFollowLink'], key: 'facebookLink'  },
         { ids: ['footerLiLink', 'aboutLiLink'], key: 'linkedinLink'  },
         { ids: ['footerRdLink', 'aboutRdLink'], key: 'redditLink'    },
         { ids: ['footerGhLink', 'aboutGhLink'], key: 'githubLink'    },
@@ -198,12 +336,13 @@ function updateSocialLinks() {
     });
 }
 
-// ── Particles ─────────────────────────────────────────────────
+// ── Particles Canvas (Tech Electric Blue Particles) ────────────
 function initParticles() {
     const canvas = document.getElementById('particlesCanvas');
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     let particles = [];
-    const count = 30;
+    const count = 28;
 
     function resize() {
         canvas.width  = Math.min(window.innerWidth, 480);
@@ -216,10 +355,10 @@ function initParticles() {
         particles.push({
             x: Math.random() * canvas.width,
             y: Math.random() * canvas.height,
-            size:   Math.random() * 1.5 + 0.3,
-            speedX: (Math.random() - 0.5) * 0.2,
-            speedY: (Math.random() - 0.5) * 0.2,
-            opacity: Math.random() * 0.25 + 0.05
+            size:   Math.random() * 2.2 + 0.8,
+            speedX: (Math.random() - 0.5) * 0.25,
+            speedY: (Math.random() - 0.5) * 0.25,
+            opacity: Math.random() * 0.35 + 0.1
         });
     }
 
@@ -234,18 +373,20 @@ function initParticles() {
             if (p.y > canvas.height) p.y = 0;
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(255,255,255,${p.opacity})`;
+            ctx.fillStyle = `rgba(37, 99, 235, ${p.opacity})`;
             ctx.fill();
         });
+
+        // Delicate connecting lines
         particles.forEach((p1, i) => {
             particles.slice(i + 1).forEach(p2 => {
                 const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-                if (dist < 100) {
+                if (dist < 90) {
                     ctx.beginPath();
                     ctx.moveTo(p1.x, p1.y);
                     ctx.lineTo(p2.x, p2.y);
-                    ctx.strokeStyle = `rgba(255,255,255,${0.04 * (1 - dist / 100)})`;
-                    ctx.lineWidth = 0.5;
+                    ctx.strokeStyle = `rgba(0, 198, 255, ${0.12 * (1 - dist / 90)})`;
+                    ctx.lineWidth = 0.6;
                     ctx.stroke();
                 }
             });
@@ -303,86 +444,98 @@ function showView(viewId) {
                 : viewId;
 
     const header = document.getElementById('mainHeader');
-    header.style.display = viewId === 'homeView' ? '' : 'none';
+    if (header) {
+        header.style.display = viewId === 'homeView' ? '' : 'none';
+    }
 }
 
 // ── Event Listeners ────────────────────────────────────────────
 function initEventListeners() {
-    // Logo triple-tap → admin
-    document.getElementById('logoArea').addEventListener('click', () => {
-        adminTapCount++;
-        clearTimeout(adminTapTimer);
-        adminTapTimer = setTimeout(() => { adminTapCount = 0; }, 800);
-        if (adminTapCount >= 3) {
-            adminTapCount = 0;
-            window.location.hash = '#admin';
-        }
-    });
-
-    // Search
-    document.getElementById('searchToggle').addEventListener('click', () => {
-        const bar = document.getElementById('searchBar');
-        bar.classList.toggle('hidden');
-        if (!bar.classList.contains('hidden')) {
-            document.getElementById('searchInput').focus();
-        }
-    });
-
-    document.getElementById('searchClose').addEventListener('click', () => {
-        document.getElementById('searchBar').classList.add('hidden');
-        document.getElementById('searchInput').value = '';
-        renderBooks(allBooks);
-    });
-
-    document.getElementById('searchInput').addEventListener('input', (e) => {
-        const query = e.target.value.trim().toLowerCase();
-        if (!query) { renderBooks(allBooks); return; }
-        const filtered = {};
-        Object.entries(allBooks).forEach(([id, book]) => {
-            if (book.title?.toLowerCase().includes(query) ||
-                book.author?.toLowerCase().includes(query) ||
-                book.description?.toLowerCase().includes(query)) {
-                filtered[id] = book;
+    // Logo triple-tap → Admin
+    const logoArea = document.getElementById('logoArea');
+    if (logoArea) {
+        logoArea.addEventListener('click', () => {
+            adminTapCount++;
+            clearTimeout(adminTapTimer);
+            adminTapTimer = setTimeout(() => { adminTapCount = 0; }, 800);
+            if (adminTapCount >= 3) {
+                adminTapCount = 0;
+                window.location.hash = '#admin';
             }
         });
-        renderBooks(filtered);
-    });
+    }
+
+    // Search
+    const searchToggle = document.getElementById('searchToggle');
+    if (searchToggle) {
+        searchToggle.addEventListener('click', () => {
+            const bar = document.getElementById('searchBar');
+            bar.classList.toggle('hidden');
+            if (!bar.classList.contains('hidden')) {
+                document.getElementById('searchInput').focus();
+            }
+        });
+    }
+
+    const searchClose = document.getElementById('searchClose');
+    if (searchClose) {
+        searchClose.addEventListener('click', () => {
+            document.getElementById('searchBar').classList.add('hidden');
+            document.getElementById('searchInput').value = '';
+            renderBooks(allBooks);
+        });
+    }
+
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.trim().toLowerCase();
+            if (!query) { renderBooks(allBooks); return; }
+            const filtered = {};
+            Object.entries(allBooks).forEach(([id, book]) => {
+                if (book.title?.toLowerCase().includes(query) ||
+                    (book.author || 'سيف هاني').toLowerCase().includes(query) ||
+                    book.description?.toLowerCase().includes(query) ||
+                    book.category?.toLowerCase().includes(query) ||
+                    book.subcategory?.toLowerCase().includes(query)) {
+                    filtered[id] = book;
+                }
+            });
+            renderBooks(filtered);
+        });
+    }
 
     // Category filters
-    document.getElementById('categoryFilters').addEventListener('click', (e) => {
-        const pill = e.target.closest('.filter-pill');
-        if (!pill) return;
-        document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
-        pill.classList.add('active');
-        currentFilter = pill.dataset.category;
-        renderBooks(allBooks);
-    });
+    const categoryFilters = document.getElementById('categoryFilters');
+    if (categoryFilters) {
+        categoryFilters.addEventListener('click', (e) => {
+            const pill = e.target.closest('.filter-pill');
+            if (!pill) return;
+            document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            currentFilter = pill.dataset.category;
+            renderBooks(allBooks);
+        });
+    }
 
     // Back buttons
-    document.getElementById('backBtn').addEventListener('click', () => {
-        window.location.hash = '#home';
-    });
-    document.getElementById('adminBackBtn').addEventListener('click', () => {
-        window.location.hash = '#home';
-    });
-    document.getElementById('privacyBackBtn').addEventListener('click', () => {
-        window.history.back();
-    });
-    document.getElementById('howToUseBackBtn').addEventListener('click', () => {
-        window.history.back();
-    });
-    document.getElementById('downloadBackBtn').addEventListener('click', () => {
-        window.history.back();
-    });
-    document.getElementById('downloadDoneClose').addEventListener('click', () => {
-        window.history.back();
-    });
-    document.getElementById('termsBackBtn').addEventListener('click', () => {
-        window.history.back();
-    });
-    document.getElementById('aboutBackBtn').addEventListener('click', () => {
-        window.history.back();
-    });
+    const bindBack = (id, target) => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            btn.addEventListener('click', () => {
+                if (target === 'back') window.history.back();
+                else window.location.hash = target;
+            });
+        }
+    };
+    bindBack('backBtn', '#home');
+    bindBack('adminBackBtn', '#home');
+    bindBack('privacyBackBtn', 'back');
+    bindBack('howToUseBackBtn', 'back');
+    bindBack('downloadBackBtn', 'back');
+    bindBack('downloadDoneClose', 'back');
+    bindBack('termsBackBtn', 'back');
+    bindBack('aboutBackBtn', 'back');
 
     // Admin tabs
     document.querySelectorAll('.admin-tab').forEach(tab => {
@@ -390,16 +543,21 @@ function initEventListeners() {
             document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
             tab.classList.add('active');
-            document.getElementById(tab.dataset.tab + 'Tab').classList.add('active');
+            const content = document.getElementById(tab.dataset.tab + 'Tab');
+            if (content) content.classList.add('active');
             if (tab.dataset.tab === 'myBooks') loadMyBooks();
         });
     });
 
-    // Book form
-    document.getElementById('bookCategory').addEventListener('change', (e) => {
-        updateSubcategories(e.target.value);
-    });
+    // Book form category change
+    const bookCat = document.getElementById('bookCategory');
+    if (bookCat) {
+        bookCat.addEventListener('change', (e) => {
+            updateSubcategories(e.target.value);
+        });
+    }
 
+    // Color Swatches
     document.querySelectorAll('.color-swatch').forEach(swatch => {
         swatch.addEventListener('click', () => {
             document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
@@ -407,24 +565,33 @@ function initEventListeners() {
         });
     });
 
-    document.getElementById('iconPickerTrigger').addEventListener('click', openIconPicker);
-    document.getElementById('iconPickerClose').addEventListener('click', closeIconPicker);
+    // Icon Picker Modal
+    const iconTrigger = document.getElementById('iconPickerTrigger');
+    if (iconTrigger) iconTrigger.addEventListener('click', openIconPicker);
+    const iconClose = document.getElementById('iconPickerClose');
+    if (iconClose) iconClose.addEventListener('click', closeIconPicker);
 
-    document.getElementById('iconCategoryTabs').addEventListener('click', (e) => {
-        const tab = e.target.closest('.icon-cat-tab');
-        if (!tab) return;
-        document.querySelectorAll('.icon-cat-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        renderIcons(tab.dataset.cat);
-    });
+    const iconTabs = document.getElementById('iconCategoryTabs');
+    if (iconTabs) {
+        iconTabs.addEventListener('click', (e) => {
+            const tab = e.target.closest('.icon-cat-tab');
+            if (!tab) return;
+            document.querySelectorAll('.icon-cat-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            renderIcons(tab.dataset.cat);
+        });
+    }
 
-    document.getElementById('iconSearchInput').addEventListener('input', (e) => {
-        const q = e.target.value.toLowerCase();
-        const activeTab = document.querySelector('.icon-cat-tab.active').dataset.cat;
-        renderIcons(activeTab, q);
-    });
+    const iconSearch = document.getElementById('iconSearchInput');
+    if (iconSearch) {
+        iconSearch.addEventListener('input', (e) => {
+            const q = e.target.value.toLowerCase();
+            const activeTab = document.querySelector('.icon-cat-tab.active')?.dataset.cat || 'all';
+            renderIcons(activeTab, q);
+        });
+    }
 
-    // Social link save buttons (all 4)
+    // Social link save buttons
     document.querySelectorAll('.soc-save-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
             const platform = btn.dataset.platform;
@@ -439,18 +606,29 @@ function initEventListeners() {
             const link = document.getElementById(inputId).value.trim();
             try {
                 await set(ref(db, `settings/${platform}`), link);
-                showToast('تم الحفظ بنجاح! ✓', 'success');
+                showToast('تم حفظ الرابط بنجاح! ✓', 'success');
             } catch (err) {
-                showToast('حصل مشكلة: ' + err.message, 'error');
+                showToast('حدث خطأ أثناء الحفظ: ' + err.message, 'error');
             }
         });
     });
 
-    document.getElementById('bookForm').addEventListener('submit', handleBookSubmit);
-    document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll);
-    document.getElementById('deleteSelectedBtn').addEventListener('click', deleteSelected);
+    // Book Form Submit
+    const bookForm = document.getElementById('bookForm');
+    if (bookForm) bookForm.addEventListener('submit', handleBookSubmit);
 
-    document.getElementById('confirmDeleteNo').addEventListener('click', closeConfirmDelete);
+    // My Books controls
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    if (selectAllBtn) selectAllBtn.addEventListener('click', toggleSelectAll);
+
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+    if (deleteSelectedBtn) deleteSelectedBtn.addEventListener('click', deleteSelected);
+
+    const seedTechBooksBtn = document.getElementById('seedTechBooksBtn');
+    if (seedTechBooksBtn) seedTechBooksBtn.addEventListener('click', seedTechBooksToFirebase);
+
+    const confirmNo = document.getElementById('confirmDeleteNo');
+    if (confirmNo) confirmNo.addEventListener('click', closeConfirmDelete);
 
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', () => {
@@ -463,53 +641,91 @@ function initEventListeners() {
 // ── Load Books ─────────────────────────────────────────────────
 function loadBooks() {
     onValue(booksRef, (snapshot) => {
-        allBooks = snapshot.val() || {};
+        const val = snapshot.val();
+        if (val && Object.keys(val).length > 0) {
+            allBooks = val;
+        } else {
+            // Fallback to rich default tech books collection if database is empty
+            allBooks = DEFAULT_TECH_BOOKS;
+        }
+        renderBooks(allBooks);
+    }, (error) => {
+        console.warn('Firebase error, using default tech catalog:', error);
+        allBooks = DEFAULT_TECH_BOOKS;
         renderBooks(allBooks);
     });
 }
 
-function getBookImage(book, index) {
-    const cat    = book.category || 'enrichment';
-    const images = CATEGORY_IMAGES[cat] || CATEGORY_IMAGES.enrichment;
-    return images[index % images.length];
+// ── زر تحديث الفايربيز بكتب التكنولوجيا لسيف هاني ──────────────
+async function seedTechBooksToFirebase() {
+    try {
+        await set(booksRef, DEFAULT_TECH_BOOKS);
+        showToast('تم تحديث الفايربيز بكتب التكنولوجيا لسيف هاني بنجاح! 🚀', 'success');
+        loadMyBooks();
+    } catch (err) {
+        showToast('حدث خطأ في تحديث قاعدة البيانات: ' + err.message, 'error');
+    }
 }
 
-// ── Render Books ───────────────────────────────────────────────
+// ── Render Books (تصميم الكتب الحقيقية ثلاثية الأبعاد) ─────────
 function renderBooks(books) {
     const grid  = document.getElementById('booksGrid');
     const empty = document.getElementById('emptyState');
+    if (!grid) return;
     grid.innerHTML = '';
 
     let filtered = Object.entries(books);
     if (currentFilter !== 'all') {
-        filtered = filtered.filter(([_, b]) => b.category === currentFilter);
+        filtered = filtered.filter(([_, b]) => {
+            // Support modern tech categories
+            return b.category === currentFilter;
+        });
     }
 
     if (filtered.length === 0) {
-        empty.classList.remove('hidden');
+        if (empty) empty.classList.remove('hidden');
         return;
     }
-    empty.classList.add('hidden');
+    if (empty) empty.classList.add('hidden');
 
     filtered.forEach(([id, book], index) => {
         const card = document.createElement('div');
         card.className = 'book-card';
-        card.style.animationDelay = `${index * 0.06}s`;
+        card.style.animationDelay = `${index * 0.05}s`;
         card.addEventListener('click', () => {
             window.location.hash = `#book/${id}`;
         });
 
-        const catName    = CATEGORIES[book.category]?.name || book.category;
-        const coverColor = book.coverColor || '#6C5CE7';
-        const bgImage    = getBookImage(book, index);
+        const catData    = CATEGORIES[book.category] || { shortName: 'برمجة • Tech', icon: 'fas fa-laptop-code' };
+        const catName    = catData.shortName || book.category;
+        const coverColor = book.coverColor || '#2563eb';
+        const authorName = book.author || 'سيف هاني';
+        const bookIcon   = book.icon || catData.icon || 'fab fa-python';
 
+        // تصميم الغلاف الحقيقي مع كعب الكتاب وسمك الصفحات وشعار لغة البرمجة والمؤلف سيف هاني
         card.innerHTML = `
-            <div class="book-cover" style="background: linear-gradient(135deg, ${coverColor}, ${adjustColor(coverColor, -30)})">
-                <div class="book-cover-image" style="background-image: url('${bgImage}')"></div>
-                <span class="book-cover-category">${catName}</span>
-                <i class="${book.icon || 'fas fa-book'} book-cover-icon"></i>
-                <span class="book-cover-title">${book.title}</span>
-                ${book.author ? `<span class="book-card-author">${book.author}</span>` : ''}
+            <div class="book-card-edge"></div>
+            <div class="real-book" style="background: linear-gradient(145deg, ${coverColor} 0%, ${adjustColor(coverColor, -35)} 100%)">
+                <div class="book-cover-gloss"></div>
+                
+                <div class="book-cover-top">
+                    <span class="book-tag-pill">${catName}</span>
+                    <span class="book-format-badge">PDF</span>
+                </div>
+
+                <div class="book-avatar-center">
+                    <div class="book-tech-avatar" style="color: ${coverColor}">
+                        <i class="${bookIcon}"></i>
+                    </div>
+                </div>
+
+                <div class="book-cover-bottom">
+                    <h3 class="book-card-title">${book.title}</h3>
+                    <div class="book-author-badge">
+                        <i class="fas fa-user-pen"></i>
+                        <span>${authorName}</span>
+                    </div>
+                </div>
             </div>
         `;
         grid.appendChild(card);
@@ -520,54 +736,62 @@ function renderBooks(books) {
 function showBookDetail(bookId) {
     showView('bookDetailView');
     const content = document.getElementById('bookDetailContent');
+    if (!content) return;
 
-    const book = allBooks[bookId];
+    const book = allBooks[bookId] || DEFAULT_TECH_BOOKS[bookId];
     if (!book) {
         content.innerHTML = `
             <div class="empty-state">
                 <i class="fas fa-exclamation-circle empty-icon"></i>
-                <p>الكتاب ده مش موجود</p>
+                <p>الكتاب ده مش موجود في المكتبة</p>
             </div>
         `;
         return;
     }
 
-    const catName    = CATEGORIES[book.category]?.name || book.category;
-    const subCatName = CATEGORIES[book.category]?.subcategories?.[book.subcategory] || book.subcategory || '';
-    const coverColor = book.coverColor || '#6C5CE7';
+    const catData    = CATEGORIES[book.category] || { name: 'كتب البرمجة والتكنولوجيا', icon: 'fas fa-code' };
+    const catName    = catData.name || book.category;
+    const subCatName = catData.subcategories?.[book.subcategory] || book.subcategory || '';
+    const coverColor = book.coverColor || '#2563eb';
     const siteUrl    = window.location.origin + window.location.pathname;
     const bookLink   = `${siteUrl}#book/${bookId}`;
-    const bgImage    = CATEGORIES[book.category]?.image || CATEGORY_IMAGES.enrichment[0];
+    const authorName = book.author || 'سيف هاني';
+    const bookIcon   = book.icon || 'fab fa-python';
 
     content.innerHTML = `
         <div class="book-detail-3d">
             <div class="book-3d-wrapper">
-                <div class="book-3d-front" style="background: linear-gradient(135deg, ${coverColor}, ${adjustColor(coverColor, -40)})">
-                    <div class="book-3d-bg-image" style="background-image: url('${bgImage}')"></div>
-                    <div class="book-3d-overlay"></div>
-                    <i class="${book.icon || 'fas fa-book'} book-3d-icon"></i>
+                <div class="book-3d-front" style="background: linear-gradient(135deg, ${coverColor} 0%, ${adjustColor(coverColor, -40)} 100%)">
+                    <div class="book-cover-gloss"></div>
+                    <div class="book-3d-icon">
+                        <i class="${bookIcon}"></i>
+                    </div>
                     <span class="book-3d-title">${book.title}</span>
+                    <div class="book-author-badge" style="margin-bottom: 8px;">
+                        <i class="fas fa-user-pen"></i>
+                        <span>${authorName}</span>
+                    </div>
                 </div>
-                <div class="book-3d-side" style="background: ${adjustColor(coverColor, -50)}"></div>
+                <div class="book-3d-side" style="background: ${adjustColor(coverColor, -55)}"></div>
             </div>
         </div>
         <div class="book-detail-info">
             <h2 class="book-detail-title animate-text">${book.title}</h2>
-            ${book.author ? `
-                <div class="book-detail-author animate-text delay-1">
-                    <i class="fas fa-user-pen"></i> ${book.author}
-                </div>
-            ` : ''}
+            <div class="book-detail-author animate-text delay-1">
+                <i class="fas fa-user-pen"></i>
+                <span>المؤلف: ${authorName}</span>
+            </div>
             <div class="book-detail-meta animate-text delay-2">
                 <span class="meta-tag"><i class="fas fa-folder"></i> ${catName}</span>
                 ${subCatName ? `<span class="meta-tag"><i class="fas fa-tag"></i> ${subCatName}</span>` : ''}
+                <span class="meta-tag"><i class="fas fa-file-pdf"></i> نسخة إلكترونية PDF أصلية</span>
             </div>
             ${book.description ? `
                 <div class="book-detail-desc animate-text delay-2">${book.description}</div>
             ` : ''}
             <div class="book-detail-actions">
                 <button class="action-btn download-action-btn" id="downloadBookBtn">
-                    <i class="fas fa-download"></i> تحميل
+                    <i class="fas fa-cloud-arrow-down"></i> تحميل الكتاب PDF
                 </button>
                 <button class="action-btn share-action-btn" id="shareBookBtn">
                     <i class="fas fa-share-nodes"></i> مشاركة
@@ -575,7 +799,7 @@ function showBookDetail(bookId) {
             </div>
             <div class="book-detail-unique-link">
                 <input type="text" readonly value="${bookLink}" id="bookUniqueLink">
-                <button id="copyLinkBtn"><i class="fas fa-copy"></i> نسخ</button>
+                <button id="copyLinkBtn"><i class="fas fa-copy"></i> نسخ الرابط</button>
             </div>
         </div>
     `;
@@ -592,18 +816,19 @@ function showBookDetail(bookId) {
         const input = document.getElementById('bookUniqueLink');
         input.select();
         navigator.clipboard.writeText(input.value).then(() => {
-            showToast('تم نسخ اللينك!', 'success');
+            showToast('تم نسخ الرابط بنجاح! ✓', 'success');
         }).catch(() => {
             document.execCommand('copy');
-            showToast('تم نسخ اللينك!', 'success');
+            showToast('تم نسخ الرابط بنجاح! ✓', 'success');
         });
     });
 }
 
 function shareBook(book, link) {
+    const authorName = book.author || 'سيف هاني';
     const shareData = {
         title: book.title,
-        text: `📚 ${book.title}${book.author ? ' - ' + book.author : ''}\nحمّل الكتاب من هنا:`,
+        text: `📚 ${book.title} - المؤلف: ${authorName}\nاحصل على نسختك من مكتبة سيف هاني التكنولوجية:`,
         url: link
     };
     if (navigator.share) {
@@ -612,33 +837,14 @@ function shareBook(book, link) {
         navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`).then(() => {
             showToast('تم نسخ رابط المشاركة!', 'success');
         }).catch(() => {
-            showToast('مقدرش أنسخ اللينك', 'error');
+            showToast('تعذر نسخ الرابط', 'error');
         });
     }
 }
 
-// ── Download Flow ──────────────────────────────────────────────
-let currentDownloadBook = null;
-
-/**
- * Helper: show a specific download step and hide all others.
- * Manages both the `active` class (CSS display toggle) and
- * the `hidden` utility class simultaneously.
- */
-function showDownloadStep(stepId) {
-    document.querySelectorAll('.download-step').forEach(s => {
-        s.classList.remove('active');
-        s.classList.add('hidden');
-    });
-    const step = document.getElementById(stepId);
-    if (step) {
-        step.classList.remove('hidden');
-        step.classList.add('active');
-    }
-}
-
+// ── نظام التحميل الذكي مع مؤقت متابعة فيسبوك (Smart Download & FB Timer) ──
 function openDownloadPage(bookId) {
-    const book = allBooks[bookId];
+    const book = allBooks[bookId] || DEFAULT_TECH_BOOKS[bookId];
     if (!book) {
         window.location.hash = '#home';
         return;
@@ -647,28 +853,110 @@ function openDownloadPage(bookId) {
     showView('downloadView');
     currentDownloadBook = book;
 
-    // Set Facebook follow link
-    const fbLink = globalSettings.facebookLink || '#';
-    const fbBtn  = document.getElementById('fbFollowLink');
-    fbBtn.href   = fbLink;
+    // إعداد معلومات الكتاب في رأس بطاقة التحميل
+    const thumb = document.getElementById('downloadBookThumb');
+    if (thumb) {
+        thumb.style.background = book.coverColor || '#2563eb';
+    }
+    const icon = document.getElementById('downloadBookIcon');
+    if (icon) {
+        icon.className = book.icon || 'fab fa-python';
+    }
+    const title = document.getElementById('downloadBookTitle');
+    if (title) {
+        title.textContent = book.title;
+    }
+    const author = document.getElementById('downloadBookAuthor');
+    if (author) {
+        author.innerHTML = `<i class="fas fa-user-pen"></i> ${book.author || 'سيف هاني'}`;
+    }
 
-    const confirm = document.getElementById('followConfirm');
-    const unlockBtn = document.getElementById('unlockDownloadBtn');
-    confirm.checked = false;
-    unlockBtn.disabled = true;
-    showDownloadStep('downloadStep1');
+    // إعداد رابط فيسبوك الرسمي
+    const fbLink = globalSettings.facebookLink || 'https://www.facebook.com/share/1LjJ8MRs2Q/';
+    const fbFollowBtn = document.getElementById('fbFollowLink');
+    if (fbFollowBtn) {
+        fbFollowBtn.href = fbLink;
+    }
 
-    confirm.onchange = () => { unlockBtn.disabled = !confirm.checked; };
-    unlockBtn.onclick = () => {
-        if (!confirm.checked || !currentDownloadBook?.downloadLink) return;
-        window.open(currentDownloadBook.downloadLink, '_blank', 'noopener');
-        showDownloadStep('downloadStep3');
-    };
+    // إظهار خطوة الانتظار والمؤقت وإخفاء زر التنزيل في البداية
+    const waitingStep = document.getElementById('downloadWaitingStep');
+    const readyStep = document.getElementById('downloadReadyStep');
+    if (waitingStep) {
+        waitingStep.classList.remove('hidden');
+        waitingStep.classList.add('active');
+    }
+    if (readyStep) {
+        readyStep.classList.add('hidden');
+        readyStep.classList.remove('active');
+    }
+
+    // تجهيز رابط زر التحميل فائق الجاذبية
+    const directBtn = document.getElementById('directDownloadBtn');
+    if (directBtn) {
+        directBtn.href = currentDownloadBook.downloadLink || '#';
+        directBtn.onclick = (e) => {
+            if (!currentDownloadBook.downloadLink) {
+                e.preventDefault();
+                showToast('رابط التحميل غير متاح حالياً', 'error');
+                return;
+            }
+            showToast('جاري بدء التحميل الآن... نتمنى لك قراءة ممتعة! 📖', 'success');
+        };
+    }
+
+    // بدء المؤقت التنازلي التلقائي (8 ثوانٍ)
+    startDownloadCountdown(8);
+}
+
+function startDownloadCountdown(totalSeconds = 8) {
+    clearInterval(downloadTimerInterval);
+
+    let remaining = totalSeconds;
+    const timerNum = document.getElementById('countdownTimer');
+    const ring = document.getElementById('countdownRing');
+    const totalCircumference = 264; // 2 * PI * 42
+
+    if (timerNum) timerNum.textContent = remaining;
+    if (ring) {
+        ring.style.strokeDasharray = totalCircumference;
+        ring.style.strokeDashoffset = 0;
+    }
+
+    downloadTimerInterval = setInterval(() => {
+        remaining--;
+        if (timerNum) timerNum.textContent = remaining;
+
+        if (ring) {
+            const offset = totalCircumference * (1 - remaining / totalSeconds);
+            ring.style.strokeDashoffset = offset;
+        }
+
+        if (remaining <= 0) {
+            clearInterval(downloadTimerInterval);
+            unlockDownloadButton();
+        }
+    }, 1000);
+}
+
+function unlockDownloadButton() {
+    const waitingStep = document.getElementById('downloadWaitingStep');
+    const readyStep = document.getElementById('downloadReadyStep');
+
+    if (waitingStep) {
+        waitingStep.classList.add('hidden');
+        waitingStep.classList.remove('active');
+    }
+    if (readyStep) {
+        readyStep.classList.remove('hidden');
+        readyStep.classList.add('active');
+    }
+    showToast('تم فتح رابط التحميل المباشر بنجاح! ✓', 'success');
 }
 
 // ── Admin Helpers ──────────────────────────────────────────────
 function updateSubcategories(category) {
     const subSelect = document.getElementById('bookSubcategory');
+    if (!subSelect) return;
     subSelect.innerHTML = '<option value="">اختار التصنيف الفرعي</option>';
     if (CATEGORIES[category]) {
         Object.entries(CATEGORIES[category].subcategories).forEach(([key, name]) => {
@@ -681,23 +969,28 @@ function updateSubcategories(category) {
 }
 
 function openIconPicker() {
-    document.getElementById('iconPickerModal').classList.remove('hidden');
+    const modal = document.getElementById('iconPickerModal');
+    if (modal) modal.classList.remove('hidden');
     document.body.classList.add('modal-open');
-    document.getElementById('iconSearchInput').value = '';
+    const search = document.getElementById('iconSearchInput');
+    if (search) search.value = '';
     document.querySelectorAll('.icon-cat-tab').forEach(t => t.classList.remove('active'));
-    document.querySelector('.icon-cat-tab[data-cat="all"]').classList.add('active');
+    const allTab = document.querySelector('.icon-cat-tab[data-cat="all"]');
+    if (allTab) allTab.classList.add('active');
     renderIcons('all');
 }
 
 function closeIconPicker() {
-    document.getElementById('iconPickerModal').classList.add('hidden');
+    const modal = document.getElementById('iconPickerModal');
+    if (modal) modal.classList.add('hidden');
     document.body.classList.remove('modal-open');
 }
 
 function renderIcons(category, searchQuery = '') {
     const grid = document.getElementById('iconGrid');
+    if (!grid) return;
     grid.innerHTML = '';
-    const currentIcon = document.getElementById('bookIcon').value;
+    const currentIcon = document.getElementById('bookIcon')?.value;
 
     let icons = [];
     if (category === 'all') {
@@ -729,18 +1022,18 @@ function renderIcons(category, searchQuery = '') {
 async function handleBookSubmit(e) {
     e.preventDefault();
 
-    const editId      = document.getElementById('editBookId').value;
-    const title       = document.getElementById('bookTitle').value.trim();
-    const author      = document.getElementById('bookAuthor').value.trim();
-    const description = document.getElementById('bookDescription').value.trim();
+    const editId       = document.getElementById('editBookId').value;
+    const title        = document.getElementById('bookTitle').value.trim();
+    const author       = document.getElementById('bookAuthor').value.trim() || 'سيف هاني';
+    const description  = document.getElementById('bookDescription').value.trim();
     const downloadLink = document.getElementById('bookLink').value.trim();
-    const category    = document.getElementById('bookCategory').value;
-    const subcategory = document.getElementById('bookSubcategory').value;
-    const icon        = document.getElementById('bookIcon').value;
-    const coverColor  = document.querySelector('.color-swatch.active')?.dataset.color || '#6C5CE7';
+    const category     = document.getElementById('bookCategory').value;
+    const subcategory  = document.getElementById('bookSubcategory').value;
+    const icon         = document.getElementById('bookIcon').value || 'fab fa-python';
+    const coverColor   = document.querySelector('.color-swatch.active')?.dataset.color || '#2563eb';
 
     if (!title || !downloadLink || !category) {
-        showToast('كمّل البيانات المطلوبة', 'error');
+        showToast('يرجى إكمال البيانات المطلوبة', 'error');
         return;
     }
 
@@ -762,47 +1055,50 @@ async function handleBookSubmit(e) {
             showToast('تم إضافة الكتاب بنجاح!', 'success');
         }
         document.getElementById('bookForm').reset();
+        document.getElementById('bookAuthor').value = 'سيف هاني';
         document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
-        document.querySelector('.color-swatch[data-color="#6C5CE7"]').classList.add('active');
-        document.getElementById('bookIcon').value = 'fas fa-book';
-        document.getElementById('selectedIconPreview').className = 'fas fa-book';
+        document.querySelector('.color-swatch[data-color="#2563eb"]')?.classList.add('active');
+        document.getElementById('bookIcon').value = 'fab fa-python';
+        document.getElementById('selectedIconPreview').className = 'fab fa-python';
         document.getElementById('bookSubcategory').innerHTML = '<option value="">اختار التصنيف الفرعي</option>';
     } catch (err) {
-        showToast('حصل مشكلة: ' + err.message, 'error');
+        showToast('حدث خطأ: ' + err.message, 'error');
     }
 }
 
-// ── My Books (admin) ───────────────────────────────────────────
+// ── My Books (Admin Tab) ───────────────────────────────────────
 function loadMyBooks() {
     const list  = document.getElementById('myBooksList');
     const empty = document.getElementById('myBooksEmpty');
+    if (!list) return;
     list.innerHTML = '';
     selectedBooks.clear();
     updateDeleteBtn();
 
     const entries = Object.entries(allBooks);
     if (entries.length === 0) {
-        empty.classList.remove('hidden');
+        if (empty) empty.classList.remove('hidden');
         return;
     }
-    empty.classList.add('hidden');
+    if (empty) empty.classList.add('hidden');
 
     entries.forEach(([id, book], index) => {
         const item = document.createElement('div');
         item.className = 'my-book-item';
-        item.style.animationDelay = `${index * 0.05}s`;
+        item.style.animationDelay = `${index * 0.04}s`;
         item.dataset.id = id;
 
-        const catName = CATEGORIES[book.category]?.name || book.category;
+        const catData = CATEGORIES[book.category] || { name: book.category || 'عام' };
+        const catName = catData.name || book.category;
 
         item.innerHTML = `
             <div class="my-book-checkbox" data-id="${id}"></div>
-            <div class="my-book-icon" style="background: ${book.coverColor || '#6C5CE7'}">
-                <i class="${book.icon || 'fas fa-book'}"></i>
+            <div class="my-book-icon" style="background: ${book.coverColor || '#2563eb'}">
+                <i class="${book.icon || 'fab fa-python'}"></i>
             </div>
             <div class="my-book-info">
                 <div class="my-book-title">${book.title}</div>
-                <div class="my-book-category">${catName}</div>
+                <div class="my-book-category">${catName} • ${book.author || 'سيف هاني'}</div>
             </div>
             <div class="my-book-actions">
                 <button class="my-book-action-btn edit" data-id="${id}" title="تعديل">
@@ -846,7 +1142,7 @@ function toggleBookSelect(id, item) {
 }
 
 function toggleSelectAll() {
-    const items      = document.querySelectorAll('.my-book-item');
+    const items       = document.querySelectorAll('.my-book-item');
     const allSelected = selectedBooks.size === items.length;
     items.forEach(item => {
         const id       = item.dataset.id;
@@ -866,9 +1162,10 @@ function toggleSelectAll() {
 
 function updateDeleteBtn() {
     const btn = document.getElementById('deleteSelectedBtn');
+    if (!btn) return;
     if (selectedBooks.size > 0) {
         btn.classList.remove('hidden');
-        btn.innerHTML = `<i class="fas fa-trash-alt"></i> حذف (${selectedBooks.size})`;
+        btn.innerHTML = `<i class="fas fa-trash-alt"></i> حذف المحدد (${selectedBooks.size})`;
     } else {
         btn.classList.add('hidden');
     }
@@ -882,27 +1179,27 @@ function deleteSelected() {
 function editBook(id, book) {
     document.getElementById('editBookId').value      = id;
     document.getElementById('bookTitle').value       = book.title       || '';
-    document.getElementById('bookAuthor').value      = book.author      || '';
+    document.getElementById('bookAuthor').value      = book.author      || 'سيف هاني';
     document.getElementById('bookDescription').value = book.description || '';
     document.getElementById('bookLink').value        = book.downloadLink || '';
-    document.getElementById('bookCategory').value   = book.category    || '';
+    document.getElementById('bookCategory').value    = book.category    || '';
     updateSubcategories(book.category);
     document.getElementById('bookSubcategory').value = book.subcategory || '';
-    document.getElementById('bookIcon').value        = book.icon        || 'fas fa-book';
-    document.getElementById('selectedIconPreview').className = book.icon || 'fas fa-book';
+    document.getElementById('bookIcon').value        = book.icon        || 'fab fa-python';
+    document.getElementById('selectedIconPreview').className = book.icon || 'fab fa-python';
 
     document.querySelectorAll('.color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color === (book.coverColor || '#6C5CE7'));
+        s.classList.toggle('active', s.dataset.color === (book.coverColor || '#2563eb'));
     });
 
-    document.getElementById('submitBtn').innerHTML = '<i class="fas fa-pen"></i> تعديل الكتاب';
+    document.getElementById('submitBtn').innerHTML = '<i class="fas fa-pen"></i> حفظ تعديلات الكتاب';
     document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
     document.querySelector('.admin-tab[data-tab="addBook"]').classList.add('active');
     document.getElementById('addBookTab').classList.add('active');
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    showToast('عدّل البيانات واضغط تعديل', 'success');
+    showToast('تم تحميل بيانات الكتاب للتعديل', 'success');
 }
 
 let deleteTargetIds = [];
@@ -914,9 +1211,9 @@ function confirmDelete(ids) {
 
     if (ids.length === 1) {
         const book = allBooks[ids[0]];
-        msg.textContent = `هتحذف "${book?.title || 'الكتاب'}" - الحذف مش هيترجع`;
+        msg.textContent = `هل أنت متأكد من حذف "${book?.title || 'الكتاب'}"؟`;
     } else {
-        msg.textContent = `هتحذف ${ids.length} كتب - الحذف مش هيترجع`;
+        msg.textContent = `هل أنت متأكد من حذف ${ids.length} كتب؟`;
     }
 
     modal.classList.remove('hidden');
@@ -932,67 +1229,72 @@ function confirmDelete(ids) {
             updateDeleteBtn();
             loadMyBooks();
         } catch (err) {
-            showToast('حصل مشكلة في الحذف', 'error');
+            showToast('حدث خطأ أثناء الحذف', 'error');
         }
         closeConfirmDelete();
     };
 }
 
 function closeConfirmDelete() {
-    document.getElementById('confirmDeleteModal').classList.add('hidden');
+    const modal = document.getElementById('confirmDeleteModal');
+    if (modal) modal.classList.add('hidden');
     document.body.classList.remove('modal-open');
     deleteTargetIds = [];
 }
 
-// ── Toast ──────────────────────────────────────────────────────
+// ── Toast Notifications ────────────────────────────────────────
 function showToast(message, type = '') {
     const toast = document.getElementById('toast');
+    if (!toast) return;
     let icon = '';
     if (type === 'success') icon = '<i class="fas fa-check-circle"></i>';
     if (type === 'error')   icon = '<i class="fas fa-exclamation-circle"></i>';
     toast.className = `toast ${type}`;
     toast.innerHTML = `${icon} ${message}`;
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3000);
+    setTimeout(() => toast.classList.remove('show'), 3200);
 }
 
-// ── Onboarding Tour (جولة تفاعلية أول زيارة) ──────────────────
-const TOUR_STORAGE_KEY = 'maktabti_tour_seen_v1';
+// ── Onboarding Tour (الجولة التعريفية لمكتبة التكنولوجيا) ─────────
+const TOUR_STORAGE_KEY = 'maktabti_tour_seen_tech_v2';
 
 const TOUR_STEPS = [
     {
-        icon: 'fas fa-hand-sparkles',
-        title: 'أهلاً بيك في مكتبتي 👋',
-        text: 'مكتبتك التعليمية المجانية اللي بتجمعلك كتب المراحل الدراسية كلها في مكان واحد منظم وسهل. خلينا ناخدك في جولة سريعة على أهم حاجات هتحتاجها.'
+        icon: 'fas fa-laptop-code',
+        title: 'أهلاً بك في مكتبة سيف هاني التكنولوجية 👋',
+        text: 'منصتك المجانية الشاملة لكتب ومراجع لغات البرمجة، الذكاء الاصطناعي، الأمن السيبراني وهندسة البرمجيات باللغتين العربية والإنجليزية.'
     },
     {
         icon: 'fas fa-layer-group',
-        title: 'التصنيفات فوق',
-        text: 'من فوق هتلاقي أزرار التصنيف: ابتدائي، إعدادي، ثانوي، وإثرائي ومراجعات. اضغط على أي واحد يفلترلك الكتب على طول.'
+        title: 'تصنيفات البرمجة والتكنولوجيا',
+        text: 'استخدم شريط التصنيفات في الأعلى للوصول السريع إلى كتب: لغات البرمجة، الذكاء الاصطناعي، تطوير الويب، تطبيقات الموبايل، والأمن السيبراني.'
     },
     {
         icon: 'fas fa-search',
-        title: 'البحث السريع',
-        text: 'أيقونة 🔍 في أعلى الصفحة تفتحلك خانة بحث فورية بالاسم أو المؤلف أو الوصف، النتائج بتتفلتر وانت بتكتب.'
+        title: 'البحث التقني الفوري',
+        text: 'اضغط على أيقونة البحث 🔍 في الأعلى للبحث بالاسم أو لغة البرمجة أو التقنية وتصفية الكتب فوراً أثناء الكتابة.'
     },
     {
         icon: 'fas fa-book-open',
-        title: 'تفاصيل الكتاب',
-        text: 'دوس على أي كتاب تشوف تفاصيله كاملة، وتقدر تحمّله أو تشاركه مع أصدقائك بضغطة واحدة.'
+        title: 'تفاصيل ومحتويات الكتاب',
+        text: 'اضغط على أي كتاب لاستعراض غلافه الواقعي ثلاثي الأبعاد، محاوره ونبذته، والتحميل المباشر السريع بصيغة PDF.'
     },
     {
         icon: 'fas fa-rocket',
-        title: 'جاهز تبدأ؟',
-        text: 'كده بقى تقدر تستكشف المكتبة براحتك. لو حبيت ترجع للجولة دي تاني، هتلاقيها في صفحة "كيفية الاستخدام" تحت.'
+        title: 'جاهز للانطلاق؟',
+        text: 'ابدأ الآن في تصفح أقوى الكتب البرمجية للمؤلف سيف هاني وطوّر مهاراتك التقنية!'
     }
 ];
 
 let tourStepIndex = 0;
 
 function initOnboardingTour() {
-    document.getElementById('tourNextBtn').addEventListener('click', tourNext);
-    document.getElementById('tourPrevBtn').addEventListener('click', tourPrev);
-    document.getElementById('tourSkipBtn').addEventListener('click', closeTour);
+    const nextBtn = document.getElementById('tourNextBtn');
+    if (nextBtn) nextBtn.addEventListener('click', tourNext);
+    const prevBtn = document.getElementById('tourPrevBtn');
+    if (prevBtn) prevBtn.addEventListener('click', tourPrev);
+    const skipBtn = document.getElementById('tourSkipBtn');
+    if (skipBtn) skipBtn.addEventListener('click', closeTour);
 
     const restartBtn = document.getElementById('restartTourBtn');
     if (restartBtn) {
@@ -1006,7 +1308,6 @@ function initOnboardingTour() {
     const isHomeEntry = hash === '#home' || hash === '' || hash === '#';
 
     if (!seen && isHomeEntry) {
-        // نأجل شوية بسيطة عشان الصفحة تخلص تحميلها الأول
         setTimeout(() => startTour(), 500);
     }
 }
@@ -1014,7 +1315,8 @@ function initOnboardingTour() {
 function startTour() {
     tourStepIndex = 0;
     renderTourStep();
-    document.getElementById('tourOverlay').classList.remove('hidden');
+    const overlay = document.getElementById('tourOverlay');
+    if (overlay) overlay.classList.remove('hidden');
     document.body.classList.add('modal-open');
 }
 
@@ -1025,18 +1327,20 @@ function renderTourStep() {
     document.getElementById('tourIcon').className = step.icon;
     document.getElementById('tourTitle').textContent = step.title;
     document.getElementById('tourText').textContent = step.text;
-    document.getElementById('tourNextLabel').textContent = isLast ? 'يلا نبدأ' : 'التالي';
+    document.getElementById('tourNextLabel').textContent = isLast ? 'ابدأ الآن' : 'التالي';
 
     const prevBtn = document.getElementById('tourPrevBtn');
-    prevBtn.classList.toggle('hidden', tourStepIndex === 0);
+    if (prevBtn) prevBtn.classList.toggle('hidden', tourStepIndex === 0);
 
     const progress = document.getElementById('tourProgress');
-    progress.innerHTML = '';
-    TOUR_STEPS.forEach((_, i) => {
-        const dot = document.createElement('span');
-        dot.className = `tour-dot${i === tourStepIndex ? ' active' : ''}`;
-        progress.appendChild(dot);
-    });
+    if (progress) {
+        progress.innerHTML = '';
+        TOUR_STEPS.forEach((_, i) => {
+            const dot = document.createElement('span');
+            dot.className = `tour-dot${i === tourStepIndex ? ' active' : ''}`;
+            progress.appendChild(dot);
+        });
+    }
 }
 
 function tourNext() {
@@ -1056,14 +1360,18 @@ function tourPrev() {
 }
 
 function closeTour() {
-    document.getElementById('tourOverlay').classList.add('hidden');
+    const overlay = document.getElementById('tourOverlay');
+    if (overlay) overlay.classList.add('hidden');
     document.body.classList.remove('modal-open');
     try { localStorage.setItem(TOUR_STORAGE_KEY, '1'); } catch (e) { /* ignore */ }
 }
 
-// ── Utilities ──────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────
 function adjustColor(hex, amount) {
     hex = hex.replace('#', '');
+    if (hex.length === 3) {
+        hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
     let r = Math.max(0, Math.min(255, parseInt(hex.substr(0, 2), 16) + amount));
     let g = Math.max(0, Math.min(255, parseInt(hex.substr(2, 2), 16) + amount));
     let b = Math.max(0, Math.min(255, parseInt(hex.substr(4, 2), 16) + amount));
