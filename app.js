@@ -297,7 +297,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     loadBooks();
     loadSettings();
-    initOnboardingTour();
 });
 
 // ── Settings & Social Links ────────────────────────────────────
@@ -1253,117 +1252,6 @@ function showToast(message, type = '') {
     toast.innerHTML = `${icon} ${message}`;
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 3200);
-}
-
-// ── Onboarding Tour (الجولة التعريفية لمكتبة التكنولوجيا) ─────────
-const TOUR_STORAGE_KEY = 'maktabti_tour_seen_tech_v2';
-
-const TOUR_STEPS = [
-    {
-        icon: 'fas fa-laptop-code',
-        title: 'أهلاً بك في مكتبة سيف هاني التكنولوجية 👋',
-        text: 'منصتك المجانية الشاملة لكتب ومراجع لغات البرمجة، الذكاء الاصطناعي، الأمن السيبراني وهندسة البرمجيات باللغتين العربية والإنجليزية.'
-    },
-    {
-        icon: 'fas fa-layer-group',
-        title: 'تصنيفات البرمجة والتكنولوجيا',
-        text: 'استخدم شريط التصنيفات في الأعلى للوصول السريع إلى كتب: لغات البرمجة، الذكاء الاصطناعي، تطوير الويب، تطبيقات الموبايل، والأمن السيبراني.'
-    },
-    {
-        icon: 'fas fa-search',
-        title: 'البحث التقني الفوري',
-        text: 'اضغط على أيقونة البحث 🔍 في الأعلى للبحث بالاسم أو لغة البرمجة أو التقنية وتصفية الكتب فوراً أثناء الكتابة.'
-    },
-    {
-        icon: 'fas fa-book-open',
-        title: 'تفاصيل ومحتويات الكتاب',
-        text: 'اضغط على أي كتاب لاستعراض غلافه الواقعي ثلاثي الأبعاد، محاوره ونبذته، والتحميل المباشر السريع بصيغة PDF.'
-    },
-    {
-        icon: 'fas fa-rocket',
-        title: 'جاهز للانطلاق؟',
-        text: 'ابدأ الآن في تصفح أقوى الكتب البرمجية للمؤلف سيف هاني وطوّر مهاراتك التقنية!'
-    }
-];
-
-let tourStepIndex = 0;
-
-function initOnboardingTour() {
-    const nextBtn = document.getElementById('tourNextBtn');
-    if (nextBtn) nextBtn.addEventListener('click', tourNext);
-    const prevBtn = document.getElementById('tourPrevBtn');
-    if (prevBtn) prevBtn.addEventListener('click', tourPrev);
-    const skipBtn = document.getElementById('tourSkipBtn');
-    if (skipBtn) skipBtn.addEventListener('click', closeTour);
-
-    const restartBtn = document.getElementById('restartTourBtn');
-    if (restartBtn) {
-        restartBtn.addEventListener('click', () => startTour());
-    }
-
-    let seen = false;
-    try { seen = localStorage.getItem(TOUR_STORAGE_KEY) === '1'; } catch (e) { /* ignore */ }
-
-    const hash = window.location.hash || '#home';
-    const isHomeEntry = hash === '#home' || hash === '' || hash === '#';
-
-    if (!seen && isHomeEntry) {
-        setTimeout(() => startTour(), 500);
-    }
-}
-
-function startTour() {
-    tourStepIndex = 0;
-    renderTourStep();
-    const overlay = document.getElementById('tourOverlay');
-    if (overlay) overlay.classList.remove('hidden');
-    document.body.classList.add('modal-open');
-}
-
-function renderTourStep() {
-    const step = TOUR_STEPS[tourStepIndex];
-    const isLast = tourStepIndex === TOUR_STEPS.length - 1;
-
-    document.getElementById('tourIcon').className = step.icon;
-    document.getElementById('tourTitle').textContent = step.title;
-    document.getElementById('tourText').textContent = step.text;
-    document.getElementById('tourNextLabel').textContent = isLast ? 'ابدأ الآن' : 'التالي';
-
-    const prevBtn = document.getElementById('tourPrevBtn');
-    if (prevBtn) prevBtn.classList.toggle('hidden', tourStepIndex === 0);
-
-    const progress = document.getElementById('tourProgress');
-    if (progress) {
-        progress.innerHTML = '';
-        TOUR_STEPS.forEach((_, i) => {
-            const dot = document.createElement('span');
-            dot.className = `tour-dot${i === tourStepIndex ? ' active' : ''}`;
-            progress.appendChild(dot);
-        });
-    }
-}
-
-function tourNext() {
-    if (tourStepIndex < TOUR_STEPS.length - 1) {
-        tourStepIndex++;
-        renderTourStep();
-    } else {
-        closeTour();
-    }
-}
-
-function tourPrev() {
-    if (tourStepIndex > 0) {
-        tourStepIndex--;
-        renderTourStep();
-    }
-}
-
-function closeTour() {
-    const overlay = document.getElementById('tourOverlay');
-    if (overlay) overlay.classList.add('hidden');
-    document.body.classList.remove('modal-open');
-    try { localStorage.setItem(TOUR_STORAGE_KEY, '1'); } catch (e) { /* ignore */ }
 }
 
 // ── Helpers ────────────────────────────────────────────────────
