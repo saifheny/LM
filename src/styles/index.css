@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="obsidian"] {
+  --lm-bg: #090A0D;
+  --lm-surface: #111318;
+  --lm-surface-2: #171A21;
+  --lm-surface-hover: #1D212B;
+  --lm-border: rgba(255, 255, 255, 0.08);
+  --lm-border-strong: rgba(255, 255, 255, 0.14);
+  --lm-text: #F4F6FA;
+  --lm-text-secondary: #9BA3B5;
+  --lm-text-muted: #656D80;
+  --lm-accent: #2F6BFF;
+  --lm-accent-soft: rgba(47, 107, 255, 0.14);
+  --lm-accent-text: #FFFFFF;
+  --lm-gold: #D4AF37;
+  --lm-emerald: #10B981;
+  --lm-danger: #EF4444;
+}
+
+[data-theme="alabaster"] {
+  --lm-bg: #F4F5F7;
+  --lm-surface: #FFFFFF;
+  --lm-surface-2: #F0F2F5;
+  --lm-surface-hover: #E6E9EF;
+  --lm-border: rgba(15, 23, 42, 0.09);
+  --lm-border-strong: rgba(15, 23, 42, 0.16);
+  --lm-text: #0F172A;
+  --lm-text-secondary: #475569;
+  --lm-text-muted: #64748B;
+  --lm-accent: #1D4ED8;
+  --lm-accent-soft: rgba(29, 78, 216, 0.1);
+  --lm-accent-text: #FFFFFF;
+  --lm-gold: #B4830B;
+  --lm-emerald: #059669;
+  --lm-danger: #DC2626;
+}
+
+[data-theme="royal-gold"] {
+  --lm-bg: #0B0A08;
+  --lm-surface: #14120E;
+  --lm-surface-2: #1C1913;
+  --lm-surface-hover: #252119;
+  --lm-border: rgba(212, 175, 55, 0.14);
+  --lm-border-strong: rgba(212, 175, 55, 0.28);
+  --lm-text: #FAF6EE;
+  --lm-text-secondary: #B8AD96;
+  --lm-text-muted: #7C7360;
+  --lm-accent: #D4AF37;
+  --lm-accent-soft: rgba(212, 175, 55, 0.15);
+  --lm-accent-text: #0B0A08;
+  --lm-gold: #E5C158;
+  --lm-emerald: #10B981;
+  --lm-danger: #EF4444;
+}
+
+[data-theme="emerald-reserve"] {
+  --lm-bg: #070C0A;
+  --lm-surface: #0E1613;
+  --lm-surface-2: #14201B;
+  --lm-surface-hover: #1B2B24;
+  --lm-border: rgba(16, 185, 129, 0.14);
+  --lm-border-strong: rgba(16, 185, 129, 0.28);
+  --lm-text: #F0F9F5;
+  --lm-text-secondary: #94B5A7;
+  --lm-text-muted: #5C7C6F;
+  --lm-accent: #10B981;
+  --lm-accent-soft: rgba(16, 185, 129, 0.14);
+  --lm-accent-text: #052E1E;
+  --lm-gold: #D4AF37;
+  --lm-emerald: #34D399;
+  --lm-danger: #F87171;
+}
+
+[data-theme="imperial-onyx"] {
+  --lm-bg: #050507;
+  --lm-surface: #0D0E12;
+  --lm-surface-2: #15171E;
+  --lm-surface-hover: #1D202A;
+  --lm-border: rgba(226, 232, 240, 0.11);
+  --lm-border-strong: rgba(212, 175, 55, 0.34);
+  --lm-text: #F8FAFC;
+  --lm-text-secondary: #A1AAB8;
+  --lm-text-muted: #646D7E;
+  --lm-accent: #E2E8F0;
+  --lm-accent-soft: rgba(226, 232, 240, 0.12);
+  --lm-accent-text: #090A0D;
+  --lm-gold: #E6C35C;
+  --lm-emerald: #10B981;
+  --lm-danger: #EF4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--lm-bg);
+  color: var(--lm-text);
+  font-family: 'IBM Plex Sans Arabic', 'Inter', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono-num {
+  font-family: 'JetBrains Mono', 'Inter', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom ultra-thin scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--lm-border-strong);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--lm-text-muted);
+}
+
+/* Surface helpers */
+.lm-card {
+  background-color: var(--lm-surface);
+  border: 1px solid var(--lm-border);
+}
+
+.lm-card-subtle {
+  background-color: var(--lm-surface-2);
+  border: 1px solid var(--lm-border);
+}
+
+.lm-btn-primary {
+  background-color: var(--lm-accent);
+  color: var(--lm-accent-text);
+  transition: opacity 0.15s ease, transform 0.12s ease;
+}
+.lm-btn-primary:hover {
+  opacity: 0.92;
+}
+.lm-btn-primary:active {
+  transform: scale(0.985);
+}
+
+.lm-btn-ghost {
+  background-color: transparent;
+  color: var(--lm-text-secondary);
+  border: 1px solid var(--lm-border);
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.lm-btn-ghost:hover {
+  background-color: var(--lm-surface-hover);
+  color: var(--lm-text);
+  border-color: var(--lm-border-strong);
+}
+
+.lm-input {
+  background-color: var(--lm-surface-2);
+  border: 1px solid var(--lm-border);
+  color: var(--lm-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lm-input:focus {
+  outline: none;
+  border-color: var(--lm-accent);
+  box-shadow: 0 0 0 3px var(--lm-accent-soft);
+}
+.lm-input::placeholder {
+  color: var(--lm-text-muted);
+}
