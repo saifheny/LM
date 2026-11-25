@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react';
-import confetti from 'canvas-confetti';
 import {
   Search,
   Send,
@@ -23,25 +22,28 @@ import {
   VideoOff,
   ArrowRight,
   Camera,
-  Flame,
+  PenTool,
+  EyeOff,
   Volume2,
   VolumeX,
+  Zap,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api, uploadFile } from '../../lib/api';
 import { ChatMessageItem, ConversationItem } from '../../types';
 import { RichMessageText, UserAvatar, VipBadge } from '../shared/LmBrandMark';
 import { LiveVoiceRecorder, SmartVoicePill } from '../shared/VoiceStudio2026';
+import {
+  AnimatedEmoji,
+  INTERACTIVE_EMOJIS,
+  TelegramSpoilerBox,
+  triggerInteractiveFx,
+} from '../shared/InteractiveEmojiEngine';
+import { AnimatedInkPlayer, InkComposerModal } from '../shared/LiveInkCanvas';
+import { TelegramMiniGameBubble } from '../shared/TelegramMiniGameBubble';
 
-const QUICK_REACTIONS = ['❤️', '🔥', '😂', '😍', '🚀', '👏'];
-const SEND_EFFECTS = [
-  { id: 'fire', emoji: '🔥', label: 'نار' },
-  { id: 'confetti', emoji: '🎉', label: 'احتفال' },
-  { id: 'love', emoji: '❤️', label: 'حب' },
-  { id: 'laser', emoji: '⚡', label: 'برق' },
-];
+const QUICK_3D_REACTIONS = ['fire', 'bolt', 'heartfire', 'mindblown', 'crown', 'gem'];
 
-/** 2026 Circular Floating Video Note Bubble (Telegram Round Video Style) */
 function CircularVideoBubble({ url }: { url: string }) {
   const [muted, setMuted] = useState(true);
   const [expanded, setExpanded] = useState(false);
@@ -78,11 +80,14 @@ export function ChatView() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
 
-  // 2026 Interactive Messaging States
+  // Interactive 2026 Features
   const [replyTo, setReplyTo] = useState<ChatMessageItem | null>(null);
   const [sharedForAi, setSharedForAi] = useState<ChatMessageItem | null>(null);
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [effectsOpen, setEffectsOpen] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [trayTab, setTrayTab] = useState<'interactive' | 'games' | 'all'>('interactive');
+  const [spoilerMode, setSpoilerMode] = useState(false);
+  const [neonTextMode, setNeonTextMode] = useState(false);
+  const [inkModalOpen, setInkModalOpen] = useState(false);
   const [voiceStudioOpen, setVoiceStudioOpen] = useState(false);
   const [captureMode, setCaptureMode] = useState<'mic' | 'video_note'>('mic');
   const [infoOpen, setInfoOpen] = useState(false);
@@ -124,6 +129,7 @@ export function ChatView() {
       setReplyTo(null);
       setSharedForAi(null);
       setVoiceStudioOpen(false);
+      setTrayOpen(false);
     }
   }, [activeConvId, loadMessages]);
 
@@ -131,12 +137,18 @@ export function ChatView() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  // Synchronized WebSocket updates including LIVE Interactive Emoji FX!
   useEffect(() => {
     const handler = (event: string, payload: unknown) => {
       if (event === 'chat:message') {
         const p = payload as { conversationId: string };
         loadConversations();
         if (p.conversationId === activeConvId) loadMessages(activeConvId);
+      } else if (event === 'chat:interactive_fx') {
+        const p = payload as { conversationId: string; emojiId: string };
+        if (p.conversationId === activeConvId) {
+          triggerInteractiveFx(p.emojiId);
+        }
       }
     };
     const listeners = wsListeners.current;
@@ -161,22 +173,20 @@ export function ChatView() {
     return c.title.toLowerCase().includes(filterText.toLowerCase()) || c.lastMessage.toLowerCase().includes(filterText.toLowerCase());
   });
 
-  async function sendMessage(e?: React.FormEvent, chosenEffect?: string) {
+  async function sendMessage(e?: React.FormEvent) {
     e?.preventDefault();
     if (!user || !activeConvId || !draft.trim()) return;
     setSending(true);
     const wantsAi = /@LM\s*AI/i.test(draft) || Boolean(sharedForAi);
     try {
-      if (chosenEffect) {
-        confetti({ particleCount: 55, spread: 70, origin: { y: 0.8 } });
-      }
       await api(`/api/conversations/${activeConvId}/messages`, {
         method: 'POST',
         body: JSON.stringify({
           senderId: user.id,
           content: draft,
           msgType: 'text',
-          sendEffect: chosenEffect || null,
+          isSpoiler: spoilerMode,
+          kineticStyle: neonTextMode ? 'neon' : null,
           replyToId: replyTo?.id,
           replySender: replyTo?.displayName,
           replyText: replyTo?.content.slice(0, 80),
@@ -187,8 +197,9 @@ export function ChatView() {
       setDraft('');
       setReplyTo(null);
       setSharedForAi(null);
-      setEmojiOpen(false);
-      setEffectsOpen(false);
+      setSpoilerMode(false);
+      setNeonTextMode(false);
+      setTrayOpen(false);
       await loadMessages(activeConvId);
       await loadConversations();
     } catch (err) {
@@ -196,6 +207,55 @@ export function ChatView() {
     } finally {
       setSending(false);
     }
+  }
+
+  async function sendInteractiveEmoji(emojiId: string, e: React.MouseEvent) {
+    if (!user || !activeConvId) return;
+    triggerInteractiveFx(emojiId, e.clientX, e.clientY);
+    setTrayOpen(false);
+    await api(`/api/conversations/${activeConvId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        senderId: user.id,
+        content: emojiId,
+        msgType: 'interactive_emoji',
+        meta: { emojiId },
+      }),
+    });
+    await loadMessages(activeConvId);
+    await loadConversations();
+  }
+
+  async function sendMiniGame(game: 'dice' | 'slot' | 'target') {
+    if (!user || !activeConvId) return;
+    setTrayOpen(false);
+    await api(`/api/conversations/${activeConvId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        senderId: user.id,
+        content: game,
+        msgType: 'game_dice',
+        meta: { game },
+      }),
+    });
+    await loadMessages(activeConvId);
+    await loadConversations();
+  }
+
+  async function sendInkSketch(serialized: string) {
+    if (!user || !activeConvId) return;
+    setInkModalOpen(false);
+    triggerInteractiveFx('gem');
+    await api(`/api/conversations/${activeConvId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        senderId: user.id,
+        content: serialized,
+        msgType: 'ink_sketch',
+      }),
+    });
+    await loadMessages(activeConvId);
+    await loadConversations();
   }
 
   async function handleVoiceSend(audioFile: File) {
@@ -209,7 +269,7 @@ export function ChatView() {
           content: isAr ? 'رسالة صوتية' : 'Voice Note',
           msgType: 'audio',
           mediaUrl: up.url,
-          transcript: isAr ? 'رسالة صوتية عالية النقاء مسجلة بتقنية LM Voice 2026.' : 'HD Spatial Voice Message.',
+          transcript: isAr ? 'رسالة صوتية عالية النقاء مسجلة عبر LM.' : 'HD Voice Note.',
           replyToId: replyTo?.id,
           replySender: replyTo?.displayName,
           replyText: replyTo?.content.slice(0, 60),
@@ -237,16 +297,26 @@ export function ChatView() {
     });
     await loadMessages(activeConvId);
     await loadConversations();
-    toast(isAr ? 'تم إرسال رسالة فيديو دائرية 🎥' : 'Circular video note sent 🎥', 'success');
   }
 
-  async function toggleReaction(msgId: string, emoji: string) {
+  async function toggleReaction(msgId: string, emojiId: string, e?: React.MouseEvent) {
     if (!user) return;
+    if (e) triggerInteractiveFx(emojiId, e.clientX, e.clientY);
     await api(`/api/messages/${msgId}/react`, {
       method: 'POST',
-      body: JSON.stringify({ userId: user.id, emoji }),
+      body: JSON.stringify({ userId: user.id, emoji: emojiId }),
     });
     await loadMessages(activeConvId);
+  }
+
+  async function tapInteractiveEmoji(emojiId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    triggerInteractiveFx(emojiId, e.clientX, e.clientY);
+    // Sync across all connected users viewing this chat just like Telegram!
+    api('/api/chat/interactive-fx', {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: activeConvId, emojiId }),
+    }).catch(() => {});
   }
 
   async function handleAttachFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -262,8 +332,10 @@ export function ChatView() {
           content: isImg ? '' : up.originalName,
           msgType: isImg ? 'image' : 'file',
           mediaUrl: up.url,
+          isSpoiler: spoilerMode,
         }),
       });
+      setSpoilerMode(false);
       await loadMessages(activeConvId);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Upload failed', 'error');
@@ -281,7 +353,7 @@ export function ChatView() {
         if (callVideoRef.current && type === 'video') callVideoRef.current.srcObject = stream;
       }, 60);
     } catch {
-      // UI preview fallback
+      // fallback preview
     }
   }
 
@@ -309,13 +381,11 @@ export function ChatView() {
 
   return (
     <div className="h-full w-full flex overflow-hidden">
-      {/* ============================================================
-          SPATIAL GLASS CONVERSATIONS PANE
-         ============================================================ */}
+      {/* LEFT CONVERSATIONS PANE */}
       <aside
         className={`${
           mobileChatOpen ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[350px] lg:w-[375px] shrink-0 flex-col border-e border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl select-none`}
+        } w-full md:w-[345px] lg:w-[370px] shrink-0 flex-col border-e border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl select-none`}
       >
         <div className="px-3.5 pt-3.5 pb-2 flex items-center gap-2">
           <div className="relative flex-1">
@@ -327,40 +397,30 @@ export function ChatView() {
               className="lm-input w-full h-10 rounded-full ps-10 pe-4 text-sm"
             />
           </div>
-          <button
-            onClick={() => setNewGroupOpen(true)}
-            className="w-10 h-10 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer shrink-0"
-          >
+          <button onClick={() => setNewGroupOpen(true)} className="w-10 h-10 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer shrink-0">
             <Plus className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Folder Capsules */}
         <div className="px-3.5 py-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {[
             { id: 'all', ar: 'الكل', en: 'All' },
             { id: 'personal', ar: 'الأشخاص', en: 'Direct' },
             { id: 'groups', ar: 'المجموعات', en: 'Groups' },
             { id: 'channels', ar: 'القنوات', en: 'Channels' },
-          ].map((f) => {
-            const active = folder === f.id;
-            return (
-              <button
-                key={f.id}
-                onClick={() => setFolder(f.id as typeof folder)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  active
-                    ? 'bg-[var(--lm-accent)] text-[var(--lm-accent-text)] shadow-md'
-                    : 'bg-[var(--lm-surface-2)] text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
-                }`}
-              >
-                {isAr ? f.ar : f.en}
-              </button>
-            );
-          })}
+          ].map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFolder(f.id as typeof folder)}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                folder === f.id ? 'bg-[var(--lm-accent)] text-[var(--lm-accent-text)] shadow-md' : 'bg-[var(--lm-surface-2)] text-[var(--lm-text-secondary)]'
+              }`}
+            >
+              {isAr ? f.ar : f.en}
+            </button>
+          ))}
         </div>
 
-        {/* Chat Rows */}
         <div className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
           {filteredConvs.map((c) => {
             const active = c.id === activeConvId;
@@ -368,23 +428,12 @@ export function ChatView() {
               <motion.button
                 key={c.id}
                 whileTap={{ scale: 0.985 }}
-                onClick={() => {
-                  setActiveConvId(c.id);
-                  setMobileChatOpen(true);
-                }}
+                onClick={() => { setActiveConvId(c.id); setMobileChatOpen(true); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-start transition-all cursor-pointer ${
-                  active
-                    ? 'bg-gradient-to-r from-[#6D4AFF] to-[#4F7BFF] text-white shadow-lg'
-                    : 'hover:bg-[var(--tg-hover)] text-[var(--lm-text)]'
+                  active ? 'bg-gradient-to-r from-[#6D4AFF] to-[#4F7BFF] text-white shadow-lg' : 'hover:bg-[var(--tg-hover)] text-[var(--lm-text)]'
                 }`}
               >
-                <UserAvatar
-                  initials={c.title.slice(0, 2)}
-                  color={c.avatarColor}
-                  avatarUrl={c.avatarUrl}
-                  size={50}
-                  online={c.type === 'dm' && c.onlineText.includes('متصل')}
-                />
+                <UserAvatar initials={c.title.slice(0, 2)} color={c.avatarColor} avatarUrl={c.avatarUrl} size={50} online={c.type === 'dm' && c.onlineText.includes('متصل')} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[14px] font-bold truncate flex items-center gap-1.5">
@@ -398,7 +447,7 @@ export function ChatView() {
                   </div>
                   <div className="flex items-center justify-between gap-2 mt-0.5">
                     <p className={`text-[12.5px] truncate ${active ? 'text-white/85' : 'text-[var(--lm-text-muted)]'}`}>
-                      {c.lastMessage || c.description}
+                      {c.lastMessage?.startsWith('{"strokes"') ? '✍️ رسم وكتابة حية' : (c.lastMessage || c.description)}
                     </p>
                     <div className="flex items-center gap-1 shrink-0">
                       {c.isPinned && <Pin className={`w-3 h-3 rotate-45 ${active ? 'text-white/75' : 'text-[var(--lm-text-muted)]'}`} />}
@@ -416,24 +465,15 @@ export function ChatView() {
         </div>
       </aside>
 
-      {/* ============================================================
-          MAIN 2026 SPATIAL CHAT STAGE
-         ============================================================ */}
+      {/* MAIN INTERACTIVE TELEGRAM 2026 STAGE */}
       <section className={`${mobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col min-w-0 tg-wallpaper relative`}>
-        {/* Floating Glass Chat Header */}
         <header className="h-15 px-4 bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl border-b border-[var(--lm-border)] flex items-center justify-between gap-3 shrink-0 z-10">
           <div className="flex items-center gap-3 min-w-0">
             <button onClick={() => setMobileChatOpen(false)} className="md:hidden p-1.5 rounded-full hover:bg-white/10 cursor-pointer">
               <ArrowRight className="w-5 h-5" />
             </button>
             <button onClick={() => setInfoOpen(v => !v)} className="flex items-center gap-3 min-w-0 text-start cursor-pointer">
-              <UserAvatar
-                initials={activeConv?.title.slice(0, 2) || 'LM'}
-                color={activeConv?.avatarColor || '#6366F1'}
-                avatarUrl={activeConv?.avatarUrl}
-                size={40}
-                online={activeConv?.onlineText?.includes('متصل')}
-              />
+              <UserAvatar initials={activeConv?.title.slice(0, 2) || 'LM'} color={activeConv?.avatarColor || '#6366F1'} avatarUrl={activeConv?.avatarUrl} size={40} online={activeConv?.onlineText?.includes('متصل')} />
               <div className="min-w-0">
                 <div className="text-sm font-bold truncate">{activeConv?.title}</div>
                 <div className="text-xs text-[var(--lm-accent)] truncate">{activeConv?.onlineText}</div>
@@ -442,19 +482,12 @@ export function ChatView() {
           </div>
 
           <div className="flex items-center gap-1.5 text-[var(--lm-text-secondary)]">
-            <button onClick={() => startCall('voice')} className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer">
-              <Phone className="w-[18px] h-[18px]" />
-            </button>
-            <button onClick={() => startCall('video')} className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer">
-              <Video className="w-[18px] h-[18px]" />
-            </button>
-            <button onClick={() => setInfoOpen(v => !v)} className={`w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer ${infoOpen ? 'text-[var(--lm-accent)]' : ''}`}>
-              <PanelRight className="w-[18px] h-[18px]" />
-            </button>
+            <button onClick={() => startCall('voice')} className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer"><Phone className="w-[18px] h-[18px]" /></button>
+            <button onClick={() => startCall('video')} className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer"><Video className="w-[18px] h-[18px]" /></button>
+            <button onClick={() => setInfoOpen(v => !v)} className={`w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer ${infoOpen ? 'text-[var(--lm-accent)]' : ''}`}><PanelRight className="w-[18px] h-[18px]" /></button>
           </div>
         </header>
 
-        {/* Pinned Message */}
         {activeConv?.pinnedMessage && (
           <div className="px-4 py-1.5 bg-[var(--tg-sidebar-bg)]/80 backdrop-blur-xl border-b border-[var(--lm-border)] flex items-center gap-2.5 text-xs z-10">
             <div className="w-0.5 h-6 rounded-full bg-[var(--lm-accent)] shrink-0" />
@@ -462,24 +495,29 @@ export function ChatView() {
           </div>
         )}
 
-        {/* Messages Stream with Framer Motion Spring Entrance */}
+        {/* MESSAGES STREAM */}
         <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4">
-          <div className="max-w-[760px] mx-auto space-y-3">
+          <div className="max-w-[760px] mx-auto space-y-3.5">
             {messages.map((m) => {
               const isMine = m.senderId === user.id;
               const isAi = m.senderId === 'lm_ai';
               const reactionEntries = Object.entries(m.reactions || {});
+
+              const isInteractiveEmoji = m.msgType === 'interactive_emoji';
               const isVideoNote = m.msgType === 'video_note' && m.mediaUrl;
+              const isInkSketch = m.msgType === 'ink_sketch';
+              const isMiniGame = m.msgType === 'game_dice';
+              const isFrameless = isInteractiveEmoji || isVideoNote || isMiniGame;
 
               return (
                 <motion.div
                   key={m.id}
-                  initial={{ opacity: 0, y: 10, scale: 0.97 }}
+                  initial={{ opacity: 0, y: 10, scale: 0.96 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ type: 'spring', stiffness: 420, damping: 32 }}
                   onMouseEnter={() => setHoveredMsgId(m.id)}
                   onMouseLeave={() => setHoveredMsgId(prev => (prev === m.id ? null : prev))}
-                  onDoubleClick={() => toggleReaction(m.id, '❤️')}
+                  onDoubleClick={(e) => toggleReaction(m.id, 'fire', e)}
                   className={`group flex items-end gap-2.5 relative ${isMine ? 'justify-end' : 'justify-start'}`}
                 >
                   {!isMine && (
@@ -487,22 +525,22 @@ export function ChatView() {
                   )}
 
                   <div className={`relative max-w-[82%] sm:max-w-[68%] flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
-                    {/* Hover Action Bar */}
+                    {/* HOVER FLOATING 3D ANIMATED REACTION BAR */}
                     <AnimatePresence>
                       {hoveredMsgId === m.id && (
                         <motion.div
-                          initial={{ opacity: 0, y: 6, scale: 0.9 }}
+                          initial={{ opacity: 0, y: 6, scale: 0.88 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.9 }}
-                          className={`absolute -top-9 ${isMine ? 'end-0' : 'start-0'} z-20 flex items-center gap-0.5 px-2 py-1 rounded-full liquid-glass`}
+                          exit={{ opacity: 0, scale: 0.88 }}
+                          className={`absolute -top-11 ${isMine ? 'end-0' : 'start-0'} z-20 flex items-center gap-1 px-2.5 py-1.5 rounded-full liquid-glass`}
                         >
-                          {QUICK_REACTIONS.slice(0, 5).map((emo) => (
+                          {QUICK_3D_REACTIONS.map((emoId) => (
                             <button
-                              key={emo}
-                              onClick={() => toggleReaction(m.id, emo)}
-                              className="w-6 h-6 rounded-full hover:scale-130 transition-transform flex items-center justify-center text-xs cursor-pointer"
+                              key={emoId}
+                              onClick={(e) => toggleReaction(m.id, emoId, e)}
+                              className="w-7 h-7 rounded-full hover:scale-125 transition-transform flex items-center justify-center cursor-pointer"
                             >
-                              {emo}
+                              <AnimatedEmoji id={emoId} size={24} />
                             </button>
                           ))}
                           <span className="w-px h-4 bg-[var(--lm-border-strong)] mx-1" />
@@ -525,26 +563,25 @@ export function ChatView() {
                       )}
                     </AnimatePresence>
 
-                    {/* Circular Video Bubble OR Liquid-Glass Speech Bubble */}
-                    {isVideoNote ? (
-                      <div className="space-y-1">
-                        <CircularVideoBubble url={m.mediaUrl!} />
-                        {reactionEntries.length > 0 && (
-                          <div className="flex flex-wrap gap-1 justify-center">
-                            {reactionEntries.map(([emo, userIds]) => (
-                              <button
-                                key={emo}
-                                onClick={() => toggleReaction(m.id, emo)}
-                                className="px-2 py-0.5 rounded-full liquid-glass text-xs flex items-center gap-1 cursor-pointer"
-                              >
-                                <span>{emo}</span>
-                                <span className="text-[11px] font-mono-num font-bold">{userIds.length}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                    {/* 1. GIANT FRAMELESS TELEGRAM 3D INTERACTIVE EMOJI */}
+                    {isInteractiveEmoji ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <AnimatedEmoji
+                          id={String(m.meta?.emojiId || m.content)}
+                          size={108}
+                          interactive
+                          onTrigger={(e) => tapInteractiveEmoji(String(m.meta?.emojiId || m.content), e)}
+                        />
+                        <span className="text-[10px] text-[var(--lm-text-muted)] font-mono-num">{m.createdAt}</span>
                       </div>
+                    ) : isVideoNote ? (
+                      /* 2. CIRCULAR VIDEO NOTE */
+                      <CircularVideoBubble url={m.mediaUrl!} />
+                    ) : isMiniGame ? (
+                      /* 3. TELEGRAM ANIMATED MINI-GAME (DICE / SLOTS / TARGET) */
+                      <TelegramMiniGameBubble meta={m.meta} />
                     ) : (
+                      /* 4. LIQUID-GLASS SPEECH BUBBLE (TEXT / SPOILER / LIVE INK / VOICE / PHOTO) */
                       <div
                         style={{
                           background: isAi
@@ -557,12 +594,6 @@ export function ChatView() {
                           isMine ? 'rounded-ee-md text-white' : 'rounded-es-md text-[var(--lm-text)] border border-[var(--lm-border)]'
                         } px-4 py-2.5 shadow-md backdrop-blur-xl text-[13.5px] leading-relaxed relative`}
                       >
-                        {m.sendEffect && (
-                          <span className="absolute -top-2 -start-2 text-base select-none">
-                            {SEND_EFFECTS.find(x => x.id === m.sendEffect)?.emoji || '✨'}
-                          </span>
-                        )}
-
                         {(!isMine || isAi) && (
                           <div className="flex items-center gap-1.5 mb-0.5">
                             <span className="text-xs font-bold" style={{ color: isAi ? '#34D399' : m.avatarColor }}>
@@ -579,56 +610,69 @@ export function ChatView() {
                           </div>
                         )}
 
-                        {m.msgType === 'image' && m.mediaUrl && (
-                          <img
-                            src={m.mediaUrl}
-                            alt=""
-                            onClick={() => setLightboxImg(m.mediaUrl)}
-                            className="rounded-2xl max-h-72 w-full object-cover mb-1.5 cursor-zoom-in"
-                          />
-                        )}
-
-                        {m.msgType === 'audio' && m.mediaUrl && (
+                        {isInkSketch ? (
+                          <AnimatedInkPlayer serialized={m.content} />
+                        ) : m.msgType === 'image' && m.mediaUrl ? (
+                          m.isSpoiler ? (
+                            <TelegramSpoilerBox>
+                              <img src={m.mediaUrl} alt="" onClick={() => setLightboxImg(m.mediaUrl)} className="rounded-2xl max-h-72 w-full object-cover mb-1.5 cursor-zoom-in" />
+                            </TelegramSpoilerBox>
+                          ) : (
+                            <img src={m.mediaUrl} alt="" onClick={() => setLightboxImg(m.mediaUrl)} className="rounded-2xl max-h-72 w-full object-cover mb-1.5 cursor-zoom-in" />
+                          )
+                        ) : m.msgType === 'audio' && m.mediaUrl ? (
                           <SmartVoicePill url={m.mediaUrl} transcript={m.transcript} isMine={isMine} />
-                        )}
-
-                        {m.msgType === 'file' && m.mediaUrl && (
+                        ) : m.msgType === 'file' && m.mediaUrl ? (
                           <a href={m.mediaUrl} target="_blank" rel="noreferrer" className="underline font-medium block py-1">
                             📎 {m.content}
                           </a>
-                        )}
+                        ) : null}
 
-                        {m.msgType !== 'audio' && m.msgType !== 'file' && m.content && (
-                          <div className="inline">
-                            {isAi ? <RichMessageText text={m.content} /> : <span>{m.content}</span>}
-                          </div>
+                        {!isInkSketch && m.msgType !== 'audio' && m.msgType !== 'file' && m.content && (
+                          m.isSpoiler ? (
+                            <TelegramSpoilerBox>
+                              <div className="py-1">{m.content}</div>
+                            </TelegramSpoilerBox>
+                          ) : (
+                            <div
+                              className={`inline ${
+                                m.kineticStyle === 'neon'
+                                  ? 'font-bold bg-gradient-to-r from-[#38BDF8] via-[#E879F9] to-[#F5C451] bg-clip-text text-transparent drop-shadow'
+                                  : ''
+                              }`}
+                            >
+                              {isAi ? <RichMessageText text={m.content} /> : <span>{m.content}</span>}
+                            </div>
+                          )
                         )}
 
                         <span className="float-end ms-3 mt-1 inline-flex items-center gap-1 text-[10px] opacity-70 select-none">
                           <span>{m.createdAt}</span>
                           {isMine && <CheckCheck className="w-3.5 h-3.5" />}
                         </span>
+                      </div>
+                    )}
 
-                        {reactionEntries.length > 0 && (
-                          <div className="clear-both pt-1.5 flex flex-wrap gap-1">
-                            {reactionEntries.map(([emo, userIds]) => {
-                              const reactedByMe = userIds.includes(user.id);
-                              return (
-                                <button
-                                  key={emo}
-                                  onClick={() => toggleReaction(m.id, emo)}
-                                  style={{
-                                    backgroundColor: reactedByMe ? 'var(--tg-reaction-own)' : 'var(--tg-reaction-bg)',
-                                  }}
-                                  className="px-2 py-0.5 rounded-full text-xs flex items-center gap-1 transition-transform active:scale-90 cursor-pointer"
-                                >
-                                  <span>{emo}</span>
-                                  <span className="text-[11px] font-mono-num font-bold">{userIds.length}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                    {/* 3D ANIMATED REACTION PILLS */}
+                    {reactionEntries.length > 0 && (
+                      <div className={`mt-1 flex flex-wrap gap-1 ${isFrameless ? 'justify-center' : ''}`}>
+                        {reactionEntries.map(([emoKey, userIds]) => {
+                          const reactedByMe = userIds.includes(user.id);
+                          return (
+                            <motion.button
+                              key={emoKey}
+                              whileTap={{ scale: 0.85 }}
+                              onClick={(e) => toggleReaction(m.id, emoKey, e)}
+                              style={{
+                                backgroundColor: reactedByMe ? 'var(--tg-reaction-own)' : 'var(--tg-reaction-bg)',
+                              }}
+                              className="px-2 py-0.5 rounded-full backdrop-blur-md border border-white/10 text-xs flex items-center gap-1 cursor-pointer"
+                            >
+                              <AnimatedEmoji id={emoKey} size={18} />
+                              <span className="text-[11px] font-mono-num font-bold">{userIds.length}</span>
+                            </motion.button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -640,115 +684,188 @@ export function ChatView() {
         </div>
 
         {/* ============================================================
-            2026 LIQUID-GLASS COMPOSER + LIVE VOICE STUDIO + SEND FX
+            2026 INTERACTIVE COMPOSER + 3D EMOJI STUDIO + INK + SPOILER
            ============================================================ */}
         <div className="px-3 sm:px-6 pb-3 pt-1 shrink-0 relative z-20">
           <div className="max-w-[760px] mx-auto relative">
-            {emojiOpen && (
-              <div className="absolute bottom-15 start-0 z-50 shadow-2xl rounded-3xl overflow-hidden">
-                <EmojiPicker theme={EmojiTheme.DARK} width={310} height={360} onEmojiClick={(e) => setDraft(prev => prev + e.emoji)} />
-              </div>
-            )}
+            {/* TELEGRAM 3D INTERACTIVE EMOJI & MINI-GAMES STUDIO POPOVER */}
+            <AnimatePresence>
+              {trayOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12, scale: 0.94 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.94 }}
+                  className="absolute bottom-15 start-0 z-50 w-[335px] sm:w-[375px] liquid-glass rounded-3xl overflow-hidden shadow-2xl"
+                >
+                  <div className="p-2 border-b border-[var(--lm-border)] grid grid-cols-3 gap-1">
+                    {[
+                      { id: 'interactive', ar: '⚡ تفاعلي 3D', en: '⚡ 3D FX' },
+                      { id: 'games', ar: '🎲 ألعاب حية', en: '🎲 Games' },
+                      { id: 'all', ar: '😀 الكل', en: '😀 All' },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTrayTab(t.id as typeof trayTab)}
+                        className={`py-1.5 rounded-2xl text-xs font-bold cursor-pointer transition-all ${
+                          trayTab === t.id ? 'lm-btn-primary' : 'hover:bg-white/10 text-[var(--lm-text-secondary)]'
+                        }`}
+                      >
+                        {isAr ? t.ar : t.en}
+                      </button>
+                    ))}
+                  </div>
 
-            {/* Send Effects Popover */}
-            {effectsOpen && (
-              <div className="absolute bottom-15 end-0 z-50 liquid-glass rounded-2xl p-2 flex items-center gap-1.5">
-                {SEND_EFFECTS.map((fx) => (
-                  <button
-                    key={fx.id}
-                    type="button"
-                    onClick={() => sendMessage(undefined, fx.id)}
-                    className="px-2.5 py-1.5 rounded-xl hover:bg-white/15 text-xs flex items-center gap-1 cursor-pointer"
-                  >
-                    <span className="text-base">{fx.emoji}</span>
-                    <span>{fx.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+                  {trayTab === 'interactive' && (
+                    <div className="p-3 grid grid-cols-5 gap-2 max-h-[290px] overflow-y-auto">
+                      {INTERACTIVE_EMOJIS.filter(e => !['dice', 'slot', 'target'].includes(e.id)).map((item) => (
+                        <motion.button
+                          key={item.id}
+                          type="button"
+                          whileHover={{ scale: 1.18 }}
+                          whileTap={{ scale: 0.85 }}
+                          onClick={(e) => sendInteractiveEmoji(item.id, e)}
+                          title={isAr ? item.labelAr : item.labelEn}
+                          className="p-1.5 rounded-2xl hover:bg-white/10 flex flex-col items-center justify-center cursor-pointer"
+                        >
+                          <AnimatedEmoji id={item.id} size={46} />
+                        </motion.button>
+                      ))}
+                    </div>
+                  )}
+
+                  {trayTab === 'games' && (
+                    <div className="p-3 grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'dice' as const, emoji: 'dice', labelAr: 'رمي النرد', labelEn: 'Roll Dice' },
+                        { id: 'slot' as const, emoji: 'slot', labelAr: 'ماكينة الحظ', labelEn: 'Jackpot' },
+                        { id: 'target' as const, emoji: 'target', labelAr: 'سهم الهدف', labelEn: 'Bullseye' },
+                      ].map((g) => (
+                        <motion.button
+                          key={g.id}
+                          type="button"
+                          whileHover={{ y: -3 }}
+                          whileTap={{ scale: 0.92 }}
+                          onClick={() => sendMiniGame(g.id)}
+                          className="p-3 rounded-2xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] flex flex-col items-center gap-2 cursor-pointer"
+                        >
+                          <AnimatedEmoji id={g.emoji} size={48} />
+                          <span className="text-xs font-bold">{isAr ? g.labelAr : g.labelEn}</span>
+                        </motion.button>
+                      ))}
+                    </div>
+                  )}
+
+                  {trayTab === 'all' && (
+                    <EmojiPicker
+                      theme={EmojiTheme.DARK}
+                      width="100%"
+                      height={320}
+                      onEmojiClick={(e) => setDraft(prev => prev + e.emoji)}
+                    />
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {(replyTo || sharedForAi) && (
               <div className="mb-1.5 px-4 py-2 rounded-2xl liquid-glass flex items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className={`w-0.5 h-6 rounded-full ${sharedForAi ? 'bg-[#38BDF8]' : 'bg-[#7C5CFF]'}`} />
                   <div className="min-w-0">
-                    <div className="font-bold text-[11px] text-[var(--lm-accent)]">
-                      {sharedForAi ? '✨ @LM AI' : replyTo?.displayName}
-                    </div>
+                    <div className="font-bold text-[11px] text-[var(--lm-accent)]">{sharedForAi ? '✨ @LM AI' : replyTo?.displayName}</div>
                     <div className="text-[var(--lm-text-secondary)] truncate">{(sharedForAi || replyTo)?.content}</div>
                   </div>
                 </div>
-                <button onClick={() => { setReplyTo(null); setSharedForAi(null); }} className="p-1 cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
+                <button onClick={() => { setReplyTo(null); setSharedForAi(null); }} className="p-1 cursor-pointer"><X className="w-4 h-4" /></button>
               </div>
             )}
 
             {voiceStudioOpen ? (
-              <LiveVoiceRecorder
-                onCancel={() => setVoiceStudioOpen(false)}
-                onSend={(file) => handleVoiceSend(file)}
-              />
+              <LiveVoiceRecorder onCancel={() => setVoiceStudioOpen(false)} onSend={(file) => handleVoiceSend(file)} />
             ) : (
-              <form onSubmit={(e) => sendMessage(e)} className="flex items-center gap-2">
-                <div className="flex-1 h-12 rounded-full liquid-glass px-3 flex items-center gap-2">
+              <form onSubmit={sendMessage} className="flex items-center gap-2">
+                <div className="flex-1 h-12 rounded-full liquid-glass px-2.5 flex items-center gap-1">
+                  {/* 3D Interactive Emoji & Games Studio Button */}
                   <button
                     type="button"
-                    onClick={() => setEmojiOpen(v => !v)}
-                    className="w-8 h-8 rounded-full text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] flex items-center justify-center cursor-pointer"
+                    onClick={() => setTrayOpen(v => !v)}
+                    title={isAr ? 'إيموجي 3D تفاعلي وألعاب تيليجرام' : 'Interactive 3D Emojis & Games'}
+                    className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                      trayOpen ? 'bg-[var(--lm-accent)] text-white' : 'text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
+                    }`}
                   >
                     <Smile className="w-5 h-5" />
+                  </button>
+
+                  {/* Live Neon Handwriting Ink Sketch */}
+                  <button
+                    type="button"
+                    onClick={() => setInkModalOpen(true)}
+                    title={isAr ? 'كتابة ورسم نيون حي' : 'Live Neon Ink'}
+                    className="w-8 h-8 rounded-full text-[#38BDF8] hover:bg-[#38BDF8]/15 flex items-center justify-center cursor-pointer shrink-0"
+                  >
+                    <PenTool className="w-4 h-4" />
                   </button>
 
                   <input
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    placeholder={isAr ? 'رسالة...' : 'Message...'}
-                    className="flex-1 bg-transparent text-sm text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)] outline-none"
+                    placeholder={
+                      spoilerMode
+                        ? (isAr ? '✨ اكتب رسالة سرية (تظهر كرمل مضيء)...' : '✨ Type secret spoiler...')
+                        : (isAr ? 'رسالة...' : 'Message...')
+                    }
+                    className="flex-1 bg-transparent text-sm text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)] outline-none px-1"
                   />
+
+                  {/* Telegram Spoiler Stardust Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setSpoilerMode(v => !v)}
+                    title={isAr ? 'حبر سري (رمل مضيء)' : 'Spoiler Stardust'}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shrink-0 transition-colors ${
+                      spoilerMode ? 'bg-purple-500 text-white' : 'text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
+                    }`}
+                  >
+                    <EyeOff className="w-4 h-4" />
+                  </button>
+
+                  {/* Neon Kinetic Text Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setNeonTextMode(v => !v)}
+                    title={isAr ? 'خط نيون مضيء' : 'Neon Kinetic Text'}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shrink-0 transition-colors ${
+                      neonTextMode ? 'bg-[#F5C451] text-black' : 'text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
+                    }`}
+                  >
+                    <Zap className="w-4 h-4" />
+                  </button>
 
                   <input ref={fileRef} type="file" className="hidden" onChange={handleAttachFile} />
                   <button
                     type="button"
                     onClick={() => fileRef.current?.click()}
-                    className="w-8 h-8 rounded-full text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] flex items-center justify-center cursor-pointer"
+                    className="w-8 h-8 rounded-full text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] flex items-center justify-center cursor-pointer shrink-0"
                   >
-                    <Paperclip className="w-5 h-5" />
+                    <Paperclip className="w-4 h-4" />
                   </button>
-
-                  {draft.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => setEffectsOpen(v => !v)}
-                      title={isAr ? 'إرسال بتأثير بصري' : 'Send with Effect'}
-                      className="w-8 h-8 rounded-full text-amber-400 hover:bg-amber-400/15 flex items-center justify-center cursor-pointer"
-                    >
-                      <Flame className="w-4 h-4" />
-                    </button>
-                  )}
                 </div>
 
                 {draft.trim() ? (
-                  <motion.button
-                    whileTap={{ scale: 0.9 }}
-                    type="submit"
-                    disabled={sending}
-                    className="w-12 h-12 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer shrink-0"
-                  >
+                  <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={sending} className="w-12 h-12 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer shrink-0">
                     <Send className="w-5 h-5" />
                   </motion.button>
                 ) : (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {/* Toggle Mic <-> Circular Video Note */}
                     <button
                       type="button"
                       onClick={() => setCaptureMode(m => (m === 'mic' ? 'video_note' : 'mic'))}
-                      title={isAr ? 'التبديل بين الصوت والفيديو الدائري' : 'Switch Voice / Round Video'}
-                      className="w-10 h-10 rounded-full liquid-glass flex items-center justify-center text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] cursor-pointer"
+                      className="w-10 h-10 rounded-full liquid-glass flex items-center justify-center text-[var(--lm-text-secondary)] cursor-pointer"
                     >
                       {captureMode === 'mic' ? <Camera className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                     </button>
-
                     <motion.button
                       whileTap={{ scale: 0.9 }}
                       type="button"
@@ -768,34 +885,26 @@ export function ChatView() {
         </div>
       </section>
 
-      {/* RIGHT MEDIA & PROFILE DRAWER */}
+      {/* LIVE NEON INK MODAL */}
+      {inkModalOpen && <InkComposerModal isAr={isAr} onClose={() => setInkModalOpen(false)} onSend={sendInkSketch} />}
+
+      {/* RIGHT MEDIA DRAWER */}
       {infoOpen && activeConv && (
         <aside className="hidden lg:flex w-[310px] shrink-0 flex-col border-s border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl overflow-y-auto">
           <div className="h-15 px-4 flex items-center justify-between border-b border-[var(--lm-border)] shrink-0">
             <span className="text-sm font-bold">{isAr ? 'التفاصيل' : 'Profile'}</span>
-            <button onClick={() => setInfoOpen(false)} className="p-1.5 rounded-full hover:bg-[var(--tg-hover)] cursor-pointer">
-              <X className="w-4 h-4" />
-            </button>
+            <button onClick={() => setInfoOpen(false)} className="p-1.5 rounded-full hover:bg-[var(--tg-hover)] cursor-pointer"><X className="w-4 h-4" /></button>
           </div>
           <div className="p-5 flex flex-col items-center text-center border-b border-[var(--lm-border)]">
             <UserAvatar initials={activeConv.title.slice(0, 2)} color={activeConv.avatarColor} avatarUrl={activeConv.avatarUrl} size={84} />
             <h3 className="text-base font-bold mt-3">{activeConv.title}</h3>
             <p className="text-xs text-[var(--lm-accent)] mt-0.5">{activeConv.onlineText}</p>
-            <p className="text-xs text-[var(--lm-text-secondary)] mt-2">{activeConv.description}</p>
           </div>
           <div className="p-4 space-y-2.5">
-            <div className="text-xs font-semibold text-[var(--lm-text-muted)]">
-              {isAr ? 'الوسائط' : 'Shared Media'} ({sharedPhotos.length})
-            </div>
+            <div className="text-xs font-semibold text-[var(--lm-text-muted)]">{isAr ? 'الوسائط' : 'Media'} ({sharedPhotos.length})</div>
             <div className="grid grid-cols-3 gap-1.5">
               {sharedPhotos.map((p) => (
-                <img
-                  key={p.id}
-                  src={p.mediaUrl!}
-                  alt=""
-                  onClick={() => setLightboxImg(p.mediaUrl)}
-                  className="aspect-square rounded-xl object-cover cursor-pointer hover:opacity-85"
-                />
+                <img key={p.id} src={p.mediaUrl!} alt="" onClick={() => setLightboxImg(p.mediaUrl)} className="aspect-square rounded-xl object-cover cursor-pointer" />
               ))}
             </div>
           </div>
@@ -815,9 +924,7 @@ export function ChatView() {
               <Lock className="w-3 h-3" /> {fmtTimer(callSec)}
             </div>
             {callMode === 'video' && !callCamOff ? (
-              <div className="aspect-video rounded-2xl overflow-hidden bg-black">
-                <video ref={callVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-              </div>
+              <div className="aspect-video rounded-2xl overflow-hidden bg-black"><video ref={callVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" /></div>
             ) : (
               <div className="py-6 flex flex-col items-center gap-3">
                 <UserAvatar initials={activeConv?.title.slice(0, 2) || 'LM'} color={activeConv?.avatarColor || '#6366F1'} avatarUrl={activeConv?.avatarUrl} size={88} />
@@ -825,17 +932,9 @@ export function ChatView() {
               </div>
             )}
             <div className="flex items-center justify-center gap-4">
-              <button onClick={() => setCallMuted(m => !m)} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center cursor-pointer">
-                {callMuted ? <MicOff className="w-5 h-5 text-red-400" /> : <Mic className="w-5 h-5" />}
-              </button>
-              {callMode === 'video' && (
-                <button onClick={() => setCallCamOff(v => !v)} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center cursor-pointer">
-                  {callCamOff ? <VideoOff className="w-5 h-5 text-red-400" /> : <Video className="w-5 h-5" />}
-                </button>
-              )}
-              <button onClick={endCall} className="w-14 h-14 rounded-full bg-[#FF2D55] text-white flex items-center justify-center cursor-pointer">
-                <PhoneOff className="w-6 h-6" />
-              </button>
+              <button onClick={() => setCallMuted(m => !m)} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center cursor-pointer">{callMuted ? <MicOff className="w-5 h-5 text-red-400" /> : <Mic className="w-5 h-5" />}</button>
+              {callMode === 'video' && <button onClick={() => setCallCamOff(v => !v)} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center cursor-pointer">{callCamOff ? <VideoOff className="w-5 h-5 text-red-400" /> : <Video className="w-5 h-5" />}</button>}
+              <button onClick={endCall} className="w-14 h-14 rounded-full bg-[#FF2D55] text-white flex items-center justify-center cursor-pointer"><PhoneOff className="w-6 h-6" /></button>
             </div>
           </div>
         </div>
@@ -848,20 +947,12 @@ export function ChatView() {
               <h3 className="text-sm font-bold">{isAr ? 'مجموعة أو قناة جديدة' : 'New Space'}</h3>
               <button type="button" onClick={() => setNewGroupOpen(false)} className="cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
-            <input
-              value={groupTitle}
-              onChange={(e) => setGroupTitle(e.target.value)}
-              placeholder={isAr ? 'الاسم...' : 'Name...'}
-              className="lm-input w-full rounded-2xl px-4 py-2.5 text-xs"
-              required
-            />
+            <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} placeholder={isAr ? 'الاسم...' : 'Name...'} className="lm-input w-full rounded-2xl px-4 py-2.5 text-xs" required />
             <select value={groupType} onChange={(e) => setGroupType(e.target.value as 'group' | 'community')} className="lm-input w-full rounded-2xl px-4 py-2.5 text-xs">
               <option value="group">{isAr ? 'مجموعة خاصة' : 'Private Group'}</option>
               <option value="community">{isAr ? 'قناة عامة' : 'Public Channel'}</option>
             </select>
-            <button type="submit" className="lm-btn-primary w-full py-2.5 rounded-full text-xs font-bold cursor-pointer">
-              {isAr ? 'إنشاء' : 'Create'}
-            </button>
+            <button type="submit" className="lm-btn-primary w-full py-2.5 rounded-full text-xs font-bold cursor-pointer">{isAr ? 'إنشاء' : 'Create'}</button>
           </form>
         </div>
       )}

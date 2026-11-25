@@ -10,25 +10,34 @@ import { AiView } from './components/ai/AiView';
 import { VipStoreView } from './components/vip/VipStoreView';
 import { FinanceView } from './components/finance/FinanceView';
 import { ApiHubView } from './components/settings/ApiHubView';
+import { InteractiveFxOverlay } from './components/shared/InteractiveEmojiEngine';
 
 function MainRouter() {
   const { user, activeTab } = useApp();
 
   if (!user) {
-    return <AuthScreen />;
+    return (
+      <>
+        <AuthScreen />
+        <InteractiveFxOverlay />
+      </>
+    );
   }
 
   return (
-    <AppShell>
-      {activeTab === 'social' && <SocialView />}
-      {activeTab === 'videos' && <ShortVideosView />}
-      {activeTab === 'live' && <LiveView />}
-      {activeTab === 'chat' && <ChatView />}
-      {activeTab === 'ai' && <AiView />}
-      {activeTab === 'vip' && <VipStoreView />}
-      {activeTab === 'finance' && <FinanceView />}
-      {activeTab === 'settings' && <ApiHubView />}
-    </AppShell>
+    <>
+      <AppShell>
+        {activeTab === 'chat' && <ChatView />}
+        {activeTab === 'videos' && <ShortVideosView />}
+        {activeTab === 'social' && <SocialView />}
+        {activeTab === 'live' && <LiveView />}
+        {activeTab === 'ai' && <AiView />}
+        {activeTab === 'vip' && <VipStoreView />}
+        {activeTab === 'finance' && <FinanceView />}
+        {activeTab === 'settings' && <ApiHubView />}
+      </AppShell>
+      <InteractiveFxOverlay />
+    </>
   );
 }
 

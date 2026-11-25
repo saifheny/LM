@@ -171,10 +171,13 @@ export interface ChatMessageItem {
   avatarUrl: string | null;
   vipTier: VipTier;
   content: string;
-  msgType: 'text' | 'image' | 'audio' | 'video_note' | 'file' | 'ai_reply';
+  msgType: 'text' | 'image' | 'audio' | 'video_note' | 'interactive_emoji' | 'ink_sketch' | 'game_dice' | 'file' | 'ai_reply';
   mediaUrl: string | null;
   transcript: string | null;
   sendEffect: string | null;
+  isSpoiler: boolean;
+  kineticStyle: 'neon' | 'wave' | 'typewriter' | null;
+  meta: Record<string, unknown> | null;
   replyToId: string | null;
   replySender: string | null;
   replyText: string | null;

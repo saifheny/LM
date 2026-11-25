@@ -14,7 +14,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 3;
+const TARGET_DB_VERSION = 4;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -188,10 +188,13 @@ export function initDatabase() {
       conversation_id TEXT NOT NULL,
       sender_id TEXT NOT NULL,
       content TEXT NOT NULL,
-      msg_type TEXT DEFAULT 'text', -- 'text' | 'image' | 'audio' | 'video_note' | 'file' | 'ai_reply'
+      msg_type TEXT DEFAULT 'text', -- 'text' | 'image' | 'audio' | 'video_note' | 'interactive_emoji' | 'ink_sketch' | 'game_dice' | 'file' | 'ai_reply'
       media_url TEXT,
       transcript TEXT,
       send_effect TEXT,
+      is_spoiler INTEGER DEFAULT 0,
+      kinetic_style TEXT,
+      meta_json TEXT,
       reply_to_id TEXT,
       reply_sender TEXT,
       reply_text TEXT,
@@ -244,6 +247,33 @@ export function initDatabase() {
   }
 }
 
+// Pre-seeded glowing calligraphic "LM" live ink signature strokes
+const SEED_INK_SKETCH = JSON.stringify({
+  strokes: [
+    {
+      color: '#38BDF8',
+      width: 4.5,
+      points: [
+        [52, 34], [50, 56], [48, 82], [47, 108], [62, 109], [86, 107], [108, 105],
+      ],
+    },
+    {
+      color: '#A78BFA',
+      width: 4.5,
+      points: [
+        [132, 106], [134, 72], [138, 38], [156, 66], [174, 88], [192, 62], [210, 38], [212, 74], [214, 108],
+      ],
+    },
+    {
+      color: '#F5C451',
+      width: 3,
+      points: [
+        [44, 126], [92, 120], [150, 118], [220, 124],
+      ],
+    },
+  ],
+});
+
 function seedInitialData() {
   const insertUser = db.prepare(`
     INSERT INTO users (
@@ -295,206 +325,103 @@ function seedInitialData() {
     'LM', 'default', 'obsidian', 'EG', 1200, 0, 5420, 290
   );
 
-  // Authentic Human Stories
   const insertStory = db.prepare('INSERT INTO stories (id, user_id, media_url, caption) VALUES (?, ?, ?, ?)');
   insertStory.run('s_1', 'u_mariam', '/uploads/seed/story_1.jpg', 'كواليس السيت أب الجديد قبل لايف الليلة 🔥🎙️');
   insertStory.run('s_2', 'u_youssef', '/uploads/seed/post_cairo.jpg', 'القاهرة وقت الغروب.. سحر ملوش زي ✨');
   insertStory.run('s_3', 'u_nour', '/uploads/seed/story_2.jpg', 'أخيرًا خلصنا تلوين الفيلم القصير الجديد 🎬');
   insertStory.run('s_4', 'u_karim', '/uploads/seed/story_3.jpg', 'صباح الحركة القوية في جلسة التداول النهاردة 📈');
 
-  // Authentic Human Social Posts (ZERO meta explanations!)
   const insertPost = db.prepare(`
     INSERT INTO posts (id, user_id, content, media_url, media_urls_json, location, is_sponsored, sponsor_budget_egp, sponsor_audience, likes_count, comments_count, shares_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-
   insertPost.run(
     'p_1', 'u_youssef',
     'الغروب من فوق النيل النهاردة كان لوحة سريالية. ساعات بتحتاج بس تفصل عشر دقايق وتتأمل تفاصيل المدينة دي من فوق ✨🌇',
-    '/uploads/seed/post_cairo.jpg',
-    JSON.stringify(['/uploads/seed/post_cairo.jpg', '/uploads/seed/post_nile.jpg']),
-    'الزمالك، القاهرة',
-    0, 0, null, 12840, 418, 920
+    '/uploads/seed/post_cairo.jpg', JSON.stringify(['/uploads/seed/post_cairo.jpg', '/uploads/seed/post_nile.jpg']),
+    'الزمالك، القاهرة', 0, 0, null, 12840, 418, 920
   );
-
   insertPost.run(
     'p_2', 'u_mariam',
     'ليلة تسجيل طويلة في الاستوديو.. الصوت الجديد طالع أنقى بمراحل مما تخيلت 🎧🔥 مستعدين للايف الساعة 9؟',
-    '/uploads/seed/post_studio.jpg',
-    JSON.stringify(['/uploads/seed/post_studio.jpg']),
-    'الشيخ زايد',
-    0, 0, null, 8430, 276, 315
+    '/uploads/seed/post_studio.jpg', JSON.stringify(['/uploads/seed/post_studio.jpg']),
+    'الشيخ زايد', 0, 0, null, 8430, 276, 315
   );
-
   insertPost.run(
     'p_3', 'u_karim',
-    'الجيل الجديد من معالجات الذكاء الاصطناعي بيغير شكل الحوسبة بالكامل في 2026. أرقام الأداء السنة دي قفزت لمرحلة غير مسبوقة ⚡',
-    '/uploads/seed/post_tech1.jpg',
-    JSON.stringify(['/uploads/seed/post_tech1.jpg', '/uploads/seed/post_tech2.jpg']),
-    'نيويورك • القاهرة',
-    1, 2500, 'التكنولوجيا والأعمال', 5690, 164, 410
+    'الجيل الجديد من معالجات الذكاء الاصطناعي بيغير شكل الحوسبة بالكامل في 2026 ⚡',
+    '/uploads/seed/post_tech1.jpg', JSON.stringify(['/uploads/seed/post_tech1.jpg', '/uploads/seed/post_tech2.jpg']),
+    'نيويورك • القاهرة', 1, 2500, 'التكنولوجيا والأعمال', 5690, 164, 410
   );
 
   const insertPostComment = db.prepare('INSERT INTO post_comments (id, post_id, user_id, content) VALUES (?, ?, ?, ?)');
   insertPostComment.run('pc_1', 'p_1', 'u_mariam', 'الزاوية والإضاءة خيالية فعلًا! 😍🔥');
   insertPostComment.run('pc_2', 'p_1', 'u_nour', 'ثاني صورة على النيل محتاجة تتعلق في معرض!');
 
-  // Authentic Viral-Style TikTok / Reels Videos
   const insertVideo = db.prepare(`
     INSERT INTO short_videos (
       id, user_id, title, description, tags, audio_title, video_url, poster_url,
       duration_sec, is_sponsored, sponsor_budget_egp, likes_count, comments_count, saves_count, shares_count, views_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  insertVideo.run('v_1', 'u_mariam', 'لما الإضاءة والموسيقى يندمجوا في لحظة واحدة ✨🔥', 'أقوى لقطة صورناها الأسبوع ده!', '#تصوير #سينما #القاهرة #fyp', 'Cairo Midnight Pulse — Mariam Original', '/uploads/seed/reel1.mp4', '/uploads/seed/post_studio.jpg', 15, 0, 0, 248900, 3420, 31400, 12800, 1950000);
+  insertVideo.run('v_2', 'u_nour', 'اهرب لمكان مفيهوش غير صوت المية والهوا 🌊🤍', 'مين محتاج يفصل في مكان زي ده دلوقتي؟', '#سفر #هدوء #طبيعة #vibes', 'Ocean Breeze Ambient — Nour Studio', '/uploads/seed/reel2.mp4', '/uploads/seed/post_nile.jpg', 15, 0, 0, 164200, 1890, 24100, 7430, 1120000);
+  insertVideo.run('v_3', 'u_karim', 'طريق مفتوح وموسيقى آخر الليل.. إحساس الحرية 🏎️⚡', 'التجربة الكاملة على الطريق الساحلي.', '#سيارات #ليل #سرعة', 'Nightrunner 2026 — Synth Audio', '/uploads/seed/reel3.mp4', '/uploads/seed/post_tech1.jpg', 15, 1, 3200, 92400, 980, 11900, 4120, 840000);
+  insertVideo.run('v_4', 'u_youssef', 'التفاصيل الصغيرة هي اللي بتصنع الفارق دائمًا 🚀', 'لقطات من يوم شغل مكثف في القاهرة.', '#شغف #تصميم #مصر', 'Focus Flow — Youssef Original', '/uploads/seed/reel4.mp4', '/uploads/seed/post_cairo.jpg', 15, 0, 0, 312000, 4910, 52800, 19400, 2840000);
 
-  insertVideo.run(
-    'v_1', 'u_mariam',
-    'لما الإضاءة والموسيقى يندمجوا في لحظة واحدة ✨🔥',
-    'أقوى لقطة صورناها الأسبوع ده بدون أي فلاتر!',
-    '#تصوير #سينما #القاهرة #اجواء #fyp',
-    'Cairo Midnight Pulse — Mariam Original',
-    '/uploads/seed/reel1.mp4', '/uploads/seed/post_studio.jpg',
-    15, 0, 0, 248900, 3420, 31400, 12800, 1950000
-  );
-
-  insertVideo.run(
-    'v_2', 'u_nour',
-    'اهرب لمكان مفيهوش غير صوت المية والهوا 🌊🤍',
-    'مين محتاج يفصل في مكان زي ده دلوقتي؟',
-    '#سفر #هدوء #طبيعة #بحر #vibes',
-    'Ocean Breeze Ambient — Nour Studio',
-    '/uploads/seed/reel2.mp4', '/uploads/seed/post_nile.jpg',
-    15, 0, 0, 164200, 1890, 24100, 7430, 1120000
-  );
-
-  insertVideo.run(
-    'v_3', 'u_karim',
-    'طريق مفتوح وموسيقى آخر الليل.. إحساس الحرية 🏎️⚡',
-    'التجربة الكاملة على الطريق الساحلي الجديد.',
-    '#سيارات #ليل #سرعة #سفر',
-    'Nightrunner 2026 — Synth Audio',
-    '/uploads/seed/reel3.mp4', '/uploads/seed/post_tech1.jpg',
-    15, 1, 3200, 92400, 980, 11900, 4120, 840000
-  );
-
-  insertVideo.run(
-    'v_4', 'u_youssef',
-    'التفاصيل الصغيرة هي اللي بتصنع الفارق الحقيقي دائمًا 🚀',
-    'لقطات من يوم شغل مكثف مع الفريق في القاهرة.',
-    '#شغف #تصميم #إبداع #مصر',
-    'Focus Flow — Youssef Original',
-    '/uploads/seed/reel4.mp4', '/uploads/seed/post_cairo.jpg',
-    15, 0, 0, 312000, 4910, 52800, 19400, 2840000
-  );
-
-  // Rich Threaded & VOICE Video Comments!
   const insertVidComment = db.prepare(`
     INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, likes_count, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertVidComment.run('vc_1', 'v_1', 'u_youssef', null, 'الكادر وتدريج الألوان في حتة تانية خالص! 🔥👏', null, 0, null, 842, 'منذ 12 د');
-  // Nested Voice Reply to vc_1!
   insertVidComment.run('vc_2', 'v_1', 'u_mariam', 'vc_1', '', '/uploads/seed/voice_note_1.wav', 6, 'شكرًا جدًا يا يوسف! صورناها بعد الغروب بدقايق بضوء طبيعي بالكامل.', 219, 'منذ 9 د');
-  // Nested Text Reply to vc_1!
   insertVidComment.run('vc_3', 'v_1', 'u_nour', 'vc_1', 'اتفق جدًا، العدسة الـ 35mm فرقت جدًا في العمق هنا ✨', null, 0, null, 94, 'منذ 5 د');
-  // Top-level Voice Comment!
   insertVidComment.run('vc_4', 'v_1', 'u_karim', null, '', '/uploads/seed/voice_note_1.wav', 6, 'الموسيقى راكبة على حركة الكاميرا بالملي! استمروا على المستوى ده.', 315, 'منذ 18 د');
-  insertVidComment.run('vc_5', 'v_2', 'u_mariam', null, 'المكان ده يرد الروح بجد 😍🌊', null, 0, null, 512, 'منذ 25 د');
 
-  // Authentic Conversations (ZERO tutorial text!)
   const insertConv = db.prepare(`
     INSERT INTO conversations (
       id, type, folder, title, description, avatar_color, avatar_url,
       online_text, pinned_message, is_pinned, unread_count, is_large_group, is_encrypted, member_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-
-  insertConv.run(
-    'c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Creator',
-    '#10B981', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن',
-    'بروفة الصوت الساعة 8:30 قبل البث المباشر 🎙️', 1, 2, 0, 1, 2
-  );
-  insertConv.run(
-    'c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo Macro',
-    '#3B82F6', '/uploads/seed/avatar_karim.jpg', 'متصل الآن',
-    null, 1, 0, 0, 1, 2
-  );
-  insertConv.run(
-    'c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer',
-    '#F59E0B', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين',
-    null, 0, 1, 0, 1, 2
-  );
-  insertConv.run(
-    'c_founders', 'community', 'channels', 'Cairo Creators & Founders ⚡',
-    'المجتمع الرئيسي لصناع المحتوى ورواد التكنولوجيا في مصر والشرق الأوسط',
-    '#8B5CF6', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل',
-    'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً ✨', 0, 4, 1, 0, 18940
-  );
-  insertConv.run(
-    'c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير 🎬',
-    'مجموعة تنسيق جلسات التصوير والموسيقى',
-    '#10B981', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين',
-    null, 0, 0, 0, 1, 14
-  );
+  insertConv.run('c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Creator', '#10B981', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن', 'بروفة الصوت الساعة 8:30 قبل البث المباشر 🎙️', 1, 2, 0, 1, 2);
+  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo Macro', '#3B82F6', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 0, 0, 1, 2);
+  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#F59E0B', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 1, 0, 1, 2);
+  insertConv.run('c_founders', 'community', 'channels', 'Cairo Creators & Founders ⚡', 'مجتمع صناع المحتوى والتكنولوجيا', '#8B5CF6', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل', 'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً ✨', 0, 4, 1, 0, 18940);
+  insertConv.run('c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير 🎬', 'مجموعة تنسيق التصوير والموسيقى', '#10B981', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين', null, 0, 0, 0, 1, 14);
 
   const insertMsg = db.prepare(`
     INSERT INTO messages (
       id, conversation_id, sender_id, content, msg_type, media_url, transcript, send_effect,
-      reply_to_id, reply_sender, reply_text, reactions_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      is_spoiler, kinetic_style, meta_json, reply_to_id, reply_sender, reply_text, reactions_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  insertMsg.run(
-    'm_1', 'c_mariam', 'u_mariam',
-    'شوف اللقطة دي من سطح الاستوديو وقت الغروب النهاردة 🌇',
-    'image', '/uploads/seed/post_cairo.jpg', null, null,
-    null, null, null, JSON.stringify({ '❤️': ['u_youssef'], '🔥': ['u_youssef', 'u_mariam'] }), '09:38 م'
-  );
+  // 1. Photo
+  insertMsg.run('m_1', 'c_mariam', 'u_mariam', 'شوف اللقطة دي من سطح الاستوديو وقت الغروب 🌇', 'image', '/uploads/seed/post_cairo.jpg', null, null, 0, null, null, null, null, null, JSON.stringify({ fire: ['u_youssef', 'u_mariam'], starstruck: ['u_youssef'] }), '09:38 م');
 
-  insertMsg.run(
-    'm_2', 'c_mariam', 'u_youssef',
-    'الإضاءة خيالية! جاهزين نبدأ البث المباشر الساعة 9؟',
-    'text', null, null, 'fire',
-    'm_1', 'مريم الشريف', 'شوف اللقطة دي من سطح الاستوديو وقت الغروب...',
-    JSON.stringify({ '🔥': ['u_mariam'] }), '09:40 م'
-  );
+  // 2. Giant Frameless Telegram 3D Interactive Emoji (Tap to blast plasma fire!)
+  insertMsg.run('m_2', 'c_mariam', 'u_youssef', 'fire', 'interactive_emoji', null, null, null, 0, null, JSON.stringify({ emojiId: 'fire' }), null, null, null, JSON.stringify({ bolt: ['u_mariam'] }), '09:39 م');
 
-  // Real Voice Note with AI Transcript!
-  insertMsg.run(
-    'm_3', 'c_mariam', 'u_mariam',
-    'رسالة صوتية',
-    'audio', '/uploads/seed/voice_note_1.wav',
-    'أيوه كل حاجة جاهزة تمامًا، المايك والكاميرا اتظبطوا وهنطلع في الميعاد بالثانية!',
-    null, null, null, null, JSON.stringify({ '🎧': ['u_youssef'] }), '09:41 م'
-  );
+  // 3. Telegram Shimmering Stardust Spoiler Message (Tap to burst stardust & reveal!)
+  insertMsg.run('m_3', 'c_mariam', 'u_mariam', 'المفاجأة: ضيف البث الليلة هيكون أشهر مخرج إعلانات في مصر 🤫🔥', 'text', null, null, null, 1, null, null, null, null, null, JSON.stringify({ mindblown: ['u_youssef'] }), '09:40 م');
 
-  // Real Circular Telegram/2026 Video Note Bubble!
-  insertMsg.run(
-    'm_4', 'c_mariam', 'u_mariam',
-    'رسالة فيديو دائرية',
-    'video_note', '/uploads/seed/reel2.mp4', null, null,
-    null, null, null, JSON.stringify({ '😍': ['u_youssef'] }), '09:43 م'
-  );
+  // 4. Live Animated Handwriting Ink Sketch!
+  insertMsg.run('m_4', 'c_mariam', 'u_youssef', SEED_INK_SKETCH, 'ink_sketch', null, null, null, 0, null, null, null, null, null, JSON.stringify({ crown: ['u_mariam'] }), '09:41 م');
 
-  insertMsg.run(
-    'm_5', 'c_karim', 'u_karim',
-    'مؤشر السوق قفل على ارتفاع 2.4% النهاردة، السيولة داخلة بقوة في قطاع التكنولوجيا 📈',
-    'text', null, null, null, null, null, null, JSON.stringify({ '🚀': ['u_youssef'] }), '08:15 م'
-  );
+  // 5. Real Voice Note with 2x Speed + Transcript
+  insertMsg.run('m_5', 'c_mariam', 'u_mariam', 'رسالة صوتية', 'audio', '/uploads/seed/voice_note_1.wav', 'أيوه كل حاجة جاهزة تمامًا، المايك والكاميرا اتظبطوا وهنطلع في الميعاد بالثانية!', null, 0, null, null, null, null, null, JSON.stringify({ heartfire: ['u_youssef'] }), '09:42 م');
 
-  insertMsg.run(
-    'm_6', 'c_nour', 'u_nour',
-    'بعتلك النسخة النهائية من الفيديو القصير، قول لي رأيك في الإيقاع السريع!',
-    'text', null, null, null, null, null, null, '{}', '07:50 م'
-  );
+  // 6. Real Circular Floating Video Note Bubble
+  insertMsg.run('m_6', 'c_mariam', 'u_mariam', 'رسالة فيديو دائرية', 'video_note', '/uploads/seed/reel2.mp4', null, null, 0, null, null, null, null, null, JSON.stringify({ gem: ['u_youssef'] }), '09:43 م');
 
-  insertMsg.run(
-    'm_7', 'c_founders', 'u_youssef',
-    'مساء النور جميعًا! شاركونا أحدث المشاريع اللي شغالين عليها الأسبوع ده 🔥',
-    'text', null, null, null, null, null, null, JSON.stringify({ '🔥': ['u_mariam', 'u_karim', 'u_nour'], '❤️': ['u_omar'] }), '06:30 م'
-  );
+  // 7. Telegram Interactive Dice Mini-Game in Karim's chat!
+  insertMsg.run('m_7', 'c_karim', 'u_karim', 'dice', 'game_dice', null, null, null, 0, null, JSON.stringify({ game: 'dice', result: 6 }), null, null, null, JSON.stringify({ party: ['u_youssef'] }), '08:15 م');
+  insertMsg.run('m_8', 'c_karim', 'u_karim', 'مؤشر السوق قفل على ارتفاع 2.4% النهاردة، السيولة داخلة بقوة 📈', 'text', null, null, null, 0, 'neon', null, null, null, null, JSON.stringify({ rocket: ['u_youssef'] }), '08:16 م');
 
-  // Live Rooms
+  insertMsg.run('m_9', 'c_nour', 'u_nour', 'بعتلك النسخة النهائية من الفيديو القصير، قول لي رأيك في الإيقاع السريع!', 'text', null, null, null, 0, null, null, null, null, null, '{}', '07:50 م');
+  insertMsg.run('m_10', 'c_founders', 'u_youssef', 'مساء النور جميعًا! شاركونا أحدث المشاريع اللي شغالين عليها الأسبوع ده 🔥', 'text', null, null, null, 0, null, null, null, null, null, JSON.stringify({ fire: ['u_mariam', 'u_karim'], rocket: ['u_nour'] }), '06:30 م');
+
   const insertLive = db.prepare(`
     INSERT INTO live_rooms (id, host_id, title, category, video_url, scene_preset, viewers_count, highlights_enabled, cooldown_sec, platform_cut_pct, total_gifts_egp)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -502,7 +429,6 @@ function seedInitialData() {
   insertLive.run('live_1', 'u_mariam', 'سهرة القاهرة المباشرة • موسيقى وتقنية 🎙️✨', 'بث مباشر', '/uploads/seed/reel1.mp4', 'cairo-studio', 4820, 1, 15, 25, 18400);
   insertLive.run('live_2', 'u_karim', 'نبض وول ستريت والبورصة المصرية لحظة بلحظة 📊', 'أسواق', '/uploads/seed/reel3.mp4', 'market-desk', 2390, 1, 15, 25, 9750);
 
-  // Ledger
   const insertLedger = db.prepare(`
     INSERT INTO ledger_entries (id, user_id, debit_account, credit_account, amount_egp, category, description)
     VALUES (?, ?, ?, ?, ?, ?, ?)

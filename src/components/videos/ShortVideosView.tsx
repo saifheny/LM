@@ -30,9 +30,10 @@ import { api, uploadFile } from '../../lib/api';
 import { ShortVideoItem, VideoCommentItem } from '../../types';
 import { UserAvatar, VerifiedIcon, VipBadge } from '../shared/LmBrandMark';
 import { LiveVoiceRecorder, SmartVoicePill } from '../shared/VoiceStudio2026';
+import { AnimatedEmoji, triggerInteractiveFx } from '../shared/InteractiveEmojiEngine';
 
-const REEL_REACTIONS = ['❤️', '🔥', '😂', '🤯', '👏'];
-const COMMENT_QUICK_EMOJIS = ['🔥', '😍', '😂', '👏', '💯', '❤️'];
+const REEL_3D_REACTIONS = ['heartfire', 'fire', 'bolt', 'mindblown', 'crown', 'gem'];
+const COMMENT_QUICK_3D = ['fire', 'starstruck', 'laugh', 'clap', 'hundred', 'heartfire'];
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -70,7 +71,7 @@ function ReelSlide({
   const [fast2x, setFast2x] = useState(false);
   const [reactionTrayOpen, setReactionTrayOpen] = useState(false);
   const [selectedEmoji, setSelectedEmoji] = useState<string | null>(null);
-  const [bursts, setBursts] = useState<Array<{ id: number; x: number; y: number; emoji: string }>>([]);
+  const [bursts, setBursts] = useState<Array<{ id: number; x: number; y: number; emojiId: string }>>([]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -98,15 +99,16 @@ function ReelSlide({
     }
   }
 
-  function spawnBurst(x: number, y: number, emoji = '❤️') {
+  function spawnBurst(x: number, y: number, emojiId = 'heartfire', screenX?: number, screenY?: number) {
     const id = Date.now() + Math.random();
-    setBursts(prev => [...prev, { id, x, y, emoji }]);
+    setBursts(prev => [...prev, { id, x, y, emojiId }]);
+    triggerInteractiveFx(emojiId, screenX, screenY);
     setTimeout(() => setBursts(prev => prev.filter(h => h.id !== id)), 1200);
   }
 
   function handleDoubleTap(e: React.MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnBurst(e.clientX - rect.left, e.clientY - rect.top, selectedEmoji || '❤️');
+    spawnBurst(e.clientX - rect.left, e.clientY - rect.top, selectedEmoji || 'heartfire', e.clientX, e.clientY);
     if (!item.likedByMe) onLike();
   }
 
@@ -169,14 +171,14 @@ function ReelSlide({
           </div>
         )}
 
-        {/* Double-Tap Emoji Bursts */}
+        {/* Double-Tap 3D Animated Emoji Bursts */}
         {bursts.map(b => (
           <div
             key={b.id}
-            style={{ left: b.x - 32, top: b.y - 32 }}
-            className="absolute pointer-events-none animate-float-heart z-30 text-6xl drop-shadow-2xl"
+            style={{ left: b.x - 42, top: b.y - 42 }}
+            className="absolute pointer-events-none animate-float-heart z-30"
           >
-            {b.emoji}
+            <AnimatedEmoji id={b.emojiId} size={84} />
           </div>
         ))}
 
@@ -236,18 +238,18 @@ function ReelSlide({
                   exit={{ opacity: 0, scale: 0.8, x: 10 }}
                   className="absolute end-12 top-0 px-2.5 py-1.5 rounded-full bg-black/75 backdrop-blur-2xl border border-white/20 flex items-center gap-2 shadow-2xl"
                 >
-                  {REEL_REACTIONS.map((emo) => (
+                  {REEL_3D_REACTIONS.map((emoId) => (
                     <button
-                      key={emo}
-                      onClick={() => {
-                        setSelectedEmoji(emo);
+                      key={emoId}
+                      onClick={(e) => {
+                        setSelectedEmoji(emoId);
                         setReactionTrayOpen(false);
-                        spawnBurst(150, 260, emo);
+                        spawnBurst(150, 260, emoId, e.clientX, e.clientY);
                         if (!item.likedByMe) onLike();
                       }}
-                      className="text-xl hover:scale-135 transition-transform cursor-pointer"
+                      className="hover:scale-130 transition-transform cursor-pointer"
                     >
-                      {emo}
+                      <AnimatedEmoji id={emoId} size={32} />
                     </button>
                   ))}
                 </motion.div>
@@ -256,17 +258,16 @@ function ReelSlide({
 
             <motion.button
               whileTap={{ scale: 1.35 }}
-              onClick={onLike}
+              onClick={(e) => {
+                triggerInteractiveFx(selectedEmoji || 'heartfire', e.clientX, e.clientY);
+                onLike();
+              }}
               className="flex flex-col items-center gap-1 cursor-pointer"
             >
-              {selectedEmoji && item.likedByMe ? (
-                <span className="text-3xl leading-none drop-shadow-lg">{selectedEmoji}</span>
+              {item.likedByMe ? (
+                <AnimatedEmoji id={selectedEmoji || 'heartfire'} size={36} />
               ) : (
-                <Heart
-                  className={`w-8 h-8 drop-shadow-[0_2px_8px_rgba(0,0,0,0.65)] ${
-                    item.likedByMe ? 'text-[#FF2D55] fill-[#FF2D55]' : 'text-white fill-white/90'
-                  }`}
-                />
+                <AnimatedEmoji id="heartfire" size={34} className="opacity-85 hover:opacity-100" />
               )}
               <span className="text-xs font-bold text-white font-mono-num drop-shadow">
                 {formatCompact(item.likesCount)}
@@ -761,17 +762,21 @@ export function ShortVideosView() {
                 </div>
               )}
 
-              {/* Quick Emoji Bar */}
+              {/* Quick 3D Animated Emoji Bar */}
               {!voiceMode && (
                 <div className="flex items-center justify-around py-0.5">
-                  {COMMENT_QUICK_EMOJIS.map((em) => (
+                  {COMMENT_QUICK_3D.map((emoId) => (
                     <button
-                      key={em}
+                      key={emoId}
                       type="button"
-                      onClick={() => setCommentText(prev => prev + em)}
-                      className="text-lg hover:scale-125 transition-transform cursor-pointer"
+                      onClick={(e) => {
+                        triggerInteractiveFx(emoId, e.clientX, e.clientY);
+                        const mapUni: Record<string, string> = { fire: '🔥', starstruck: '🤩', laugh: '😂', clap: '👏', hundred: '💯', heartfire: '❤️‍🔥' };
+                        setCommentText(prev => prev + (mapUni[emoId] || '🔥'));
+                      }}
+                      className="hover:scale-125 transition-transform cursor-pointer"
                     >
-                      {em}
+                      <AnimatedEmoji id={emoId} size={26} />
                     </button>
                   ))}
                 </div>

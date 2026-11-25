@@ -564,6 +564,9 @@ app.get('/api/conversations/:id/messages', (req, res) => {
         mediaUrl: r.media_url,
         transcript: r.transcript ? String(r.transcript) : null,
         sendEffect: r.send_effect ? String(r.send_effect) : null,
+        isSpoiler: Boolean(r.is_spoiler),
+        kineticStyle: r.kinetic_style ? String(r.kinetic_style) : null,
+        meta: r.meta_json ? (() => { try { return JSON.parse(String(r.meta_json)); } catch { return null; } })() : null,
         replyToId: r.reply_to_id ? String(r.reply_to_id) : null,
         replySender: r.reply_sender ? String(r.reply_sender) : null,
         replyText: r.reply_text ? String(r.reply_text) : null,
@@ -576,13 +579,19 @@ app.get('/api/conversations/:id/messages', (req, res) => {
 });
 
 app.post('/api/conversations/:id/messages', async (req, res) => {
-  const { senderId, content, msgType, mediaUrl, transcript, sendEffect, replyToId, replySender, replyText, invokeAi, sharedSnippet } = req.body as {
+  const {
+    senderId, content, msgType, mediaUrl, transcript, sendEffect,
+    isSpoiler, kineticStyle, meta, replyToId, replySender, replyText, invokeAi, sharedSnippet,
+  } = req.body as {
     senderId: string;
     content: string;
     msgType?: string;
     mediaUrl?: string;
     transcript?: string;
     sendEffect?: string;
+    isSpoiler?: boolean;
+    kineticStyle?: string;
+    meta?: Record<string, unknown>;
     replyToId?: string;
     replySender?: string;
     replyText?: string;
@@ -594,17 +603,49 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   }
   const nowStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
   const msgId = `m_${uuid().slice(0, 8)}`;
+
+  // Server-generated fair random result for Telegram mini-games (dice / slot / target)
+  let finalMeta = meta || null;
+  if (msgType === 'game_dice') {
+    const game = String(meta?.game || content || 'dice');
+    if (game === 'dice') {
+      finalMeta = { game: 'dice', result: Math.floor(Math.random() * 6) + 1 };
+    } else if (game === 'slot') {
+      const syms = ['💎', '👑', '⚡', '🔥', '7️⃣'];
+      const jackpot = Math.random() < 0.28;
+      const pick = syms[Math.floor(Math.random() * syms.length)];
+      finalMeta = {
+        game: 'slot',
+        reels: jackpot
+          ? [pick, pick, pick]
+          : [syms[Math.floor(Math.random() * syms.length)], syms[Math.floor(Math.random() * syms.length)], syms[Math.floor(Math.random() * syms.length)]],
+        jackpot,
+      };
+    } else {
+      const score = [100, 95, 80, 60, 40][Math.floor(Math.random() * 5)];
+      finalMeta = { game: 'target', score };
+    }
+  }
+
   db.prepare(`
-    INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, media_url, transcript, send_effect, reply_to_id, reply_sender, reply_text, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (
+      id, conversation_id, sender_id, content, msg_type, media_url, transcript, send_effect,
+      is_spoiler, kinetic_style, meta_json, reply_to_id, reply_sender, reply_text, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null,
-    transcript || (msgType === 'audio' ? 'تم تسجيل رسالة صوتية عبر استوديو LM الصوتي.' : null),
+    transcript || (msgType === 'audio' ? 'رسالة صوتية مسجّلة بتقنية LM Voice 2026.' : null),
     sendEffect || null,
+    isSpoiler ? 1 : 0,
+    kineticStyle || null,
+    finalMeta ? JSON.stringify(finalMeta) : null,
     replyToId || null, replySender || null, replyText || null, nowStr
   );
 
   broadcast('chat:message', { conversationId: req.params.id, msgId });
+  if (msgType === 'interactive_emoji') {
+    broadcast('chat:interactive_fx', { conversationId: req.params.id, emojiId: String(finalMeta?.emojiId || content) });
+  }
 
   let aiReply = null;
   if (invokeAi) {
@@ -625,6 +666,12 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   }
 
   res.json({ ok: true, id: msgId, aiReply });
+});
+
+app.post('/api/chat/interactive-fx', (req, res) => {
+  const { conversationId, emojiId } = req.body as { conversationId: string; emojiId: string };
+  broadcast('chat:interactive_fx', { conversationId, emojiId });
+  res.json({ ok: true });
 });
 
 app.post('/api/messages/:id/react', (req, res) => {

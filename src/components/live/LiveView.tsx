@@ -19,12 +19,13 @@ import { useApp } from '../../context/AppContext';
 import { api } from '../../lib/api';
 import { LiveRoomItem, LiveRoomState } from '../../types';
 import { RankBadge, UserAvatar, VipBadge } from '../shared/LmBrandMark';
+import { AnimatedEmoji, triggerInteractiveFx } from '../shared/InteractiveEmojiEngine';
 
 const GIFTS = [
-  { name: 'وردة', valueEgp: 25, emoji: '🌹' },
-  { name: 'تاج ذهبي', valueEgp: 150, emoji: '👑' },
-  { name: 'صقر ملكي', valueEgp: 500, emoji: '🦅' },
-  { name: 'قلعة الإمبراطور', valueEgp: 1000, emoji: '🏰' },
+  { name: 'لهب بلازما', valueEgp: 50, emojiId: 'fire' },
+  { name: 'كريستال ماسي', valueEgp: 150, emojiId: 'gem' },
+  { name: 'تاج إمبراطوري', valueEgp: 500, emojiId: 'crown' },
+  { name: 'إطلاق صاروخي', valueEgp: 1000, emojiId: 'rocket' },
 ];
 
 export function LiveView() {
@@ -270,25 +271,31 @@ export function LiveView() {
           </div>
         )}
 
-        {/* Rising Floating Hearts */}
+        {/* Rising Floating 3D Animated Reactions */}
         <div className="absolute bottom-24 end-6 pointer-events-none z-20">
-          {floatingHearts.map((id, idx) => (
-            <div key={id} style={{ right: (idx % 3) * 14 }} className="absolute bottom-0 animate-float-heart">
-              <Heart className="w-8 h-8 text-[#FE2C55] fill-[#FE2C55]" />
-            </div>
-          ))}
+          {floatingHearts.map((id, idx) => {
+            const ids = ['bolt', 'fire', 'gem', 'crown', 'heartfire'];
+            return (
+              <div key={id} style={{ right: (idx % 3) * 18 }} className="absolute bottom-0 animate-float-heart">
+                <AnimatedEmoji id={ids[idx % ids.length]} size={42} />
+              </div>
+            );
+          })}
         </div>
 
-        {/* Bottom Glassmorphic Gifts & Quick Burst Bar over Stage */}
+        {/* Bottom Glassmorphic 3D Gifts & Interactive FX Bar over Stage */}
         <div className="absolute bottom-4 inset-x-4 z-20 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 bg-black/55 backdrop-blur-md p-1.5 rounded-full border border-white/12 overflow-x-auto">
+          <div className="flex items-center gap-1.5 bg-black/55 backdrop-blur-2xl p-1.5 rounded-full border border-white/15 overflow-x-auto">
             {GIFTS.map((g) => (
               <button
                 key={g.name}
-                onClick={() => sendGift(g.name, g.valueEgp)}
+                onClick={(e) => {
+                  triggerInteractiveFx(g.emojiId, e.clientX, e.clientY);
+                  sendGift(g.name, g.valueEgp);
+                }}
                 className="px-3 py-1.5 rounded-full hover:bg-white/15 flex items-center gap-1.5 text-xs transition-transform active:scale-95 cursor-pointer shrink-0"
               >
-                <span className="text-base">{g.emoji}</span>
+                <AnimatedEmoji id={g.emojiId} size={24} />
                 <span className="font-semibold hidden sm:inline">{g.name}</span>
                 <span className="font-mono-num text-[#F3D26B] text-[11px]">{g.valueEgp}</span>
               </button>
@@ -312,11 +319,16 @@ export function LiveView() {
               <Shield className="w-4 h-4 text-[#8774E1]" />
             </button>
 
+            {/* 3D Interactive Lightning / Plasma Reaction Trigger instead of old static heart */}
             <button
-              onClick={spawnHeart}
-              className="w-11 h-11 rounded-full bg-[#FE2C55] text-white flex items-center justify-center shadow-lg active:scale-125 transition-transform cursor-pointer"
+              onClick={(e) => {
+                triggerInteractiveFx('bolt', e.clientX, e.clientY);
+                spawnHeart();
+              }}
+              title={isAr ? 'تفاعل صاعقة 3D مباشر' : '3D Bolt FX'}
+              className="w-11 h-11 rounded-full bg-black/60 backdrop-blur-xl border border-[#38BDF8]/50 flex items-center justify-center shadow-lg active:scale-125 transition-transform cursor-pointer"
             >
-              <Heart className="w-5 h-5 fill-current" />
+              <AnimatedEmoji id="bolt" size={28} />
             </button>
           </div>
         </div>
