@@ -14,13 +14,15 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 7;
+const TARGET_DB_VERSION = 8;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
   if (verRow.user_version < TARGET_DB_VERSION) {
     db.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE IF EXISTS ai_messages;
+      DROP TABLE IF EXISTS ai_sessions;
       DROP TABLE IF EXISTS post_poll_votes;
       DROP TABLE IF EXISTS post_votes;
       DROP TABLE IF EXISTS post_comments;
@@ -250,6 +252,26 @@ export function initDatabase() {
       decision TEXT NOT NULL,
       reason TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      company_id TEXT DEFAULT 'gemini',
+      model_id TEXT DEFAULT 'gemini-4-hydrogen',
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      company_id TEXT,
+      model_label TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
     );
   `);
 

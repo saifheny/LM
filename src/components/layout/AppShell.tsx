@@ -1,11 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Compass,
-  Play,
-  Radio,
-  MessageCircle,
-  Sparkles,
   Search,
   SlidersHorizontal,
   LogOut,
@@ -16,6 +11,13 @@ import {
 } from 'lucide-react';
 import { Lang, NavTab, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
+import {
+  NavCommunityIcon,
+  NavPulseIcon,
+  NavLiveIcon,
+  NavChatIcon,
+  NavAiIcon,
+} from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet } from '../../lib/api';
 
@@ -36,22 +38,21 @@ export const NAV_ITEMS: Array<{
   id: NavTab;
   ar: string;
   en: string;
-  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  icon: React.ComponentType<{ active?: boolean; className?: string }>;
   liveDot?: boolean;
 }> = [
-  { id: 'social', ar: 'المجتمع', en: 'Feed', icon: Compass },
-  { id: 'videos', ar: 'ريلز', en: 'Reels', icon: Play },
-  { id: 'live', ar: 'مباشر', en: 'Live', icon: Radio, liveDot: true },
-  { id: 'chat', ar: 'الدردشة', en: 'Chat', icon: MessageCircle },
-  { id: 'ai', ar: 'LM AI', en: 'LM AI', icon: Sparkles },
+  { id: 'social', ar: 'المجتمع', en: 'Feed', icon: NavCommunityIcon },
+  { id: 'videos', ar: 'نبض', en: 'Pulse', icon: NavPulseIcon },
+  { id: 'live', ar: 'مباشر', en: 'Live', icon: NavLiveIcon, liveDot: true },
+  { id: 'chat', ar: 'الدردشة', en: 'Chat', icon: NavChatIcon },
+  { id: 'ai', ar: 'LM AI', en: 'LM AI', icon: NavAiIcon },
 ];
 
 /**
- * Innovative 2026 Split-Action Orb beside Floating Composers:
- * - Tapping splits smoothly UPWARD (right above bottom, NOT center screen) into 2 ascending action pills:
+ * Split-Action Orb beside Floating Composers:
+ * Tapping smoothly separates UPWARD (just above bottom) into 2 ascending pills:
  *   1) إرفاق ملف (Attach)
- *   2) الشريط السفلي (Open Full Bottom Dock without any X button — tap empty space to restore!)
- * - Collapses cleanly to width 0 when user focuses the composer input!
+ *   2) الشريط السفلي (Opens full-width bottom dock with ZERO X button — tap empty space to return!)
  */
 export function SplitComposerOrb({
   onAttach,
@@ -75,17 +76,16 @@ export function SplitComposerOrb({
           initial={{ opacity: 0, width: 0, scale: 0.82 }}
           animate={{ opacity: 1, width: 'auto', scale: 1 }}
           exit={{ opacity: 0, width: 0, scale: 0.82 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
           className="relative shrink-0"
         >
-          {/* Ascending Split Choices Right Above the Orb */}
           <AnimatePresence>
             {splitOpen && (
               <motion.div
-                initial={{ opacity: 0, y: 12, scale: 0.86 }}
+                initial={{ opacity: 0, y: 16, scale: 0.8 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.86 }}
-                transition={{ type: 'spring', stiffness: 460, damping: 28 }}
+                exit={{ opacity: 0, y: 12, scale: 0.8 }}
+                transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
                 onClick={e => e.stopPropagation()}
                 className="absolute bottom-[58px] start-0 z-40 flex flex-col gap-2 items-start"
               >
@@ -94,12 +94,12 @@ export function SplitComposerOrb({
                     type="button"
                     initial={{ opacity: 0, y: 14, scale: 0.85 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ delay: 0.03, type: 'spring', stiffness: 480, damping: 26 }}
+                    transition={{ delay: 0.03, duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
                     onClick={() => {
                       setSplitOpen(false);
                       onAttach();
                     }}
-                    className="h-10 px-3.5 rounded-full bg-[#16161C]/95 backdrop-blur-xl border border-white/[0.14] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-xl transition-colors"
+                    className="h-10 px-4 rounded-full bg-[#17171E]/95 backdrop-blur-2xl border border-white/[0.15] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-2xl transition-colors"
                   >
                     <Paperclip className="w-3.5 h-3.5" />
                     <span>إرفاق ملف</span>
@@ -109,15 +109,15 @@ export function SplitComposerOrb({
                 {showNavOption && (
                   <motion.button
                     type="button"
-                    initial={{ opacity: 0, y: 18, scale: 0.85 }}
+                    initial={{ opacity: 0, y: 20, scale: 0.85 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ delay: 0.06, type: 'spring', stiffness: 480, damping: 26 }}
+                    transition={{ delay: 0.07, duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
                     onClick={() => {
                       setSplitOpen(false);
                       setBottomDockHidden(false);
                       setMobileNavExpanded(true);
                     }}
-                    className="md:hidden h-10 px-3.5 rounded-full bg-[#16161C]/95 backdrop-blur-xl border border-white/[0.14] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-xl transition-colors"
+                    className="md:hidden h-10 px-4 rounded-full bg-[#17171E]/95 backdrop-blur-2xl border border-white/[0.15] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-2xl transition-colors"
                   >
                     <LayoutGrid className="w-3.5 h-3.5" />
                     <span>الشريط السفلي</span>
@@ -131,16 +131,15 @@ export function SplitComposerOrb({
             type="button"
             onClick={e => {
               e.stopPropagation();
-              // On desktop where bottom dock isn't needed, clicking directly attaches if only attach exists, else splits
               if (!showNavOption && onAttach) {
                 onAttach();
                 return;
               }
               setSplitOpen(v => !v);
             }}
-            aria-label="خيارات إضافية"
-            className={`w-[48px] h-[48px] rounded-full bg-[#131318]/95 backdrop-blur-xl border transition-all duration-200 flex items-center justify-center cursor-pointer active:scale-95 ${
-              splitOpen ? 'border-white/35 text-white bg-[#1D1D24]' : 'border-white/[0.12] text-[#D4D4D8] hover:text-white'
+            aria-label="خيارات"
+            className={`w-[48px] h-[48px] rounded-full bg-[#14141A]/95 backdrop-blur-2xl border transition-all duration-200 flex items-center justify-center cursor-pointer active:scale-95 ${
+              splitOpen ? 'border-white/35 text-white bg-[#1E1E26]' : 'border-white/[0.12] text-[#D4D4D8] hover:text-white'
             }`}
           >
             <Plus className={`w-5 h-5 transition-transform duration-200 ${splitOpen ? 'rotate-45' : ''}`} strokeWidth={1.9} />
@@ -223,33 +222,33 @@ export function AppShell({
     return () => clearTimeout(t);
   }, [searchQ, searchOpen]);
 
-  // Scroll-reactive bottom dock shrink/hide downward on scroll down, reappear smoothly on scroll up!
+  // Balanced medium-threshold scroll detection for Center-Pinch hide/show
   function handleMainScroll(e: React.UIEvent<HTMLElement>) {
     const top = e.currentTarget.scrollTop;
     const delta = top - lastScrollTopRef.current;
-    if (top < 24) {
+    if (top < 28) {
       setBottomDockHidden(false);
-    } else if (delta > 10) {
+    } else if (delta > 14) {
       setBottomDockHidden(true);
-    } else if (delta < -6) {
+    } else if (delta < -10) {
       setBottomDockHidden(false);
     }
     lastScrollTopRef.current = top;
   }
 
-  // On mobile: Bottom Dock is visible on Social, Reels, Settings, Chat List (!chatInThread), OR whenever user expanded it from Split Orb!
   const isComposerManagedView =
     activeTab === 'live' || activeTab === 'ai' || (activeTab === 'chat' && chatInThread);
 
   const shouldRenderMobileBottomDock =
     !composerFocused && (!isComposerManagedView || mobileNavExpanded);
 
+  const showPulseCornerOrb = activeTab === 'videos' && bottomDockHidden && !composerFocused;
   const isFullHeightViewport = activeTab === 'videos' || activeTab === 'live' || activeTab === 'chat' || activeTab === 'ai';
 
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="h-screen w-screen bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none">
-      {/* DESKTOP / LAPTOP SIDE RAIL */}
-      <aside className="hidden md:flex flex-col justify-between w-[72px] lg:w-[214px] shrink-0 h-full bg-[#0A0A0C] border-e border-white/[0.07] py-5 px-3 z-30">
+      {/* DESKTOP / LAPTOP SIDE RAIL with 2026 Custom Icons */}
+      <aside className="hidden md:flex flex-col justify-between w-[74px] lg:w-[216px] shrink-0 h-full bg-[#0A0A0C] border-e border-white/[0.07] py-5 px-3 z-30">
         <div className="space-y-6">
           <button
             type="button"
@@ -269,14 +268,14 @@ export function AppShell({
                   key={item.id}
                   type="button"
                   onClick={() => onSelectTab(item.id)}
-                  className={`w-full h-11 px-3 rounded-full flex items-center gap-3.5 text-[14.5px] transition-colors cursor-pointer ${
+                  className={`w-full h-11 px-3 rounded-2xl flex items-center gap-3.5 text-[14.5px] transition-colors cursor-pointer ${
                     active
                       ? 'bg-white/[0.11] text-white font-semibold'
                       : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
                   }`}
                 >
                   <span className="relative flex items-center justify-center shrink-0">
-                    <Icon className="w-[20px] h-[20px]" strokeWidth={active ? 2.2 : 1.75} />
+                    <Icon active={active} className="w-[21px] h-[21px]" />
                     {item.liveDot && (
                       <span className="absolute -top-0.5 -end-0.5 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
                     )}
@@ -289,7 +288,7 @@ export function AppShell({
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="w-full h-11 px-3 rounded-full flex items-center gap-3.5 text-[14.5px] text-[#8E8E93] hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
+              className="w-full h-11 px-3 rounded-2xl flex items-center gap-3.5 text-[14.5px] text-[#8E8E93] hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
             >
               <Search className="w-[20px] h-[20px] shrink-0" strokeWidth={1.75} />
               <span className="hidden lg:inline truncate">{lang === 'ar' ? 'بحث' : 'Search'}</span>
@@ -301,7 +300,7 @@ export function AppShell({
           <button
             type="button"
             onClick={() => onSelectTab('settings')}
-            className={`w-full h-10 px-3 rounded-full flex items-center gap-3.5 text-[13.5px] transition-colors cursor-pointer ${
+            className={`w-full h-10 px-3 rounded-2xl flex items-center gap-3.5 text-[13.5px] transition-colors cursor-pointer ${
               activeTab === 'settings'
                 ? 'bg-white/[0.11] text-white font-semibold'
                 : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
@@ -314,12 +313,12 @@ export function AppShell({
           <button
             type="button"
             onClick={() => setAccountOpen(true)}
-            className="w-full p-2 rounded-full hover:bg-white/[0.05] flex items-center gap-2.5 cursor-pointer transition-colors text-start"
+            className="w-full p-2 rounded-2xl hover:bg-white/[0.05] flex items-center gap-2.5 cursor-pointer transition-colors text-start"
           >
             <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={34} online={wsOnline} />
             <div className="hidden lg:block min-w-0 flex-1">
               <div className="text-xs font-semibold text-white truncate">{user.displayName}</div>
-              <div className="text-[11px] text-[#71717A] font-mono-num truncate">@{user.username}</div>
+              <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{user.username}</div>
             </div>
           </button>
         </div>
@@ -336,21 +335,38 @@ export function AppShell({
         {children}
       </main>
 
-      {/* 2026 MOBILE FULL-WIDTH TOP-ROUNDED BOTTOM DOCK (rounded-t-[26px] rounded-b-none, NO X button, Scroll Shrink-Down Animation!) */}
+      {/* 2026 MOBILE BOTTOM DOCK: Top-Rounded Only + Medium-Paced Center-Pinch Implosion Animation! */}
       <AnimatePresence>
         {shouldRenderMobileBottomDock && (
           <motion.nav
             key="mobile-bottom-sheet-dock"
-            initial={{ y: 84, scale: 0.9, opacity: 0 }}
+            style={{ transformOrigin: '50% 100%' }}
+            initial={{ scaleX: 0.24, scaleY: 0.45, y: 46, opacity: 0, borderTopLeftRadius: 48, borderTopRightRadius: 48 }}
             animate={
               bottomDockHidden
-                ? { y: 86, scale: 0.84, opacity: 0, pointerEvents: 'none' as const }
-                : { y: 0, scale: 1, opacity: 1, pointerEvents: 'auto' as const }
+                ? {
+                    scaleX: 0.16,
+                    scaleY: 0.35,
+                    y: 48,
+                    opacity: 0,
+                    borderTopLeftRadius: 60,
+                    borderTopRightRadius: 60,
+                    pointerEvents: 'none' as const,
+                  }
+                : {
+                    scaleX: 1,
+                    scaleY: 1,
+                    y: 0,
+                    opacity: 1,
+                    borderTopLeftRadius: 26,
+                    borderTopRightRadius: 26,
+                    pointerEvents: 'auto' as const,
+                  }
             }
-            exit={{ y: 84, scale: 0.88, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+            exit={{ scaleX: 0.16, scaleY: 0.35, y: 48, opacity: 0 }}
+            transition={{ duration: 0.42, ease: [0.32, 0.72, 0, 1] }}
             onClick={e => e.stopPropagation()}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-t-[26px] rounded-b-none bg-[#121216]/94 backdrop-blur-2xl border-t border-white/[0.11] px-3 pt-2.5 pb-3 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]"
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-b-none bg-[#121218]/94 backdrop-blur-2xl border-t border-white/[0.11] px-3 pt-2.5 pb-3 shadow-[0_-12px_36px_rgba(0,0,0,0.5)]"
           >
             <div className="flex items-center justify-around gap-1">
               {NAV_ITEMS.map(item => {
@@ -364,12 +380,12 @@ export function AppShell({
                       onSelectTab(item.id);
                       setMobileNavExpanded(false);
                     }}
-                    className={`relative flex flex-col items-center justify-center gap-1 px-3 py-1.5 rounded-2xl transition-colors cursor-pointer ${
+                    className={`relative flex flex-col items-center justify-center gap-1 px-3 py-1.5 rounded-2xl transition-all duration-200 cursor-pointer ${
                       active ? 'text-white' : 'text-[#7A7A85] hover:text-[#D4D4D8]'
                     }`}
                   >
                     <span className="relative flex items-center justify-center">
-                      <Icon className="w-[21px] h-[21px]" strokeWidth={active ? 2.3 : 1.75} />
+                      <Icon active={active} className="w-[22px] h-[22px]" />
                       {item.liveDot && (
                         <span className="absolute -top-0.5 -end-1 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
                       )}
@@ -379,8 +395,8 @@ export function AppShell({
                     </span>
                     {active && (
                       <motion.span
-                        layoutId="dock-active-dot"
-                        className="absolute -top-1 w-5 h-[2.5px] rounded-full bg-white"
+                        layoutId="dock-active-bar"
+                        className="absolute -top-1 w-6 h-[2.5px] rounded-full bg-white"
                       />
                     )}
                   </button>
@@ -400,6 +416,28 @@ export function AppShell({
         )}
       </AnimatePresence>
 
+      {/* PULSE ("نبض") CORNER MORPH ORB: When scrolling down on Pulse, Dock morphs into a sleek corner icon instead of vanishing! */}
+      <AnimatePresence>
+        {showPulseCornerOrb && (
+          <motion.button
+            key="pulse-corner-dock-orb"
+            type="button"
+            initial={{ opacity: 0, scale: 0.4, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.4, y: 16 }}
+            transition={{ duration: 0.36, ease: [0.32, 0.72, 0, 1] }}
+            onClick={e => {
+              e.stopPropagation();
+              setBottomDockHidden(false);
+            }}
+            aria-label="إظهار الشريط السفلي"
+            className="md:hidden fixed bottom-4 start-4 z-40 w-11 h-11 rounded-full bg-[#14141A]/85 backdrop-blur-2xl border border-white/[0.16] text-white flex items-center justify-center shadow-2xl cursor-pointer active:scale-90"
+          >
+            <LayoutGrid className="w-[19px] h-[19px]" strokeWidth={1.9} />
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       {/* Account Switcher & Quick Settings Modal */}
       {accountOpen && (
         <div
@@ -408,7 +446,7 @@ export function AppShell({
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[340px] rounded-2xl bg-[#121216] border border-white/[0.12] overflow-hidden text-start"
+            className="w-full max-w-[340px] rounded-2xl bg-[#131318] border border-white/[0.12] overflow-hidden text-start"
           >
             <div className="px-4 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -418,12 +456,9 @@ export function AppShell({
                     <span>{user.displayName}</span>
                     {user.verified && <VerifiedIcon />}
                   </div>
-                  <div className="text-xs text-[#71717A] font-mono-num">@{user.username}</div>
+                  <div className="text-xs text-[#7A7A85] font-mono-num">@{user.username}</div>
                 </div>
               </div>
-              <button type="button" onClick={() => setAccountOpen(false)} className="text-[#71717A] hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
             </div>
 
             <div className="py-1 border-b border-white/[0.08]">
@@ -492,10 +527,10 @@ export function AppShell({
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[540px] bg-[#121216] border border-white/[0.12] rounded-2xl overflow-hidden text-start"
+            className="w-full max-w-[540px] bg-[#131318] border border-white/[0.12] rounded-2xl overflow-hidden text-start"
           >
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-3">
-              <Search className="w-4 h-4 text-[#71717A]" />
+              <Search className="w-4 h-4 text-[#7A7A85]" />
               <input
                 autoFocus
                 value={searchQ}
@@ -506,7 +541,7 @@ export function AppShell({
               <button
                 type="button"
                 onClick={() => setSearchOpen(false)}
-                className="w-6 h-6 rounded-full flex items-center justify-center text-[#71717A] hover:text-white cursor-pointer"
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[#7A7A85] hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -528,7 +563,7 @@ export function AppShell({
                       <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={32} />
                       <div>
                         <div className="text-xs font-semibold text-white">{u.displayName}</div>
-                        <div className="text-[11px] text-[#71717A]">@{u.username}</div>
+                        <div className="text-[11px] text-[#7A7A85]">@{u.username}</div>
                       </div>
                     </button>
                   ))}
@@ -548,7 +583,7 @@ export function AppShell({
                       className="w-full px-4 py-2 hover:bg-white/[0.04] cursor-pointer text-start"
                     >
                       <div className="text-xs text-[#E4E4E7] line-clamp-1">{String(p.content)}</div>
-                      <div className="text-[11px] text-[#71717A] mt-0.5">@{String(p.username)}</div>
+                      <div className="text-[11px] text-[#7A7A85] mt-0.5">@{String(p.username)}</div>
                     </button>
                   ))}
                 </div>

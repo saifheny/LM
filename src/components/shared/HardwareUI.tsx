@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ArrowUp, Paperclip, Sparkles } from 'lucide-react';
 
 export function ChromeArrowButton({
@@ -33,10 +33,9 @@ export function ChromeArrowButton({
 }
 
 /**
- * ChatGPT / Gemini-Grade Auto-Expanding Multiline Composer Pill:
- * - Starts as a sleek 48px capsule
- * - Expands UPWARD smoothly as you write multiple lines up to 148px, then scrolls vertically cleanly!
- * - Enter submits, Shift+Enter adds a newline.
+ * Centered & Auto-Expanding Multiline Composer Pill (ChatGPT / Gemini 2026 Precision):
+ * - Single-line text & placeholder sit DEAD-CENTER vertically and cleanly aligned!
+ * - Smoothly expands UPWARD line-by-line up to 148px as text wraps, then scrolls vertically.
  */
 export function ObsidianComposerPill({
   value,
@@ -68,13 +67,16 @@ export function ObsidianComposerPill({
   onBlur?: () => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const [multiline, setMultiline] = useState(false);
 
   useEffect(() => {
     const el = taRef.current;
     if (!el) return;
-    el.style.height = '24px';
-    const nextH = Math.min(148, Math.max(24, el.scrollHeight));
+    el.style.height = '22px';
+    const sh = el.scrollHeight;
+    const nextH = Math.min(148, Math.max(22, sh));
     el.style.height = `${nextH}px`;
+    setMultiline(sh > 30);
   }, [value]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -89,9 +91,11 @@ export function ObsidianComposerPill({
   return (
     <form
       onSubmit={onSubmit}
-      className="w-full min-h-[48px] rounded-[25px] bg-[#131318]/94 backdrop-blur-xl border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex items-end gap-2 transition-all"
+      className={`w-full min-h-[48px] rounded-[25px] bg-[#14141A]/95 backdrop-blur-xl border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex gap-2 transition-all ${
+        multiline ? 'items-end' : 'items-center'
+      }`}
     >
-      {extraStart && <div className="pb-1 shrink-0">{extraStart}</div>}
+      {extraStart && <div className="shrink-0 flex items-center">{extraStart}</div>}
 
       <textarea
         ref={taRef}
@@ -102,10 +106,12 @@ export function ObsidianComposerPill({
         onFocus={onFocus}
         onBlur={onBlur}
         placeholder={placeholder}
-        className="flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] placeholder:text-[#63636C] outline-none resize-none overflow-y-auto py-1.5 min-w-0 max-h-[148px]"
+        className={`flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] placeholder:text-[#686872] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] ${
+          !value ? 'text-center placeholder:text-center' : 'text-start'
+        } ${multiline ? 'py-1.5' : 'py-0'}`}
       />
 
-      <div className="flex items-center gap-1 pb-0.5 shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
         {onAttach && (
           <button
             type="button"

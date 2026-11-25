@@ -12,10 +12,8 @@ import {
   Volume2,
   VolumeX,
   Plus,
-  X,
   Mic,
   CornerDownLeft,
-  Play,
   Link2,
   Download,
   Repeat2,
@@ -23,6 +21,7 @@ import {
   EyeOff,
   Check,
   Send,
+  FastForward,
 } from 'lucide-react';
 
 import { ConversationItem, Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
@@ -30,6 +29,7 @@ import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
+import { PulsePlayGlyph, SharePlatformIcons } from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
@@ -44,14 +44,19 @@ function compactNum(n: number): string {
   return String(n);
 }
 
-const SHARE_PLATFORMS = [
-  { id: 'copy', label: 'نسخ الرابط', bg: '#27272F', glyph: '🔗' },
-  { id: 'whatsapp', label: 'واتساب', bg: '#16A34A', glyph: '💬' },
-  { id: 'telegram', label: 'تيليجرام', bg: '#0284C7', glyph: '✈️' },
-  { id: 'instagram', label: 'إنستجرام', bg: '#DB2777', glyph: '📷' },
-  { id: 'x', label: 'X', bg: '#18181B', glyph: '𝕏' },
-  { id: 'facebook', label: 'فيسبوك', bg: '#2563EB', glyph: 'f' },
-  { id: 'sms', label: 'رسائل', bg: '#059669', glyph: '✉️' },
+function fmtSec(sec: number): string {
+  const s = Math.max(0, Math.floor(sec || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+const SHARE_PLATFORMS: Array<{ id: keyof typeof SharePlatformIcons; label: string; bg: string }> = [
+  { id: 'copy', label: 'نسخ الرابط', bg: '#25252D' },
+  { id: 'whatsapp', label: 'واتساب', bg: '#16A34A' },
+  { id: 'telegram', label: 'تيليجرام', bg: '#0EA5E9' },
+  { id: 'instagram', label: 'إنستجرام', bg: '#E1306C' },
+  { id: 'x', label: 'X', bg: '#18181D' },
+  { id: 'facebook', label: 'فيسبوك', bg: '#2563EB' },
+  { id: 'sms', label: 'رسائل', bg: '#10B981' },
 ];
 
 export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
@@ -61,31 +66,36 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(false);
-  const [progressPct, setProgressPct] = useState(0);
+  const [speed2x, setSpeed2x] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(15);
+  const [isScrubbing, setIsScrubbing] = useState(false);
   const [expandedCaptions, setExpandedCaptions] = useState<Record<string, boolean>>({});
 
-  // Rapid multi-tap burst engine
+  // Rapid multi-tap burst + Long-Press 2x refs
   const [bursts, setBursts] = useState<TapBurstItem[]>([]);
   const comboRef = useRef({ count: 0, lastMs: 0 });
   const singleTapTimerRef = useRef<number | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
   const prevSlideIdxRef = useRef(0);
 
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
 
-  // Comments Drawer
+  // Comments Sheet (NO X button — tap outside to close!)
   const [drawerVideo, setDrawerVideo] = useState<ShortVideoItem | null>(null);
   const [comments, setComments] = useState<VideoCommentItem[]>([]);
   const [commentDraft, setCommentDraft] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
   const [recordingVoice, setRecordingVoice] = useState(false);
 
-  // Authentic TikTok Bottom Share Sheet
+  // Share Sheet (NO X button, Authentic Brand Vector Icons — ZERO emojis!)
   const [shareVideo, setShareVideo] = useState<ShortVideoItem | null>(null);
   const [contacts, setContacts] = useState<ConversationItem[]>([]);
   const [sentToIds, setSentToIds] = useState<Record<string, boolean>>({});
   const [shareToast, setShareToast] = useState('');
 
-  // Upload Reel Modal
+  // Upload Pulse Modal
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
@@ -110,9 +120,11 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
 
   useEffect(() => {
     setPaused(false);
-    setProgressPct(0);
+    setSpeed2x(false);
+    setCurrentTime(0);
     Object.entries(videoRefs.current).forEach(([idxStr, el]) => {
       if (!el) return;
+      el.playbackRate = 1;
       if (Number(idxStr) === activeIndex) {
         el.currentTime = 0;
         el.play().catch(() => {});
@@ -134,25 +146,51 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
     }
   }
 
-  async function toggleLike(v: ShortVideoItem, forceLike = false) {
-    const res = await apiPost<{ ok: boolean; liked: boolean }>(`/api/videos/${v.id}/like`, {
-      userId: user.id,
-      forceLike,
-    });
-    setVideos(prev =>
-      prev.map(item =>
-        item.id === v.id
-          ? {
-              ...item,
-              likedByMe: res.liked,
-              likesCount: res.liked ? item.likesCount + 1 : Math.max(0, item.likesCount - 1),
-            }
-          : item
-      )
-    );
+  function scrubTo(nextSec: number) {
+    const el = videoRefs.current[activeIndex];
+    if (!el) return;
+    el.currentTime = nextSec;
+    setCurrentTime(nextSec);
   }
 
-  function handleStagePointer(e: React.MouseEvent<HTMLDivElement>, v: ShortVideoItem) {
+  /**
+   * Unified 2026 Stage Gesture Controller:
+   * - Long-Press (> 280ms) -> Instant 2x playback speed while holding!
+   * - Release from Long-Press -> Smoothly restores 1x without pausing!
+   * - Single Quick Tap -> Play / Pause with sleek curved translucent Play glyph
+   * - Rapid Multi-Taps -> TikTok multi-design bursts + Like combo!
+   */
+  function handleStagePointerDown() {
+    longPressTriggeredRef.current = false;
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = window.setTimeout(() => {
+      const el = videoRefs.current[activeIndex];
+      if (el && !el.paused) {
+        longPressTriggeredRef.current = true;
+        el.playbackRate = 2;
+        setSpeed2x(true);
+      }
+    }, 280);
+  }
+
+  function releaseLongPressSpeed() {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (longPressTriggeredRef.current) {
+      const el = videoRefs.current[activeIndex];
+      if (el) el.playbackRate = 1;
+      setSpeed2x(false);
+    }
+  }
+
+  function handleStageClick(e: React.MouseEvent<HTMLDivElement>, v: ShortVideoItem) {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -181,6 +219,24 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
       togglePlayPause();
       singleTapTimerRef.current = null;
     }, 240);
+  }
+
+  async function toggleLike(v: ShortVideoItem, forceLike = false) {
+    const res = await apiPost<{ ok: boolean; liked: boolean }>(`/api/videos/${v.id}/like`, {
+      userId: user.id,
+      forceLike,
+    });
+    setVideos(prev =>
+      prev.map(item =>
+        item.id === v.id
+          ? {
+              ...item,
+              likedByMe: res.liked,
+              likesCount: res.liked ? item.likesCount + 1 : Math.max(0, item.likesCount - 1),
+            }
+          : item
+      )
+    );
   }
 
   async function toggleSave(v: ShortVideoItem) {
@@ -215,12 +271,12 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
     }
   }
 
-  async function sendReelToContact(conv: ConversationItem) {
+  async function sendPulseToContact(conv: ConversationItem) {
     if (!shareVideo) return;
     setSentToIds(prev => ({ ...prev, [conv.id]: true }));
     await apiPost(`/api/conversations/${conv.id}/messages`, {
       senderId: user.id,
-      content: `شارك فيديو: ${shareVideo.title.slice(0, 70)}`,
+      content: `شارك نبض: ${shareVideo.title.slice(0, 70)}`,
       msgType: 'video_note',
       mediaUrl: shareVideo.videoUrl || '/uploads/seed/reel1.mp4',
     });
@@ -280,7 +336,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
     e.target.value = '';
   }
 
-  async function publishReel(e: React.FormEvent) {
+  async function publishPulse(e: React.FormEvent) {
     e.preventDefault();
     if (!newTitle.trim()) return;
     await apiPost('/api/videos', {
@@ -298,16 +354,17 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
 
   const rootComments = comments.filter(c => !c.parentId);
   const repliesOf = (id: string) => comments.filter(c => c.parentId === id);
+  const progressPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
   return (
     <div className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center">
       <div className="relative w-full h-full max-w-[500px] mx-auto bg-black overflow-hidden">
-        {/* Centered Top TikTok Tabs: متابعون | أصدقاء | لك */}
+        {/* Centered Top Tabs: متابعون | أصدقاء | لك */}
         <div className="absolute top-4 inset-x-4 z-30 flex items-center justify-between pointer-events-none">
           <button
             type="button"
             onClick={() => setMuted(m => !m)}
-            className="pointer-events-auto w-8 h-8 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.12] text-white flex items-center justify-center cursor-pointer"
+            className="pointer-events-auto w-8 h-8 rounded-full bg-black/45 backdrop-blur-md border border-white/[0.12] text-white flex items-center justify-center cursor-pointer"
           >
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
@@ -344,7 +401,15 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
           </button>
         </div>
 
-        {/* Full-Screen Vertical Swiper (Scroll down shrinks & hides bottom dock, scroll up brings it back!) */}
+        {/* Live 2x Speed Pill Indicator (Appears While Long-Pressing!) */}
+        {speed2x && (
+          <div className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-xs font-mono-num font-semibold text-white flex items-center gap-1.5">
+            <FastForward className="w-3.5 h-3.5 fill-current" />
+            <span>2x</span>
+          </div>
+        )}
+
+        {/* Full-Screen Vertical Pulse Feed */}
         <Swiper
           direction="vertical"
           modules={[Mousewheel, Keyboard]}
@@ -369,7 +434,14 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
 
             return (
               <SwiperSlide key={`${feedTab}-${v.id}`} className="w-full h-full relative bg-black">
-                <div onClick={e => handleStagePointer(e, v)} className="w-full h-full relative cursor-pointer">
+                <div
+                  onPointerDown={handleStagePointerDown}
+                  onPointerUp={releaseLongPressSpeed}
+                  onPointerLeave={releaseLongPressSpeed}
+                  onPointerCancel={releaseLongPressSpeed}
+                  onClick={e => handleStageClick(e, v)}
+                  className="w-full h-full relative cursor-pointer"
+                >
                   <video
                     ref={el => {
                       videoRefs.current[idx] = el;
@@ -380,8 +452,14 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                     playsInline
                     muted={muted}
                     onTimeUpdate={e => {
+                      if (idx === activeIndex && !isScrubbing) {
+                        setCurrentTime(e.currentTarget.currentTime);
+                        if (e.currentTarget.duration) setDuration(e.currentTarget.duration);
+                      }
+                    }}
+                    onLoadedMetadata={e => {
                       if (idx === activeIndex && e.currentTarget.duration) {
-                        setProgressPct((e.currentTarget.currentTime / e.currentTarget.duration) * 100);
+                        setDuration(e.currentTarget.duration);
                       }
                     }}
                     className="w-full h-full object-cover"
@@ -389,19 +467,20 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
 
                   {idx === activeIndex && <TapBurstOverlay items={bursts} />}
 
-                  {/* EXACT TIKTOK TRANSLUCENT CENTERED PAUSE ICON (Zero seek buttons, zero dark circle box!) */}
+                  {/* Modern Organic Curved Translucent Play Icon (Zero old sharp triangle!) */}
                   {idx === activeIndex && paused && (
                     <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
-                      <Play className="w-16 h-16 text-white/60 fill-white/60 drop-shadow-[0_4px_20px_rgba(0,0,0,0.45)]" />
+                      <PulsePlayGlyph className="w-[72px] h-[72px] drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]" />
                     </div>
                   )}
 
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
 
-                  {/* Bottom Metadata with Expandable "المزيد / أقل" for Long Titles */}
+                  {/* Bottom Metadata with Expandable "المزيد / أقل" */}
                   <div
                     onClick={e => e.stopPropagation()}
-                    className="absolute bottom-20 md:bottom-8 start-4 end-16 z-20 text-start space-y-1"
+                    onPointerDown={e => e.stopPropagation()}
+                    className="absolute bottom-24 md:bottom-10 start-4 end-16 z-20 text-start space-y-1"
                   >
                     <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
                       <span>@{v.username}</span>
@@ -415,7 +494,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                           <button
                             type="button"
                             onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: true }))}
-                            className="text-white/70 hover:text-white font-semibold cursor-pointer"
+                            className="text-white/75 hover:text-white font-semibold cursor-pointer"
                           >
                             المزيد
                           </button>
@@ -427,7 +506,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                             <button
                               type="button"
                               onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: false }))}
-                              className="ms-1.5 text-white/70 hover:text-white font-semibold cursor-pointer"
+                              className="ms-1.5 text-white/75 hover:text-white font-semibold cursor-pointer"
                             >
                               أقل
                             </button>
@@ -445,7 +524,11 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                   </div>
 
                   {/* Right Action Rail (Static Audio Icon) */}
-                  <div onClick={e => e.stopPropagation()} className="absolute bottom-20 md:bottom-8 end-3 z-20 flex flex-col items-center gap-4">
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    onPointerDown={e => e.stopPropagation()}
+                    className="absolute bottom-24 md:bottom-10 end-3 z-20 flex flex-col items-center gap-4"
+                  >
                     <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={42} />
 
                     <button type="button" onClick={() => toggleLike(v)} className="flex flex-col items-center gap-1 cursor-pointer">
@@ -479,10 +562,38 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                     </div>
                   </div>
 
-                  {/* Razor-Thin 2px Hairline Playback Progress Indicator */}
+                  {/* Interactive Hairline TikTok Scrub Bar (Drag to Seek Start -> End Smoothly!) */}
                   {idx === activeIndex && (
-                    <div className="pointer-events-none absolute bottom-0 inset-x-0 h-[2px] bg-white/15 z-20">
-                      <div style={{ width: `${progressPct}%` }} className="h-full bg-white/80 transition-[width] duration-150" />
+                    <div
+                      onClick={e => e.stopPropagation()}
+                      onPointerDown={e => e.stopPropagation()}
+                      className="group absolute bottom-[72px] md:bottom-2 inset-x-3 z-30 py-2 flex flex-col items-center"
+                    >
+                      {isScrubbing && (
+                        <div className="mb-2 px-3 py-1 rounded-full bg-black/80 border border-white/15 text-xs font-mono-num text-white">
+                          {fmtSec(currentTime)} <span className="text-white/50">/</span> {fmtSec(duration)}
+                        </div>
+                      )}
+                      <div className="relative w-full h-1 group-hover:h-1.5 transition-all rounded-full bg-white/20 flex items-center">
+                        <div
+                          style={{ width: `${progressPct}%` }}
+                          className="h-full rounded-full bg-white transition-[width] duration-75"
+                        />
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(1, duration)}
+                          step={0.05}
+                          value={Math.min(currentTime, duration)}
+                          onMouseDown={() => setIsScrubbing(true)}
+                          onTouchStart={() => setIsScrubbing(true)}
+                          onMouseUp={() => setIsScrubbing(false)}
+                          onTouchEnd={() => setIsScrubbing(false)}
+                          onChange={e => scrubTo(Number(e.target.value))}
+                          aria-label="شريط التمرير"
+                          className="absolute inset-0 w-full h-4 -top-1.5 opacity-0 cursor-pointer"
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -498,23 +609,17 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
         )}
       </div>
 
-      {/* FULL TIKTOK BOTTOM SHARE SHEET */}
+      {/* FULL TIKTOK BOTTOM SHARE SHEET (ZERO X Button — Tap Any Empty Area Outside to Close! Authentic Vector Icons!) */}
       {shareVideo && (
         <div onClick={() => setShareVideo(null)} className="fixed inset-0 z-50 bg-black/65 flex items-end justify-center">
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[500px] rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pb-6 pt-3 px-4 space-y-4"
+            className="w-full max-w-[500px] rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pb-6 pt-2.5 px-4 space-y-4"
           >
-            <div className="flex items-center justify-between">
-              <span className="w-7" />
+            {/* Drag Handle Pill (NO X Button!) */}
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-10 h-1 rounded-full bg-white/25" />
               <span className="text-xs font-semibold text-white">مشاركة إلى</span>
-              <button
-                type="button"
-                onClick={() => setShareVideo(null)}
-                className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
             </div>
 
             {/* Row 1: Direct LM Contacts */}
@@ -526,8 +631,8 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                     <button
                       key={c.id}
                       type="button"
-                      onClick={() => sendReelToContact(c)}
-                      className="flex flex-col items-center gap-1.5 shrink-0 w-16 cursor-pointer group"
+                      onClick={() => sendPulseToContact(c)}
+                      className="flex flex-col items-center gap-1.5 shrink-0 w-16 cursor-pointer"
                     >
                       <div className="relative">
                         <UserAvatar initials={c.title.slice(0, 2)} avatarUrl={c.avatarUrl} size={46} />
@@ -546,31 +651,31 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
               </div>
             )}
 
-            {/* Row 2: External Platforms */}
-            <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pt-1 border-t border-white/[0.07]">
+            {/* Row 2: Authentic Vector Brand Icons (ZERO Emojis!) */}
+            <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pt-2 border-t border-white/[0.07]">
               {SHARE_PLATFORMS.map(p => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => {
                     navigator.clipboard?.writeText(window.location.href);
-                    showToast(p.id === 'copy' ? 'تم نسخ الرابط' : `تم تجهيز المشاركة عبر ${p.label}`);
+                    showToast(p.id === 'copy' ? 'تم نسخ الرابط' : `مشاركة عبر ${p.label}`);
                     setShareVideo(null);
                   }}
                   className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
                 >
                   <div
                     style={{ backgroundColor: p.bg }}
-                    className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold"
+                    className="w-11 h-11 rounded-full flex items-center justify-center border border-white/[0.08]"
                   >
-                    {p.glyph}
+                    {SharePlatformIcons[p.id]}
                   </div>
                   <span className="text-[10.5px] text-[#A1A1AA] truncate w-full text-center">{p.label}</span>
                 </button>
               ))}
             </div>
 
-            {/* Row 3: Video Quick Actions */}
+            {/* Row 3: Quick Actions */}
             <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pt-2 border-t border-white/[0.07]">
               {[
                 {
@@ -589,7 +694,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                   action: () => {
                     const a = document.createElement('a');
                     a.href = shareVideo.videoUrl || '/uploads/seed/reel1.mp4';
-                    a.download = `lm-reel-${shareVideo.id}.mp4`;
+                    a.download = `lm-pulse-${shareVideo.id}.mp4`;
                     a.click();
                     showToast('بدأ تنزيل الفيديو');
                     setShareVideo(null);
@@ -644,22 +749,16 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
         </div>
       )}
 
-      {/* Comments & Voice-Replies Sheet */}
+      {/* Comments & Voice-Replies Sheet (ZERO X Button — Tap Empty Backdrop to Close!) */}
       {drawerVideo && (
         <div onClick={() => setDrawerVideo(null)} className="fixed inset-0 z-50 bg-black/65 flex items-end justify-center">
           <div
             onClick={e => e.stopPropagation()}
             className="w-full max-w-[520px] h-[68vh] rounded-t-[26px] bg-[#121216] border-t border-x border-white/[0.12] flex flex-col overflow-hidden"
           >
-            <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
+            <div className="px-4 pt-2.5 pb-3 border-b border-white/[0.08] flex flex-col items-center gap-2">
+              <div className="w-10 h-1 rounded-full bg-white/25" />
               <span className="text-xs font-semibold text-white">{comments.length} تعليق</span>
-              <button
-                type="button"
-                onClick={() => setDrawerVideo(null)}
-                className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
@@ -762,19 +861,16 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
         </div>
       )}
 
-      {/* Upload Reel Modal */}
+      {/* Upload Pulse Modal (Tap Outside to Close) */}
       {uploadOpen && (
         <div onClick={() => setUploadOpen(false)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <form
             onClick={e => e.stopPropagation()}
-            onSubmit={publishReel}
+            onSubmit={publishPulse}
             className="w-full max-w-[400px] rounded-2xl bg-[#131318] border border-white/[0.12] p-5 space-y-3"
           >
-            <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
-              <span className="text-sm font-semibold text-white">نشر ريلز</span>
-              <button type="button" onClick={() => setUploadOpen(false)} className="text-[#7A7A85] hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
+            <div className="pb-2 border-b border-white/[0.08] text-center">
+              <span className="text-sm font-semibold text-white">نشر نبض جديد</span>
             </div>
             <input
               value={newTitle}

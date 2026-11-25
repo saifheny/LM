@@ -17,6 +17,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Bookmark,
+  Share2,
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination } from 'swiper/modules';
@@ -27,6 +29,7 @@ import { Lang, PostCommentItem, PostPoll, SocialPost, StoryItem, UserProfile } f
 import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
+import { NavAiIcon } from '../shared/Icons2026Pro';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface SocialViewProps {
@@ -71,6 +74,8 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   const [replyAiModeByPost, setReplyAiModeByPost] = useState<Record<string, boolean>>({});
   const [recordingPostId, setRecordingPostId] = useState<string | null>(null);
   const [submittingCommentPost, setSubmittingCommentPost] = useState<string | null>(null);
+  const [savedPosts, setSavedPosts] = useState<Record<string, boolean>>({});
+  const [doubleTapPostId, setDoubleTapPostId] = useState<string | null>(null);
 
   const loadFeed = useCallback(async () => {
     const [pRes, sRes] = await Promise.all([
@@ -171,6 +176,8 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
       window.clearTimeout(tapTimersRef.current[post.id]);
       lastTapMsRef.current[post.id] = 0;
       handleVote(post.id, 1, true);
+      setDoubleTapPostId(post.id);
+      setTimeout(() => setDoubleTapPostId(cur => (cur === post.id ? null : cur)), 650);
       return;
     }
 
@@ -398,9 +405,9 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                       </p>
                     )}
 
-                    {/* Media: Single-Tap opens Lightbox Viewer | Double-Tap triggers Upvote! */}
+                    {/* Media: Single-Tap opens Lightbox Viewer | Double-Tap triggers Upvote + Clean Visual Pulse! */}
                     {post.mediaUrls.length > 0 && (
-                      <div className="mt-3 rounded-2xl overflow-hidden border border-white/[0.08] bg-[#050507]">
+                      <div className="relative mt-3 rounded-2xl overflow-hidden border border-white/[0.08] bg-[#121216]">
                         {post.mediaUrls.length === 1 ? (
                           <img
                             src={post.mediaUrls[0]}
@@ -421,6 +428,13 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                               </SwiperSlide>
                             ))}
                           </Swiper>
+                        )}
+                        {doubleTapPostId === post.id && (
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20">
+                            <div className="w-16 h-16 rounded-full bg-black/55 backdrop-blur-md border border-white/25 flex items-center justify-center animate-ping">
+                              <ArrowBigUp className="w-9 h-9 text-white fill-white" />
+                            </div>
+                          </div>
                         )}
                       </div>
                     )}
@@ -457,53 +471,76 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                     )}
 
                     {/* Clean Action Bar */}
-                    <div className="mt-3 flex items-center gap-6 text-[#71717A]">
-                      {/* Upvote / Downvote */}
-                      <div className="inline-flex items-center rounded-full bg-[#09090B] border border-white/[0.08]">
+                    <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
+                      <div className="flex items-center gap-5">
+                        {/* Upvote / Downvote */}
+                        <div className="inline-flex items-center rounded-full bg-[#131318] border border-white/[0.08]">
+                          <button
+                            type="button"
+                            onClick={() => handleVote(post.id, 1)}
+                            className={`px-2 py-1 rounded-s-full flex items-center cursor-pointer transition-colors ${
+                              post.myVote === 1 ? 'text-white bg-white/[0.12]' : 'hover:text-white'
+                            }`}
+                          >
+                            <ArrowBigUp className={`w-4 h-4 ${post.myVote === 1 ? 'fill-current' : ''}`} />
+                          </button>
+                          <span className={`px-1.5 text-xs font-mono-num ${post.myVote !== 0 ? 'text-white font-semibold' : 'text-[#A1A1AA]'}`}>
+                            {formatCount(post.score)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleVote(post.id, -1)}
+                            className={`px-2 py-1 rounded-e-full flex items-center cursor-pointer transition-colors ${
+                              post.myVote === -1 ? 'text-[#EF4444] bg-white/[0.06]' : 'hover:text-white'
+                            }`}
+                          >
+                            <ArrowBigDown className={`w-4 h-4 ${post.myVote === -1 ? 'fill-current' : ''}`} />
+                          </button>
+                        </div>
+
+                        {/* Comments Toggle */}
                         <button
                           type="button"
-                          onClick={() => handleVote(post.id, 1)}
-                          className={`px-2 py-1 rounded-s-full flex items-center cursor-pointer transition-colors ${
-                            post.myVote === 1 ? 'text-white bg-white/[0.12]' : 'hover:text-white'
+                          onClick={() => toggleThread(post.id)}
+                          className={`flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer ${
+                            isThreadOpen ? 'text-white' : ''
                           }`}
                         >
-                          <ArrowBigUp className={`w-4 h-4 ${post.myVote === 1 ? 'fill-current' : ''}`} />
+                          <MessageCircle className="w-4 h-4" strokeWidth={1.75} />
+                          <span className="font-mono-num">{formatCount(post.commentsCount)}</span>
                         </button>
-                        <span className={`px-1.5 text-xs font-mono-num ${post.myVote !== 0 ? 'text-white font-semibold' : 'text-[#A1A1AA]'}`}>
-                          {formatCount(post.score)}
-                        </span>
+
+                        {/* Repost */}
                         <button
                           type="button"
-                          onClick={() => handleVote(post.id, -1)}
-                          className={`px-2 py-1 rounded-e-full flex items-center cursor-pointer transition-colors ${
-                            post.myVote === -1 ? 'text-[#EF4444] bg-white/[0.06]' : 'hover:text-white'
-                          }`}
+                          onClick={() => handleRepost(post.id)}
+                          className="flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer"
                         >
-                          <ArrowBigDown className={`w-4 h-4 ${post.myVote === -1 ? 'fill-current' : ''}`} />
+                          <Repeat2 className="w-4 h-4" strokeWidth={1.75} />
+                          <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
                         </button>
                       </div>
 
-                      {/* Comments Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => toggleThread(post.id)}
-                        className={`flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer ${
-                          isThreadOpen ? 'text-white' : ''
-                        }`}
-                      >
-                        <MessageCircle className="w-4 h-4" strokeWidth={1.75} />
-                        <span className="font-mono-num">{formatCount(post.commentsCount)}</span>
-                      </button>
-
-                      {/* Repost */}
-                      <button
-                        type="button"
-                        onClick={() => handleRepost(post.id)}
-                        className="flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer"
-                      >
-                        <Repeat2 className="w-4 h-4" strokeWidth={1.75} />
-                        <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSavedPosts(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
+                          title="حفظ"
+                          className={`w-7 h-7 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
+                            savedPosts[post.id] ? 'text-[#FACC15]' : 'hover:text-white'
+                          }`}
+                        >
+                          <Bookmark className={`w-4 h-4 ${savedPosts[post.id] ? 'fill-current' : ''}`} strokeWidth={1.75} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard?.writeText(window.location.href)}
+                          title="مشاركة"
+                          className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                        >
+                          <Share2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Threaded Comments with Voice Replies + In-Thread @LM AI! */}
@@ -616,10 +653,10 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                 onClick={() => setReplyAiModeByPost(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
                                 title="استدعاء LM AI في التعليقات"
                                 className={`w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
-                                  aiMode ? 'bg-white text-black' : 'text-[#71717A] hover:text-white'
+                                  aiMode ? 'bg-white text-black' : 'text-[#7A7A85] hover:text-white'
                                 }`}
                               >
-                                <Sparkles className="w-3.5 h-3.5" />
+                                <NavAiIcon active={aiMode} className="w-4 h-4" />
                               </button>
                               <button
                                 type="button"

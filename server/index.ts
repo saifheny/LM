@@ -923,11 +923,181 @@ app.post('/api/live/rooms/:id/moderate', (req, res) => {
 });
 
 // ============================================================
-// LM AI MULTI-PROVIDER GATEWAY
+// LM AI MULTI-PROVIDER GATEWAY & PERSISTENT CONVERSATIONS
 // ============================================================
+app.get('/api/ai/sessions', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const rows = db.prepare(
+    'SELECT * FROM ai_sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT 40'
+  ).all(userId);
+  res.json({ ok: true, sessions: rows });
+});
+
+app.get('/api/ai/sessions/:id/messages', (req, res) => {
+  const rows = db.prepare(
+    'SELECT * FROM ai_messages WHERE session_id = ? ORDER BY rowid ASC'
+  ).all(req.params.id);
+  res.json({ ok: true, messages: rows });
+});
+
+app.delete('/api/ai/sessions/:id', (req, res) => {
+  db.prepare('DELETE FROM ai_sessions WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.post('/api/ai/chat', async (req, res) => {
+  const { userId, prompt, provider, model, sessionId } = req.body as {
+    userId: string;
+    prompt: string;
+    provider?: string;
+    model?: string;
+    sessionId?: string | null;
+  };
   const result = await runLmAi(req.body);
-  res.json(result);
+
+  // Persist AI conversation history automatically for ai_tab sessions
+  let activeSessionId = sessionId || null;
+  if (req.body.source === 'ai_tab' && userId && prompt?.trim()) {
+    const nowIso = new Date().toISOString();
+    if (!activeSessionId) {
+      activeSessionId = `ais_${uuid().slice(0, 8)}`;
+      const title = prompt.trim().slice(0, 48);
+      db.prepare(
+        'INSERT INTO ai_sessions (id, user_id, title, company_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(activeSessionId, userId, title, provider || 'gemini', model || '', nowIso);
+    } else {
+      db.prepare(
+        'UPDATE ai_sessions SET company_id = ?, model_id = ?, updated_at = ? WHERE id = ?'
+      ).run(provider || 'gemini', model || '', nowIso, activeSessionId);
+    }
+
+    db.prepare(
+      'INSERT INTO ai_messages (id, session_id, role, content, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(`aim_${uuid().slice(0, 8)}`, activeSessionId, 'user', prompt.trim(), provider || 'gemini', model || '');
+
+    db.prepare(
+      'INSERT INTO ai_messages (id, session_id, role, content, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(`aim_${uuid().slice(0, 8)}`, activeSessionId, 'assistant', result.reply, provider || 'gemini', result.modelUsed || model || '');
+  }
+
+  res.json({ ...result, sessionId: activeSessionId });
+});
+
+// ============================================================
+// LIVE AUTO-UPDATING MODELS DISCOVERY PER COMPANY
+// ============================================================
+const modelCache = new Map<string, { ts: number; models: Array<{ id: string; label: string; tag?: string }> }>();
+
+function prettifyModelId(raw: string): string {
+  const clean = raw.replace(/^models\//, '').split('/').pop() || raw;
+  return clean
+    .replace(/-latest$/, '')
+    .replace(/-\d{8}$/, '')
+    .split('-')
+    .map(part => {
+      if (/^(gpt|o\d|r\d|v\d|xl|pro|mini|lite|nano|flash|ultra|turbo|sonar|grok|qwen)$/i.test(part)) {
+        return part.toUpperCase().replace(/^PRO$/, 'Pro').replace(/^MINI$/, 'Mini').replace(/^LITE$/, 'Lite').replace(/^FLASH$/, 'Flash').replace(/^TURBO$/, 'Turbo').replace(/^SONAR$/, 'Sonar').replace(/^GROK$/, 'Grok').replace(/^QWEN$/, 'Qwen');
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(' ');
+}
+
+app.get('/api/providers/:providerId/models', async (req, res) => {
+  const providerId = String(req.params.providerId || '').toLowerCase();
+  const force = req.query.refresh === '1';
+  const cached = modelCache.get(providerId);
+  if (!force && cached && Date.now() - cached.ts < 5 * 60 * 1000) {
+    return res.json({ ok: true, live: true, models: cached.models });
+  }
+
+  const cfg = loadProviderConfig();
+  try {
+    let models: Array<{ id: string; label: string; tag?: string }> = [];
+
+    if (providerId === 'gemini' && cfg.geminiApiKey) {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cfg.geminiApiKey)}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (r.ok) {
+        const d = (await r.json()) as { models?: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }> };
+        models = (d.models || [])
+          .filter(m => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'))
+          .map(m => {
+            const id = m.name.replace(/^models\//, '');
+            return { id, label: m.displayName || prettifyModelId(id) };
+          });
+      }
+    } else if (providerId === 'openrouter') {
+      // OpenRouter public catalog returns ALL 250+ free & paid live models even without auth!
+      const r = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(5500) });
+      if (r.ok) {
+        const d = (await r.json()) as { data?: Array<{ id: string; name?: string; pricing?: { prompt?: string } }> };
+        models = (d.data || []).slice(0, 120).map(m => ({
+          id: m.id,
+          label: (m.name || prettifyModelId(m.id)).replace(/^[^:]+:\s*/, ''),
+          tag: m.pricing?.prompt === '0' ? 'Free' : 'Pro',
+        }));
+      }
+    } else if (providerId === 'anthropic' && cfg.anthropicApiKey) {
+      const r = await fetch('https://api.anthropic.com/v1/models', {
+        headers: { 'x-api-key': cfg.anthropicApiKey, 'anthropic-version': '2023-06-01' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (r.ok) {
+        const d = (await r.json()) as { data?: Array<{ id: string; display_name?: string }> };
+        models = (d.data || []).map(m => ({ id: m.id, label: m.display_name || prettifyModelId(m.id) }));
+      }
+    } else if (providerId === 'ollama' && cfg.ollamaUrl) {
+      const r = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/tags`, { signal: AbortSignal.timeout(3000) });
+      if (r.ok) {
+        const d = (await r.json()) as { models?: Array<{ name: string }> };
+        models = (d.models || []).map(m => ({ id: m.name, label: prettifyModelId(m.name), tag: 'Local' }));
+      }
+    } else if (providerId === 'cohere' && cfg.cohereApiKey) {
+      const r = await fetch('https://api.cohere.com/v1/models?endpoint=chat', {
+        headers: { Authorization: `Bearer ${cfg.cohereApiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (r.ok) {
+        const d = (await r.json()) as { models?: Array<{ name: string }> };
+        models = (d.models || []).map(m => ({ id: m.name, label: prettifyModelId(m.name) }));
+      }
+    } else {
+      const compatList: Record<string, { url: string; key: string }> = {
+        openai: { url: 'https://api.openai.com/v1/models', key: cfg.openaiApiKey },
+        deepseek: { url: 'https://api.deepseek.com/models', key: cfg.deepseekApiKey },
+        xai: { url: 'https://api.x.ai/v1/models', key: cfg.xaiApiKey },
+        mistral: { url: 'https://api.mistral.ai/v1/models', key: cfg.mistralApiKey },
+        groq: { url: 'https://api.groq.com/openai/v1/models', key: cfg.groqApiKey },
+        together: { url: 'https://api.together.xyz/v1/models', key: cfg.togetherApiKey },
+      };
+      const entry = compatList[providerId];
+      if (entry && entry.key) {
+        const r = await fetch(entry.url, {
+          headers: { Authorization: `Bearer ${entry.key}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (r.ok) {
+          const d = (await r.json()) as { data?: Array<{ id: string }> } | Array<{ id: string }>;
+          const arr = Array.isArray(d) ? d : (d.data || []);
+          models = arr
+            .filter(m => m.id && !/embed|whisper|tts|dall-e|moderation|audio/i.test(m.id))
+            .slice(0, 100)
+            .map(m => ({ id: m.id, label: prettifyModelId(m.id) }));
+        }
+      }
+    }
+
+    if (models.length > 0) {
+      modelCache.set(providerId, { ts: Date.now(), models });
+      return res.json({ ok: true, live: true, models });
+    }
+  } catch {
+    // gracefully return empty -> frontend falls back to complete curated catalog
+  }
+  return res.json({ ok: true, live: false, models: [] });
 });
 
 // ============================================================
@@ -993,6 +1163,7 @@ app.post('/api/providers', (req, res) => {
     }
   }
   saveProviderConfig(patch);
+  modelCache.clear();
   res.json({ ok: true });
 });
 

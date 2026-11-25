@@ -11,9 +11,7 @@ import {
   X,
   Pin,
   ArrowRight,
-  CircleDot,
   Languages,
-  Slash,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile } from '../../types';
@@ -21,6 +19,7 @@ import { UserAvatar, RichMessageText } from '../shared/LmBrandMark';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramReactions';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
+import { NavAiIcon, TelegramVideoNoteIcon } from '../shared/Icons2026Pro';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
@@ -825,7 +824,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     }}
                     className="px-3.5 py-1.5 rounded-full bg-[#16161C] border border-white/[0.15] text-xs text-white flex items-center gap-1.5 cursor-pointer hover:bg-white hover:text-black transition-colors"
                   >
-                    {mediaBtnMode === 'voice' ? <Mic className="w-3.5 h-3.5" /> : <CircleDot className="w-3.5 h-3.5" />}
+                    {mediaBtnMode === 'voice' ? <Mic className="w-3.5 h-3.5" /> : <TelegramVideoNoteIcon className="w-4 h-4" />}
                     <span>{mediaBtnMode === 'voice' ? 'تسجيل صوتي' : 'تسجيل فيديو دائري'}</span>
                   </button>
                 </div>
@@ -849,21 +848,21 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                       onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
                       placeholder={
                         invokeAiMode
-                          ? '/ai اكتب سؤالك...'
+                          ? 'اسأل الذكاء الاصطناعي...'
                           : lang === 'ar'
-                          ? 'اكتب رسالة أو / لاستدعاء AI...'
-                          : 'Message or / for AI...'
+                          ? 'اكتب رسالة...'
+                          : 'Message...'
                       }
                       extraEnd={
                         <button
                           type="button"
                           onClick={() => setSlashMenuOpen(v => !v)}
-                          title="أمر / لاستدعاء AI"
+                          title="استدعاء الذكاء الاصطناعي"
                           className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
-                            invokeAiMode || slashMenuOpen ? 'text-white bg-white/[0.1]' : 'text-[#7A7A85] hover:text-white'
+                            invokeAiMode || slashMenuOpen ? 'text-white bg-white/[0.12]' : 'text-[#7A7A85] hover:text-white'
                           }`}
                         >
-                          <Slash className="w-4 h-4" strokeWidth={2} />
+                          <NavAiIcon active={invokeAiMode || slashMenuOpen} className="w-[18px] h-[18px]" />
                         </button>
                       }
                       customAction={
@@ -886,7 +885,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                               {mediaBtnMode === 'voice' ? (
                                 <Mic className="w-[17px] h-[17px]" strokeWidth={1.9} />
                               ) : (
-                                <CircleDot className="w-[17px] h-[17px]" strokeWidth={1.9} />
+                                <TelegramVideoNoteIcon className="w-[18px] h-[18px]" />
                               )}
                             </span>
                           </button>
