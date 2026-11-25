@@ -405,21 +405,77 @@ app.post('/api/videos/:id/save', (req, res) => {
 });
 
 app.get('/api/videos/:id/comments', (req, res) => {
+  const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
     SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
     FROM video_comments c JOIN users u ON c.user_id = u.id
-    WHERE c.video_id = ? ORDER BY c.created_at DESC
-  `).all(req.params.id);
-  res.json({ ok: true, comments: rows });
+    WHERE c.video_id = ? ORDER BY c.rowid ASC
+  `).all(req.params.id) as Array<Record<string, unknown>>;
+
+  const comments = rows.map(r => {
+    let likedBy: string[] = [];
+    try { likedBy = JSON.parse(String(r.liked_by_json || '[]')); } catch { likedBy = []; }
+    return {
+      id: r.id,
+      videoId: r.video_id,
+      userId: r.user_id,
+      parentId: r.parent_id ? String(r.parent_id) : null,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      vipTier: Number(r.vip_tier || 0),
+      content: r.content || '',
+      audioUrl: r.audio_url ? String(r.audio_url) : null,
+      audioDurationSec: Number(r.audio_duration_sec || 6),
+      transcript: r.transcript ? String(r.transcript) : null,
+      likesCount: Number(r.likes_count || 0),
+      likedByMe: viewerId ? likedBy.includes(viewerId) : false,
+      createdAt: r.created_at || 'الآن',
+    };
+  });
+  res.json({ ok: true, comments });
 });
 
 app.post('/api/videos/:id/comments', (req, res) => {
-  const { userId, content } = req.body as { userId: string; content: string };
-  if (!content?.trim()) return res.status(400).json({ ok: false, error: 'اكتب تعليقًا.' });
+  const { userId, content, parentId, audioUrl, audioDurationSec, transcript } = req.body as {
+    userId: string;
+    content?: string;
+    parentId?: string | null;
+    audioUrl?: string | null;
+    audioDurationSec?: number;
+    transcript?: string | null;
+  };
+  if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف تعليقًا نصيًا أو صوتيًا.' });
   const id = `vc_${uuid().slice(0, 8)}`;
-  db.prepare('INSERT INTO video_comments (id, video_id, user_id, content) VALUES (?, ?, ?, ?)').run(id, req.params.id, userId, content.trim());
+  db.prepare(`
+    INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, req.params.id, userId, parentId || null, (content || '').trim(),
+    audioUrl || null, Number(audioDurationSec || 5), transcript || (audioUrl ? 'رد صوتي مسجّل بتقنية LM Voice' : null), 'الآن'
+  );
   db.prepare('UPDATE short_videos SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
   res.json({ ok: true, id });
+});
+
+app.post('/api/video-comments/:commentId/like', (req, res) => {
+  const { userId } = req.body as { userId: string };
+  const row = db.prepare('SELECT likes_count, liked_by_json FROM video_comments WHERE id = ?').get(req.params.commentId) as { likes_count: number; liked_by_json: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false });
+  let likedBy: string[] = [];
+  try { likedBy = JSON.parse(row.liked_by_json || '[]'); } catch { likedBy = []; }
+  let count = Number(row.likes_count || 0);
+  if (likedBy.includes(userId)) {
+    likedBy = likedBy.filter(x => x !== userId);
+    count = Math.max(0, count - 1);
+  } else {
+    likedBy.push(userId);
+    count += 1;
+  }
+  db.prepare('UPDATE video_comments SET likes_count = ?, liked_by_json = ? WHERE id = ?').run(count, JSON.stringify(likedBy), req.params.commentId);
+  res.json({ ok: true, likesCount: count, liked: likedBy.includes(userId) });
 });
 
 app.post('/api/videos/:id/promote', (req, res) => {
@@ -506,6 +562,8 @@ app.get('/api/conversations/:id/messages', (req, res) => {
         content: r.content,
         msgType: r.msg_type,
         mediaUrl: r.media_url,
+        transcript: r.transcript ? String(r.transcript) : null,
+        sendEffect: r.send_effect ? String(r.send_effect) : null,
         replyToId: r.reply_to_id ? String(r.reply_to_id) : null,
         replySender: r.reply_sender ? String(r.reply_sender) : null,
         replyText: r.reply_text ? String(r.reply_text) : null,
@@ -518,11 +576,13 @@ app.get('/api/conversations/:id/messages', (req, res) => {
 });
 
 app.post('/api/conversations/:id/messages', async (req, res) => {
-  const { senderId, content, msgType, mediaUrl, replyToId, replySender, replyText, invokeAi, sharedSnippet } = req.body as {
+  const { senderId, content, msgType, mediaUrl, transcript, sendEffect, replyToId, replySender, replyText, invokeAi, sharedSnippet } = req.body as {
     senderId: string;
     content: string;
     msgType?: string;
     mediaUrl?: string;
+    transcript?: string;
+    sendEffect?: string;
     replyToId?: string;
     replySender?: string;
     replyText?: string;
@@ -535,10 +595,12 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const nowStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
   const msgId = `m_${uuid().slice(0, 8)}`;
   db.prepare(`
-    INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, media_url, reply_to_id, reply_sender, reply_text, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, media_url, transcript, send_effect, reply_to_id, reply_sender, reply_text, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null,
+    transcript || (msgType === 'audio' ? 'تم تسجيل رسالة صوتية عبر استوديو LM الصوتي.' : null),
+    sendEffect || null,
     replyToId || null, replySender || null, replyText || null, nowStr
   );
 

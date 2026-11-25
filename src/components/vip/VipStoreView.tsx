@@ -15,6 +15,7 @@ import { useApp } from '../../context/AppContext';
 import { api } from '../../lib/api';
 import { AiTierId, COUNTRY_META, CountryCode, RankId, ThemeId, UserProfile, VipTier } from '../../types';
 import { APP_ICON_STYLES, LmBrandMark } from '../shared/LmBrandMark';
+import { VipArtifact3D } from '../shared/Spatial3D';
 
 interface CatalogData {
   country: CountryCode;
@@ -215,6 +216,26 @@ export function VipStoreView() {
         {/* SUB-TAB 1: VIP 5 -> VIP 1 + PRIORITY + LIVE CUSTOMIZER */}
         {subTab === 'vip' && (
           <div className="space-y-5">
+            {/* 3D Interactive Prestige Showcase Banner */}
+            <div className="lm-card rounded-3xl p-5 flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="flex items-center gap-5">
+                <VipArtifact3D tier={user.vipTier || 1} size={130} />
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-mono-num uppercase tracking-wider text-[#F5C451]">
+                    3D Interactive Prestige • Drag to Rotate
+                  </span>
+                  <h2 className="text-xl font-extrabold">
+                    {user.vipTier ? `VIP ${user.vipTier}` : (isAr ? 'ارتقِ إلى عالم VIP' : 'Unlock LM VIP')}
+                  </h2>
+                  <p className="text-xs text-[var(--lm-text-secondary)] max-w-md">
+                    {isAr
+                      ? 'اسحب المجسم ثلاثي الأبعاد لتدويره — تتغير خامته البلورية والذهبية تلقائيًا حسب درجتك.'
+                      : 'Drag the 3D crystal artifact — its material dynamically morphs with your active VIP tier.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* VIP 5 Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3.5">
               {catalog.vipPlans.map((plan) => {

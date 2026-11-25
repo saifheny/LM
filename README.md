@@ -1,16 +1,16 @@
-# LM — Integrated Super App Platform (V2 Open-Source UI Edition)
+# LM — 2026 Spatial Super App Platform (V3 Edition)
 
-**LM** is an open-source, locally runnable Super App designed in Egypt for global expansion — built with frameless edge-to-edge native app architecture (zero admin dashboard bars!) combining the best open-source design & engineering systems in each domain:
+**LM** is an open-source, locally runnable 2026 Spatial Super App featuring **Dual Liquid-Glass Visual Systems** (`Cosmos Glass 2026` Dark & `Pearl Vision 2026` Daylight), a **Floating Magnetic Spatial Bottom Dock**, **Three.js 3D Sentient Companions & Artifacts**, **TikTok Voice-Reply Comments**, and **Circular Video & Spectrum Voice Messaging**.
 
-## Open-Source Engines & UI Systems Integrated
+## Key 2026 Capabilities
 
-- **Frameless Super App Dock:** Telegram Desktop / WeChat-style `72px` edge dock (no top header bar; 100% full-viewport immersion per section).
-- **Messaging & Calls (`ChatView.tsx`):** Modeled directly on **Telegram Web A (`Ajaxy/telegram-tt`)** & **Tinode (`tinode/webapp`)** — folder tabs (`الكل | شخصي | المجموعات | القنوات`), subtle Telegram doodle SVG wallpaper, asymmetric speech bubbles with inline `✓✓` read ticks, quote-replies, floating emoji reactions (`❤️ 🔥 👍 😂`), real interactive voice note waveforms via **`wavesurfer.js`**, emoji picker via **`emoji-picker-react`**, shared media drawer, WebRTC calls, and explicit `@LM AI` message-sharing consent.
-- **Short Videos (`ShortVideosView.tsx`):** Modeled directly on **Loops (`joinloops/loops-expo`)** & **TikTok** — pitch-black full-height vertical theater powered by **`swiper`**, real local 720p HD `.mp4` videos, floating transparent `أتابعه | لك` tabs, double-tap `#FE2C55` heart bursts, spinning vinyl audio disc, scrubbable hairline progress bar, and slide-over TikTok comments drawer.
-- **Social & Stories (`SocialView.tsx`):** **Instagram / Pixelfed** full-screen Stories viewer with gradient rings, multi-photo `Swiper` carousels, double-tap heart burst, and Sponsored vs Platform Ad separation.
-- **Live Streaming (`LiveView.tsx`):** **TikTok Live** full-bleed video stage + local WebRTC camera broadcast + server-enforced **VIP Highlighted Comments Priority Queue** (`VIP 1 = 15s > VIP 2 = 10s > VIP 3 = 5s`, FIFO, cooldown, moderation) + animated gifts with **`canvas-confetti`** & `75% Creator / 25% LM` split.
-- **LM AI Studio (`AiView.tsx`):** **LobeChat / LibreChat** borderless prompt workspace with collapsible agents sidebar, **`react-markdown` + `remark-gfm`**, multi-provider gateway (**Google `@google/genai`, OpenAI, Anthropic, OpenRouter, Groq, Ollama**), and server-side Financial & Privacy Firewall.
-- **Finance & Markets (`FinanceView.tsx`):** Sandbox preview with interactive Japanese candlesticks via **TradingView `lightweight-charts`** (Apache 2.0) and Double-Entry Demo Ledger.
+- **Floating Spatial Bottom Dock (`AppShell.tsx`):** Spring-physics sliding glass capsule (`framer-motion`), bespoke multi-layer duotone gradient icons (`Icons2026.tsx`), and 1-tap switching between **Cosmos Dark** and **Pearl Vision Light**.
+- **Interactive Three.js 3D WebGL (`Spatial3D.tsx`):**
+  - **3D Sentient AI Companion:** Cursor-tracking, blinking, levitating 3D holo-bot reactive to live voice input & spoken TTS output.
+  - **Drag-to-Rotate 3D Prestige Artifacts:** PBR 24K Gold, Sapphire, Emerald, and Platinum octahedral gems with orbital crown halos in VIP.
+- **TikTok 2026 Reels & Voice Replies (`ShortVideosView.tsx`):** Full-screen HD vertical Swiper reels, multi-reaction radial hover picker (`❤️ 🔥 😂 🤯 👏`), `2x` fast-forward speed toggle, nested comment threads, and **playable/recordable Voice Comments & Voice Replies** (`VoiceStudio2026.tsx`).
+- **Next-Gen Messaging (`ChatView.tsx`):** Live 24-band microphone frequency spectrum recorder, `1x / 1.5x / 2x` voice speed + instant `أ ب` voice-to-text transcripts, **Circular Floating Video Note Bubbles**, send particle effects (`🔥 🎉 ❤️ ⚡`), and `@LM AI` privacy consent.
+- **Markets & API Hub:** Interactive **TradingView `lightweight-charts`** candlesticks + Multi-Provider AI Gateway (**Google `@google/genai`, OpenAI, Claude, OpenRouter, Groq, Ollama**).
 
 ## Run Locally ($0 Cost)
 
@@ -20,4 +20,4 @@ npm run build
 npm start
 ```
 
-Open **`http://localhost:4000`** (or double-click `START-LM.bat`).
+Open **`http://localhost:4000`**.

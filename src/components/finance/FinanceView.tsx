@@ -1,14 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeriesPartialOptions } from 'lightweight-charts';
-import {
-  Landmark,
-  TrendingUp,
-  ShieldAlert,
-  BookOpen,
-  Building2,
-  Coins,
-  Wallet,
-} from 'lucide-react';
+import { TrendingUp, Coins, Wallet, Building2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../lib/api';
 
@@ -26,14 +18,11 @@ interface LedgerRow {
   debit_account: string;
   credit_account: string;
   amount_egp: number;
-  category: string;
   description: string;
-  status: string;
-  created_at: string;
 }
 
 export function FinanceView() {
-  const { user, lang, setActiveTab } = useApp();
+  const { user, lang } = useApp();
   const isAr = lang === 'ar';
 
   const [assets, setAssets] = useState<MarketAsset[]>([]);
@@ -52,7 +41,6 @@ export function FinanceView() {
 
   const activeAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
 
-  // Mount real TradingView Lightweight Charts (Apache 2.0 from LM Blueprint)
   useEffect(() => {
     const container = chartContainerRef.current;
     if (!container || !activeAsset) return;
@@ -61,25 +49,25 @@ export function FinanceView() {
     const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: isLight ? '#475569' : '#9BA3B5',
+        textColor: isLight ? '#475569' : '#94A3B8',
         fontFamily: 'JetBrains Mono, Inter, monospace',
       },
       grid: {
-        vertLines: { color: isLight ? 'rgba(15,23,42,0.06)' : 'rgba(255,255,255,0.05)' },
-        horzLines: { color: isLight ? 'rgba(15,23,42,0.06)' : 'rgba(255,255,255,0.05)' },
+        vertLines: { color: isLight ? 'rgba(15,23,42,0.05)' : 'rgba(255,255,255,0.04)' },
+        horzLines: { color: isLight ? 'rgba(15,23,42,0.05)' : 'rgba(255,255,255,0.04)' },
       },
       width: container.clientWidth,
-      height: 310,
+      height: 330,
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false },
     });
 
     const candleOpts: CandlestickSeriesPartialOptions = {
       upColor: '#10B981',
-      downColor: '#EF4444',
+      downColor: '#FF2D55',
       borderVisible: false,
       wickUpColor: '#10B981',
-      wickDownColor: '#EF4444',
+      wickDownColor: '#FF2D55',
     };
     const series = chart.addCandlestickSeries(candleOpts);
     series.setData(activeAsset.series);
@@ -104,159 +92,82 @@ export function FinanceView() {
   return (
     <div className="h-full overflow-y-auto px-4 sm:px-6 py-5">
       <div className="max-w-6xl mx-auto space-y-5">
-        {/* Explicit Design / Sandbox Compliance Banner */}
-        <div className="rounded-2xl p-4 bg-amber-500/10 border border-amber-500/35 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-start gap-2.5">
-            <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <div className="font-bold text-amber-300">
-                {isAr ? 'وضع التصميم والعرض التفاعلي فقط (Sandbox Preview)' : 'Visual Design & Sandbox Preview Only'}
-              </div>
-              <p className="text-[var(--lm-text-secondary)] mt-0.5 leading-relaxed">
-                {isAr
-                  ? 'لا توجد بطاقات فيزا أو ربط بنكي أو تحويلات أموال حقيقية في هذه النسخة التجريبية. ستُفعّل الخدمات المالية والأصول الرقمية والأسهم فقط بعد التراخيص والشراكات القانونية.'
-                  : 'No real Visa, banking rails, or live funds are processed in this demo edition. Licensed rails come in the funded phase.'}
-              </p>
-            </div>
-          </div>
-          <span className="font-mono-num text-[10px] px-2.5 py-1 rounded-lg bg-black/30 border border-amber-500/30 text-amber-300 shrink-0">
-            AI ISOLATED • NO LIVE FUNDS
-          </span>
-        </div>
-
-        {/* Optional 5 EGP Investment Ad Notice */}
-        {!user.adRemoval.investment && (
-          <div className="lm-card-subtle rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
-            <span className="text-[var(--lm-text-secondary)]">
-              {isAr ? 'إعلان قسم الاستثمار • يمكنك إزالته مقابل 5 ج.م شهريًا فقط.' : 'Investment Section Ad • Removable for 5 EGP/mo.'}
-            </span>
-            <button onClick={() => setActiveTab('vip')} className="text-[var(--lm-accent)] font-semibold hover:underline cursor-pointer">
-              {isAr ? 'إزالة (5 ج.م)' : 'Remove'}
-            </button>
-          </div>
-        )}
-
-        {/* Top Summary Cards (Visual Wallet + Creator Earnings + LM Equity Vision) */}
+        {/* Sleek Glass Portfolio Capsules */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="lm-card rounded-2xl p-5 space-y-2">
+          <div className="lm-card rounded-3xl p-5 space-y-1.5">
             <div className="flex items-center justify-between text-xs text-[var(--lm-text-muted)]">
-              <span className="flex items-center gap-1.5"><Wallet className="w-4 h-4 text-[var(--lm-accent)]" /> {isAr ? 'الرصيد التجريبي (محاكاة)' : 'Sandbox Balance'}</span>
-              <span className="font-mono-num text-[10px] px-2 py-0.5 rounded bg-[var(--lm-surface-2)]">DEMO</span>
+              <span className="flex items-center gap-1.5"><Wallet className="w-4 h-4 text-[var(--lm-accent)]" /> {isAr ? 'المحفظة' : 'Wallet'}</span>
+              <span className="font-mono-num text-[10px] px-2 py-0.5 rounded-full bg-[var(--lm-surface-2)]">SANDBOX</span>
             </div>
-            <div className="text-2xl font-bold font-mono-num">
+            <div className="text-2xl font-extrabold font-mono-num">
               {user.demoBalanceEgp.toLocaleString('en-US')} <span className="text-xs font-normal text-[var(--lm-text-muted)]">EGP</span>
             </div>
-            <div className="text-[11px] text-[var(--lm-text-secondary)]">
-              {isAr ? 'فصل تام لحسابات العملاء عن أموال الشركة (بنية القيد المزدوج).' : 'Strict client-fund segregation (Double-Entry Ledger architecture).'}
-            </div>
           </div>
 
-          <div className="lm-card rounded-2xl p-5 space-y-2">
+          <div className="lm-card rounded-3xl p-5 space-y-1.5">
             <div className="flex items-center justify-between text-xs text-[var(--lm-text-muted)]">
-              <span className="flex items-center gap-1.5"><Coins className="w-4 h-4 text-[#D4AF37]" /> {isAr ? 'أرباح الهدايا والاشتراكات' : 'Creator Earnings'}</span>
-              <span className="font-mono-num text-[10px] text-emerald-400">75% SHARE</span>
+              <span className="flex items-center gap-1.5"><Coins className="w-4 h-4 text-[#F5C451]" /> {isAr ? 'عوائد الهدايا' : 'Creator Revenue'}</span>
+              <span className="font-mono-num text-[10px] text-emerald-400">75%</span>
             </div>
-            <div className="text-2xl font-bold font-mono-num text-emerald-400">
+            <div className="text-2xl font-extrabold font-mono-num text-emerald-400">
               {user.creatorEarningsEgp.toLocaleString('en-US')} <span className="text-xs font-normal text-[var(--lm-text-muted)]">EGP</span>
             </div>
-            <div className="text-[11px] text-[var(--lm-text-secondary)]">
-              {isAr ? 'تُحدَّث تلقائيًا عند إرسال الهدايا في قسم البث المباشر.' : 'Auto-updated from Live stream virtual gift splits.'}
-            </div>
           </div>
 
-          <div className="lm-card rounded-2xl p-5 space-y-2 border-[#D4AF37]/30">
+          <div className="lm-card rounded-3xl p-5 space-y-1.5">
             <div className="flex items-center justify-between text-xs text-[var(--lm-text-muted)]">
-              <span className="flex items-center gap-1.5"><Building2 className="w-4 h-4 text-[#D4AF37]" /> {isAr ? 'رؤية أسهم وحوكمة LM' : 'LM Private Equity Vision'}</span>
-              <span className="font-mono-num text-[10px] text-[#E8C85E]">PRIVATE</span>
+              <span className="flex items-center gap-1.5"><Building2 className="w-4 h-4 text-[#F5C451]" /> {isAr ? 'ملكية المؤسس' : 'Founder Equity'}</span>
+              <span className="font-mono-num text-[10px] text-[#F5C451]">PRIVATE</span>
             </div>
-            <div className="text-2xl font-bold font-mono-num">
-              52% <span className="text-xs font-normal text-[var(--lm-text-secondary)]">{isAr ? 'حصة مسيطرة للمؤسس والإدارة' : 'Founder Control'}</span>
-            </div>
-            <div className="text-[11px] text-[var(--lm-text-secondary)]">
-              {isAr ? 'شركة خاصة غير مدرجة • مشاركة المستثمرين عبر هيكل قانوني مرخص.' : 'Private non-IPO governance • Licensed investor participation.'}
-            </div>
+            <div className="text-2xl font-extrabold font-mono-num">52%</div>
           </div>
         </div>
 
-        {/* REAL TRADINGVIEW LIGHTWEIGHT CHARTS MARKET TERMINAL */}
-        <div className="lm-card rounded-2xl p-5 space-y-4">
+        {/* TRADINGVIEW PRO TERMINAL */}
+        <div className="lm-card rounded-3xl p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-bold flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
-                {isAr ? 'منصة أبحاث الأسواق والأصول الرقمية (TradingView Lightweight Charts)' : 'Market & Crypto Analytics (TradingView Lightweight Charts)'}
-              </h2>
-              <p className="text-[11px] text-[var(--lm-text-muted)] mt-0.5">
-                {isAr ? 'مكتبة رسوم مالية مفتوحة المصدر (Apache 2.0) — عرض تحليلي تفاعلي بالشموع اليابانية' : 'Open-source Apache 2.0 interactive Japanese Candlestick analytics'}
-              </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {assets.map((a) => (
+                <button
+                  key={a.symbol}
+                  onClick={() => setSelectedSymbol(a.symbol)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-mono-num font-bold transition-all cursor-pointer ${
+                    a.symbol === selectedSymbol
+                      ? 'lm-btn-primary'
+                      : 'bg-[var(--lm-surface-2)] text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
+                  }`}
+                >
+                  {a.symbol}
+                </button>
+              ))}
             </div>
+
             {latest && (
-              <div className="text-end font-mono-num">
-                <div className="text-lg font-bold">
-                  {latest.close.toLocaleString('en-US')} <span className="text-xs text-[var(--lm-text-muted)]">{activeAsset?.currency}</span>
-                </div>
-                <div className={`text-xs font-semibold ${Number(deltaPct) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              <div className="flex items-baseline gap-2.5 font-mono-num">
+                <span className="text-xl font-extrabold">{latest.close.toLocaleString('en-US')}</span>
+                <span className={`text-xs font-bold flex items-center gap-0.5 ${Number(deltaPct) >= 0 ? 'text-emerald-400' : 'text-[#FF2D55]'}`}>
+                  <TrendingUp className="w-3.5 h-3.5" />
                   {Number(deltaPct) >= 0 ? '+' : ''}{deltaPct}%
-                </div>
+                </span>
               </div>
             )}
           </div>
 
-          {/* Asset Picker Pills */}
-          <div className="flex flex-wrap items-center gap-2">
-            {assets.map((a) => (
-              <button
-                key={a.symbol}
-                onClick={() => setSelectedSymbol(a.symbol)}
-                className={`px-3 py-1.5 rounded-xl border text-xs flex items-center gap-2 shrink-0 cursor-pointer transition-colors ${
-                  a.symbol === selectedSymbol
-                    ? 'bg-[var(--lm-accent-soft)] border-[var(--lm-accent)]/50 font-semibold'
-                    : 'bg-[var(--lm-surface-2)] border-[var(--lm-border)] hover:bg-[var(--lm-surface-hover)]'
-                }`}
-              >
-                <span className="font-mono-num font-bold">{a.symbol}</span>
-                <span className="text-[11px] text-[var(--lm-text-secondary)]">{isAr ? a.nameAr : a.nameEn}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Interactive Chart Mount */}
-          <div ref={chartContainerRef} className="w-full rounded-xl bg-[var(--lm-surface-2)] border border-[var(--lm-border)] p-2" />
+          <div ref={chartContainerRef} className="w-full rounded-2xl bg-[var(--lm-surface-2)] p-2" />
         </div>
 
-        {/* DOUBLE-ENTRY DEMO LEDGER TABLE */}
-        <div className="lm-card rounded-2xl p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-[var(--lm-accent)]" />
-              {isAr ? 'سجل دفتر القيود المزدوجة (Double-Entry Sandbox Ledger)' : 'Immutable Double-Entry Sandbox Ledger'}
-            </h3>
-            <span className="text-[10px] font-mono-num text-[var(--lm-text-muted)]">Blnk / Formance Architecture</span>
+        {/* COMPACT LEDGER */}
+        <div className="lm-card rounded-3xl p-5 space-y-2.5">
+          <div className="text-xs font-bold text-[var(--lm-text-secondary)]">
+            {isAr ? 'سجل الحركات التجريبية' : 'Recent Activity'}
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-start">
-              <thead>
-                <tr className="border-b border-[var(--lm-border)] text-[var(--lm-text-muted)] text-[11px]">
-                  <th className="py-2 px-2 text-start">{isAr ? 'البيان' : 'Description'}</th>
-                  <th className="py-2 px-2 text-start">{isAr ? 'من حساب (Debit)' : 'Debit'}</th>
-                  <th className="py-2 px-2 text-start">{isAr ? 'إلى حساب (Credit)' : 'Credit'}</th>
-                  <th className="py-2 px-2 text-end">{isAr ? 'القيمة' : 'Amount'}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--lm-border)]">
-                {ledger.map((row) => (
-                  <tr key={row.id} className="hover:bg-[var(--lm-surface-2)]">
-                    <td className="py-2.5 px-2 font-medium">{row.description}</td>
-                    <td className="py-2.5 px-2 font-mono-num text-[11px] text-[var(--lm-text-muted)]">{row.debit_account}</td>
-                    <td className="py-2.5 px-2 font-mono-num text-[11px] text-[var(--lm-text-muted)]">{row.credit_account}</td>
-                    <td className="py-2.5 px-2 text-end font-mono-num font-bold text-emerald-400">
-                      {row.amount_egp.toLocaleString('en-US')} EGP
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-1.5">
+            {ledger.slice(0, 6).map((row) => (
+              <div key={row.id} className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-[var(--lm-surface-2)] text-xs">
+                <span className="font-medium">{row.description}</span>
+                <span className="font-mono-num font-bold text-emerald-400">{row.amount_egp.toLocaleString('en-US')} EGP</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

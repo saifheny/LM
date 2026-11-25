@@ -1,13 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
-  MessageCircle,
-  Compass,
-  Play,
-  Radio,
-  Sparkles,
-  Crown,
-  TrendingUp,
-  SlidersHorizontal,
   Search,
   Globe,
   LogOut,
@@ -20,7 +13,17 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { COUNTRY_META, NavTab, ThemeId, UserProfile } from '../../types';
-import { LmBrandMark, RankBadge, UserAvatar, VipBadge } from '../shared/LmBrandMark';
+import { RankBadge, UserAvatar, VipBadge } from '../shared/LmBrandMark';
+import {
+  IconChat2026,
+  IconReels2026,
+  IconFeed2026,
+  IconLive2026,
+  IconAiOrb2026,
+  IconCrown2026,
+  IconMarkets2026,
+  IconSystems2026,
+} from '../shared/Icons2026';
 import { api } from '../../lib/api';
 
 interface AppShellProps {
@@ -45,7 +48,6 @@ export function AppShell({ children }: AppShellProps) {
   } = useApp();
 
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<{
     users: UserProfile[];
@@ -60,18 +62,17 @@ export function AppShell({ children }: AppShellProps) {
     id: NavTab;
     labelAr: string;
     labelEn: string;
-    icon: React.ComponentType<{ className?: string }>;
-    badge?: string;
-    badgeTone?: 'purple' | 'red';
+    Icon: React.ComponentType<{ active?: boolean; size?: number }>;
+    dot?: 'purple' | 'red';
   }> = [
-    { id: 'chat', labelAr: 'المحادثات', labelEn: 'Chats', icon: MessageCircle, badge: '3', badgeTone: 'purple' },
-    { id: 'videos', labelAr: 'فيديوهات', labelEn: 'Shorts', icon: Play },
-    { id: 'social', labelAr: 'المجتمع', labelEn: 'Feed', icon: Compass },
-    { id: 'live', labelAr: 'بث مباشر', labelEn: 'Live', icon: Radio, badge: 'LIVE', badgeTone: 'red' },
-    { id: 'ai', labelAr: 'LM AI', labelEn: 'LM AI', icon: Sparkles },
-    { id: 'vip', labelAr: 'VIP والرتب', labelEn: 'VIP', icon: Crown },
-    { id: 'finance', labelAr: 'الأسواق', labelEn: 'Markets', icon: TrendingUp },
-    { id: 'settings', labelAr: 'الـ APIs', labelEn: 'APIs', icon: SlidersHorizontal },
+    { id: 'chat', labelAr: 'الدردشة', labelEn: 'Chat', Icon: IconChat2026, dot: 'purple' },
+    { id: 'videos', labelAr: 'ريلز', labelEn: 'Reels', Icon: IconReels2026 },
+    { id: 'social', labelAr: 'المجتمع', labelEn: 'Social', Icon: IconFeed2026 },
+    { id: 'live', labelAr: 'مباشر', labelEn: 'Live', Icon: IconLive2026, dot: 'red' },
+    { id: 'ai', labelAr: 'LM AI', labelEn: 'LM AI', Icon: IconAiOrb2026 },
+    { id: 'vip', labelAr: 'VIP', labelEn: 'VIP', Icon: IconCrown2026 },
+    { id: 'finance', labelAr: 'الأسواق', labelEn: 'Markets', Icon: IconMarkets2026 },
+    { id: 'settings', labelAr: 'الربط', labelEn: 'Hub', Icon: IconSystems2026 },
   ];
 
   useEffect(() => {
@@ -82,13 +83,13 @@ export function AppShell({ children }: AppShellProps) {
       )
         .then(setSearchResults)
         .catch(() => {});
-    }, 140);
+    }, 120);
     return () => clearTimeout(t);
   }, [searchOpen, searchQuery]);
 
   if (!user) return null;
 
-  async function toggleLightDark() {
+  async function toggleVisualSystem() {
     if (!user) return;
     const nextTheme: ThemeId = user.theme === 'alabaster' ? 'obsidian' : 'alabaster';
     const res = await api<{ user: UserProfile }>(`/api/users/${user.id}/customize`, {
@@ -96,368 +97,332 @@ export function AppShell({ children }: AppShellProps) {
       body: JSON.stringify({ theme: nextTheme }),
     });
     setUserLocal(res.user);
+    toast(
+      nextTheme === 'alabaster'
+        ? (isAr ? 'النظام النهاري البلوري (Pearl Vision 2026)' : 'Pearl Vision 2026')
+        : (isAr ? 'النظام الفضائي الداكن (Cosmos Glass 2026)' : 'Cosmos Glass 2026'),
+      'info'
+    );
   }
 
-  const isImmersiveDark = activeTab === 'videos' || activeTab === 'live';
+  // Full-bleed video screens extend behind the floating liquid-glass dock
+  const fullBleedBehindDock = activeTab === 'videos';
 
   return (
-    <div className="h-full w-full flex flex-col md:flex-row bg-[var(--lm-bg)] text-[var(--lm-text)] overflow-hidden">
-      {/* FRAMELESS ICON DOCK (Telegram Desktop / WeChat / Discord Style — NO TOP BAR!) */}
-      <aside className="hidden md:flex w-[72px] shrink-0 flex-col items-center justify-between py-3.5 bg-[#0E0E11] text-white border-e border-white/[0.06] z-30 select-none">
-        {/* Top Brand Icon + Quick Search */}
-        <div className="flex flex-col items-center gap-3">
-          <button
-            onClick={() => setActiveTab('chat')}
-            title={user.customAppName || 'LM'}
-            className="cursor-pointer"
-          >
-            <LmBrandMark iconStyle={user.customAppIcon} size={40} />
-          </button>
+    <div className="h-full w-full relative overflow-hidden bg-[var(--lm-bg)] text-[var(--lm-text)]">
+      {/* MAIN STAGE */}
+      <main className={`w-full h-full overflow-hidden ${fullBleedBehindDock ? '' : 'pb-[82px]'}`}>
+        {children}
+      </main>
 
-          <button
-            onClick={() => setSearchOpen(true)}
-            title={isAr ? 'بحث شامل (Ctrl+K)' : 'Global Search (Ctrl+K)'}
-            className="w-10 h-10 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-white/75 hover:text-white transition-all cursor-pointer"
-          >
-            <Search className="w-[18px] h-[18px]" />
-          </button>
-        </div>
-
-        {/* Center App Switcher Icons */}
-        <nav className="flex flex-col items-center gap-1.5 w-full px-2">
+      {/* ============================================================
+          2026 FLOATING LIQUID-GLASS SPATIAL BOTTOM DOCK
+         ============================================================ */}
+      <div className="fixed bottom-3 inset-x-0 z-40 flex justify-center px-2 pointer-events-none select-none">
+        <motion.nav
+          initial={{ y: 40, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+          className={`pointer-events-auto rounded-full px-2 py-1.5 flex items-center gap-0.5 sm:gap-1 max-w-full overflow-x-auto no-scrollbar ${
+            fullBleedBehindDock
+              ? 'bg-black/55 backdrop-blur-2xl border border-white/20 text-white shadow-[0_20px_50px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.28)]'
+              : 'liquid-glass'
+          }`}
+        >
           {dockItems.map((item) => {
-            const Icon = item.icon;
             const active = activeTab === item.id;
+            const IconComp = item.Icon;
             return (
-              <button
+              <motion.button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                title={isAr ? item.labelAr : item.labelEn}
-                className={`relative group w-full py-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                whileHover={{ y: -3, scale: 1.07 }}
+                whileTap={{ scale: 0.93 }}
+                className={`relative px-2.5 sm:px-3.5 py-1.5 rounded-full flex flex-col items-center justify-center gap-0.5 cursor-pointer shrink-0 transition-colors ${
                   active
-                    ? 'bg-white/[0.11] text-white'
-                    : 'text-white/55 hover:text-white hover:bg-white/[0.05]'
+                    ? 'text-[var(--lm-text)]'
+                    : fullBleedBehindDock
+                    ? 'text-white/65 hover:text-white'
+                    : 'text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
                 }`}
               >
-                {/* Active Pill Indicator */}
                 {active && (
-                  <span className="absolute start-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-e-full bg-[#8774E1]" />
+                  <motion.span
+                    layoutId="activeDockCapsule"
+                    transition={{ type: 'spring', stiffness: 430, damping: 32 }}
+                    className={`absolute inset-0 rounded-full ${
+                      fullBleedBehindDock
+                        ? 'bg-white/18 border border-white/25'
+                        : 'bg-[var(--lm-accent-soft)] border border-[var(--lm-accent)]/35'
+                    }`}
+                  />
                 )}
-                <div className="relative">
-                  <Icon className={`w-[20px] h-[20px] ${active && item.id === 'videos' ? 'fill-current' : ''}`} />
-                  {item.badge && (
+
+                <span className="relative z-10">
+                  <IconComp active={active} size={22} />
+                  {item.dot && (
                     <span
-                      className={`absolute -top-1.5 -end-2.5 px-1 min-w-[16px] h-[15px] rounded-full text-[9px] font-mono-num font-bold flex items-center justify-center ${
-                        item.badgeTone === 'red'
-                          ? 'bg-[#FE2C55] text-white'
-                          : 'bg-[#8774E1] text-white'
+                      className={`absolute -top-0.5 -end-1 w-2 h-2 rounded-full ${
+                        item.dot === 'red' ? 'bg-[#FF2D55] animate-ping' : 'bg-[#7C5CFF]'
                       }`}
-                    >
-                      {item.badge}
-                    </span>
+                    />
                   )}
-                </div>
-                <span className="text-[10px] font-medium leading-none tracking-tight truncate max-w-[58px]">
+                </span>
+
+                <span className={`relative z-10 text-[10px] leading-none tracking-tight ${active ? 'font-bold' : 'font-medium'}`}>
                   {isAr ? item.labelAr : item.labelEn}
                 </span>
-              </button>
+              </motion.button>
             );
           })}
-        </nav>
 
-        {/* Bottom Profile Avatar & Quick Preferences */}
-        <div className="flex flex-col items-center gap-2.5 relative">
-          <button
-            onClick={toggleLightDark}
-            title={isAr ? 'الوضع الليلي / النهاري' : 'Theme'}
-            className="w-9 h-9 rounded-xl hover:bg-white/[0.08] flex items-center justify-center text-white/60 hover:text-white transition-colors cursor-pointer"
+          {/* Subtle Specular Divider */}
+          <span className="w-px h-7 bg-[var(--lm-border-strong)] mx-1 shrink-0" />
+
+          {/* Quick Spotlight Search */}
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.92 }}
+            onClick={() => setSearchOpen(true)}
+            title="Ctrl+K"
+            className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center shrink-0 cursor-pointer"
           >
-            {user.theme === 'alabaster' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-          </button>
+            <Search className="w-4 h-4" />
+          </motion.button>
 
-          <button
+          {/* 1-Tap 2026 Dual Visual System Switcher (Cosmos Dark <-> Pearl Light) */}
+          <motion.button
+            whileHover={{ scale: 1.1, rotate: 12 }}
+            whileTap={{ scale: 0.92 }}
+            onClick={toggleVisualSystem}
+            title={isAr ? 'التبديل بين النظام الفضائي الداكن والبلوري النهاري' : 'Switch 2026 Visual System'}
+            className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center shrink-0 cursor-pointer"
+          >
+            {user.theme === 'alabaster' ? <Moon className="w-4 h-4 text-indigo-600" /> : <Sun className="w-4 h-4 text-amber-300" />}
+          </motion.button>
+
+          {/* User Avatar Capsule */}
+          <motion.button
+            whileHover={{ scale: 1.06 }}
+            whileTap={{ scale: 0.94 }}
             onClick={() => setProfileMenuOpen(v => !v)}
-            title={isAr ? user.displayName : user.displayNameEn}
-            className="cursor-pointer relative"
+            className="ps-0.5 pe-1 cursor-pointer shrink-0"
           >
             <UserAvatar
               initials={user.avatarInitials}
               color={user.avatarColor}
               avatarUrl={user.avatarUrl}
-              size={38}
+              size={34}
               vipTier={user.vipTier}
               online
             />
-          </button>
+          </motion.button>
+        </motion.nav>
+      </div>
 
-          {/* Floating Account Switcher & Quick Settings Popover */}
-          {profileMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setProfileMenuOpen(false)} />
-              <div
-                className={`fixed bottom-4 ${isAr ? 'right-20' : 'left-20'} w-72 rounded-2xl bg-[#1C1D24] text-white border border-white/10 shadow-2xl p-2.5 z-50`}
-              >
-                <div className="p-2.5 rounded-xl bg-white/[0.04] flex items-center gap-3">
-                  <UserAvatar
-                    initials={user.avatarInitials}
-                    color={user.avatarColor}
-                    avatarUrl={user.avatarUrl}
-                    size={42}
-                    vipTier={user.vipTier}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold truncate">{isAr ? user.displayName : user.displayNameEn}</div>
-                    <div dir="ltr" className="text-[11px] text-white/55 font-mono-num">@{user.username}</div>
-                    <div className="flex items-center gap-1 mt-1 flex-wrap">
-                      <VipBadge tier={user.vipTier} compact />
-                      <RankBadge rankId={user.rankId} lang={lang} />
-                    </div>
+      {/* FLOATING LIQUID-GLASS PROFILE & ACCOUNT SWITCHER */}
+      <AnimatePresence>
+        {profileMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setProfileMenuOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 14, scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+              className="fixed bottom-22 left-1/2 -translate-x-1/2 w-80 liquid-glass rounded-3xl p-3 z-50"
+            >
+              <div className="p-3 rounded-2xl bg-[var(--lm-surface-2)] flex items-center gap-3">
+                <UserAvatar
+                  initials={user.avatarInitials}
+                  color={user.avatarColor}
+                  avatarUrl={user.avatarUrl}
+                  size={44}
+                  vipTier={user.vipTier}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold truncate">{isAr ? user.displayName : user.displayNameEn}</div>
+                  <div dir="ltr" className="text-[11px] text-[var(--lm-text-muted)] font-mono-num">@{user.username}</div>
+                  <div className="flex items-center gap-1 mt-1 flex-wrap">
+                    <VipBadge tier={user.vipTier} compact />
+                    <RankBadge rankId={user.rankId} lang={lang} />
                   </div>
                 </div>
-
-                {/* Language & Country */}
-                <div className="grid grid-cols-2 gap-1.5 my-2">
-                  <button
-                    onClick={() => setLang(isAr ? 'en' : 'ar')}
-                    className="py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Globe className="w-3.5 h-3.5" />
-                    {isAr ? 'English' : 'العربية'}
-                  </button>
-                  <button
-                    onClick={() => { setProfileMenuOpen(false); setActiveTab('vip'); }}
-                    className="py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-mono-num flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <span>{COUNTRY_META[user.country].flag}</span>
-                    <span>{COUNTRY_META[user.country].currency}</span>
-                  </button>
-                </div>
-
-                <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
-                  {isAr ? 'تبديل سريع بين الحسابات' : 'Switch Account'}
-                </div>
-                <div className="space-y-0.5 max-h-48 overflow-y-auto">
-                  {allUsers
-                    .filter(u => u.id !== user.id)
-                    .map((u) => (
-                      <button
-                        key={u.id}
-                        onClick={() => {
-                          loginUser(u);
-                          setProfileMenuOpen(false);
-                          toast(isAr ? `تم التبديل إلى ${u.displayName}` : `Switched to ${u.displayNameEn}`, 'info');
-                        }}
-                        className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-white/[0.07] transition-colors text-start cursor-pointer"
-                      >
-                        <UserAvatar
-                          initials={u.avatarInitials}
-                          color={u.avatarColor}
-                          avatarUrl={u.avatarUrl}
-                          size={28}
-                          vipTier={u.vipTier}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium truncate">{isAr ? u.displayName : u.displayNameEn}</div>
-                          <div dir="ltr" className="text-[10px] text-white/45 font-mono-num">@{u.username}</div>
-                        </div>
-                        <VipBadge tier={u.vipTier} compact />
-                      </button>
-                    ))}
-                </div>
-
-                <div className="mt-2 pt-2 border-t border-white/10">
-                  <button
-                    onClick={() => { setProfileMenuOpen(false); logout(); }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-medium text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    {isAr ? 'تسجيل الخروج' : 'Sign Out'}
-                  </button>
-                </div>
               </div>
-            </>
-          )}
-        </div>
-      </aside>
 
-      {/* FULL-BLEED 100VH STAGE */}
-      <main className="flex-1 min-w-0 min-h-0 h-full overflow-hidden relative">
-        {children}
-      </main>
-
-      {/* MOBILE BOTTOM NAVIGATION BAR (TikTok / Telegram Translucent Style) */}
-      <nav
-        className={`md:hidden h-14 shrink-0 border-t flex items-center justify-around px-1 z-30 ${
-          isImmersiveDark
-            ? 'bg-black text-white border-white/10'
-            : 'bg-[var(--lm-surface)] text-[var(--lm-text)] border-[var(--lm-border)]'
-        }`}
-      >
-        {dockItems.slice(0, 5).map((item) => {
-          const Icon = item.icon;
-          const active = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => { setActiveTab(item.id); setMobileMoreOpen(false); }}
-              className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1 rounded-xl text-[10px] cursor-pointer ${
-                active ? 'text-[#8774E1] font-bold' : 'opacity-65'
-              }`}
-            >
-              <Icon className="w-5 h-5" />
-              <span>{isAr ? item.labelAr : item.labelEn}</span>
-            </button>
-          );
-        })}
-        <button
-          onClick={() => setMobileMoreOpen(v => !v)}
-          className="flex flex-col items-center justify-center gap-0.5 px-2 py-1 rounded-xl text-[10px] opacity-75 cursor-pointer"
-        >
-          <UserAvatar
-            initials={user.avatarInitials}
-            color={user.avatarColor}
-            avatarUrl={user.avatarUrl}
-            size={22}
-            vipTier={user.vipTier}
-          />
-          <span>{isAr ? 'حسابي' : 'Menu'}</span>
-        </button>
-      </nav>
-
-      {/* Mobile Drawer */}
-      {mobileMoreOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-black/70 backdrop-blur-xs" onClick={() => setMobileMoreOpen(false)}>
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-14 inset-x-3 rounded-3xl bg-[#1C1D24] text-white border border-white/10 p-4 space-y-2 shadow-2xl"
-          >
-            {dockItems.slice(5).map((item) => {
-              const Icon = item.icon;
-              return (
+              <div className="grid grid-cols-2 gap-1.5 my-2.5">
                 <button
-                  key={item.id}
-                  onClick={() => { setActiveTab(item.id); setMobileMoreOpen(false); }}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/10 text-xs font-medium cursor-pointer"
+                  onClick={() => setLang(isAr ? 'en' : 'ar')}
+                  className="py-2 px-3 rounded-xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Icon className="w-4 h-4 text-[#8774E1]" />
-                  <span>{isAr ? item.labelAr : item.labelEn}</span>
+                  <Globe className="w-3.5 h-3.5" />
+                  {isAr ? 'English' : 'العربية'}
                 </button>
-              );
-            })}
-            <button
-              onClick={() => { setMobileMoreOpen(false); logout(); }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-red-400 hover:bg-red-500/10 text-xs font-medium cursor-pointer"
+                <button
+                  onClick={() => { setProfileMenuOpen(false); setActiveTab('vip'); }}
+                  className="py-2 px-3 rounded-xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] text-xs font-mono-num flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>{COUNTRY_META[user.country].flag}</span>
+                  <span>{COUNTRY_META[user.country].currency}</span>
+                </button>
+              </div>
+
+              <div className="space-y-1 max-h-44 overflow-y-auto">
+                {allUsers
+                  .filter(u => u.id !== user.id)
+                  .map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => {
+                        loginUser(u);
+                        setProfileMenuOpen(false);
+                        toast(isAr ? `${u.displayName}` : u.displayNameEn, 'info');
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-2xl hover:bg-[var(--lm-surface-hover)] transition-colors text-start cursor-pointer"
+                    >
+                      <UserAvatar initials={u.avatarInitials} color={u.avatarColor} avatarUrl={u.avatarUrl} size={30} vipTier={u.vipTier} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold truncate">{isAr ? u.displayName : u.displayNameEn}</div>
+                        <div dir="ltr" className="text-[10px] text-[var(--lm-text-muted)] font-mono-num">@{u.username}</div>
+                      </div>
+                      <VipBadge tier={u.vipTier} compact />
+                    </button>
+                  ))}
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-[var(--lm-border)]">
+                <button
+                  onClick={() => { setProfileMenuOpen(false); logout(); }}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-2xl text-xs font-semibold text-[#FF2D55] hover:bg-[#FF2D55]/10 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  {isAr ? 'تسجيل الخروج' : 'Sign Out'}
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* SPOTLIGHT SEARCH OVERLAY */}
+      <AnimatePresence>
+        {searchOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/65 backdrop-blur-md flex items-start justify-center pt-16 px-4"
+            onClick={() => setSearchOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: -12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: -12 }}
+              className="w-full max-w-xl liquid-glass rounded-3xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
             >
-              <LogOut className="w-4 h-4" />
-              <span>{isAr ? 'تسجيل الخروج' : 'Sign Out'}</span>
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="flex items-center gap-3 px-4 h-13 border-b border-[var(--lm-border)]">
+                <Search className="w-4 h-4 text-[var(--lm-text-muted)]" />
+                <input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={isAr ? 'ابحث في LM...' : 'Search LM...'}
+                  className="flex-1 bg-transparent text-sm outline-none text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)]"
+                />
+                <button onClick={() => setSearchOpen(false)} className="p-1 text-[var(--lm-text-muted)] cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="max-h-[58vh] overflow-y-auto p-4 space-y-4">
+                {searchResults && (
+                  <>
+                    {searchResults.users.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-[var(--lm-text-muted)] mb-2 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5" /> {isAr ? 'الأشخاص' : 'People'}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {searchResults.users.map(u => (
+                            <button
+                              key={u.id}
+                              onClick={() => { setSearchOpen(false); setActiveTab('chat'); }}
+                              className="flex items-center gap-2.5 p-2 rounded-2xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] text-start cursor-pointer"
+                            >
+                              <UserAvatar initials={u.avatarInitials} color={u.avatarColor} avatarUrl={u.avatarUrl} size={34} vipTier={u.vipTier} />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-semibold truncate">{isAr ? u.displayName : u.displayNameEn}</div>
+                                <div dir="ltr" className="text-[10px] text-[var(--lm-text-muted)] font-mono-num">@{u.username}</div>
+                              </div>
+                              <VipBadge tier={u.vipTier} compact />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-      {/* SPOTLIGHT GLOBAL SEARCH OVERLAY (Ctrl+K) */}
-      {searchOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center pt-16 px-4" onClick={() => setSearchOpen(false)}>
-          <div
-            className="w-full max-w-xl rounded-3xl bg-[#1C1D24] text-white border border-white/12 shadow-2xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 px-4 h-13 border-b border-white/10">
-              <Search className="w-4 h-4 text-white/50" />
-              <input
-                autoFocus
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={isAr ? 'ابحث في الرسائل، الأشخاص، الفيديوهات، القنوات...' : 'Search chats, people, shorts, channels...'}
-                className="flex-1 bg-transparent text-sm outline-none text-white placeholder:text-white/40"
-              />
-              <button onClick={() => setSearchOpen(false)} className="p-1 text-white/50 hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="max-h-[62vh] overflow-y-auto p-4 space-y-4">
-              {searchResults && (
-                <>
-                  {searchResults.users.length > 0 && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-white/45 mb-2 flex items-center gap-1.5">
-                        <Users className="w-3.5 h-3.5" /> {isAr ? 'الأشخاص وصناع المحتوى' : 'People'}
+                    {searchResults.videos.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-[var(--lm-text-muted)] mb-2 flex items-center gap-1.5">
+                          <Film className="w-3.5 h-3.5" /> {isAr ? 'ريلز' : 'Reels'}
+                        </div>
+                        <div className="space-y-1.5">
+                          {searchResults.videos.map((v) => (
+                            <button
+                              key={String(v.id)}
+                              onClick={() => { setSearchOpen(false); setActiveTab('videos'); }}
+                              className="w-full flex items-center justify-between p-2.5 rounded-2xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] text-start cursor-pointer"
+                            >
+                              <span className="text-xs font-medium truncate">{String(v.title)}</span>
+                              <span className="text-[10px] text-[var(--lm-text-muted)]">{String(v.tags)}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {searchResults.users.map(u => (
-                          <button
-                            key={u.id}
-                            onClick={() => { setSearchOpen(false); setActiveTab('chat'); }}
-                            className="flex items-center gap-2.5 p-2 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] text-start cursor-pointer"
-                          >
-                            <UserAvatar initials={u.avatarInitials} color={u.avatarColor} avatarUrl={u.avatarUrl} size={34} vipTier={u.vipTier} />
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs font-semibold truncate">{isAr ? u.displayName : u.displayNameEn}</div>
-                              <div dir="ltr" className="text-[10px] text-white/45 font-mono-num">@{u.username}</div>
-                            </div>
-                            <VipBadge tier={u.vipTier} compact />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    )}
 
-                  {searchResults.videos.length > 0 && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-white/45 mb-2 flex items-center gap-1.5">
-                        <Film className="w-3.5 h-3.5" /> {isAr ? 'الفيديوهات القصيرة' : 'Shorts'}
+                    {searchResults.posts.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-[var(--lm-text-muted)] mb-2 flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5" /> {isAr ? 'المنشورات' : 'Posts'}
+                        </div>
+                        <div className="space-y-1.5">
+                          {searchResults.posts.map((p) => (
+                            <button
+                              key={String(p.id)}
+                              onClick={() => { setSearchOpen(false); setActiveTab('social'); }}
+                              className="w-full p-2.5 rounded-2xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] text-start cursor-pointer"
+                            >
+                              <div className="text-xs font-semibold">{String(p.display_name)}</div>
+                              <div className="text-[11px] text-[var(--lm-text-secondary)] line-clamp-1 mt-0.5">{String(p.content)}</div>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <div className="space-y-1.5">
-                        {searchResults.videos.map((v) => (
-                          <button
-                            key={String(v.id)}
-                            onClick={() => { setSearchOpen(false); setActiveTab('videos'); }}
-                            className="w-full flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] text-start cursor-pointer"
-                          >
-                            <span className="text-xs font-medium truncate">{String(v.title)}</span>
-                            <span className="text-[10px] text-white/45">{String(v.tags)}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-                  {searchResults.posts.length > 0 && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-white/45 mb-2 flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5" /> {isAr ? 'المنشورات' : 'Posts'}
-                      </div>
-                      <div className="space-y-1.5">
-                        {searchResults.posts.map((p) => (
-                          <button
-                            key={String(p.id)}
-                            onClick={() => { setSearchOpen(false); setActiveTab('social'); }}
-                            className="w-full p-2.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] text-start cursor-pointer"
-                          >
-                            <div className="text-xs font-semibold">{String(p.display_name)}</div>
-                            <div className="text-[11px] text-white/60 line-clamp-1 mt-0.5">{String(p.content)}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SLEEK PILL TOASTS */}
-      <div className={`fixed bottom-16 md:bottom-5 ${isAr ? 'left-5' : 'right-5'} z-50 flex flex-col gap-2 pointer-events-none`}>
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className="px-4 py-2.5 rounded-full text-xs font-medium shadow-2xl bg-[#202024]/95 text-white border border-white/12 backdrop-blur-md pointer-events-auto max-w-sm"
-          >
-            {t.message}
-          </div>
-        ))}
+      {/* FLOATING CAPSULE TOASTS */}
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+        <AnimatePresence>
+          {toasts.map((t) => (
+            <motion.div
+              key={t.id}
+              initial={{ opacity: 0, y: -16, scale: 0.92 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.92 }}
+              className="px-4 py-2 rounded-full text-xs font-semibold liquid-glass pointer-events-auto"
+            >
+              {t.message}
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -10,14 +11,14 @@ import {
   SlidersHorizontal,
   Plus,
   PanelLeft,
-  Lock,
-  FileSearch,
-  Wand2,
-  ShieldAlert,
+  Mic,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../lib/api';
 import { UserAvatar } from '../shared/LmBrandMark';
+import { SpatialCompanion3D } from '../shared/Spatial3D';
 
 interface AiMsg {
   id: string;
@@ -35,11 +36,10 @@ interface AuditLog {
   action_type: string;
   decision: 'ALLOWED' | 'BLOCKED';
   reason: string;
-  created_at: string;
 }
 
 const PROVIDER_MODELS: Record<string, Array<{ id: string; label: string }>> = {
-  'local-smart': [{ id: 'lm-context-v1', label: 'LM Smart Local' }],
+  'local-smart': [{ id: 'lm-context-v1', label: 'LM Spatial Core' }],
   gemini: [
     { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen' },
     { id: 'gemini-4-argon', label: 'Gemini 4 Argon' },
@@ -49,22 +49,20 @@ const PROVIDER_MODELS: Record<string, Array<{ id: string; label: string }>> = {
     { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
     { id: 'gpt-4o', label: 'GPT-4o' },
   ],
-  anthropic: [
-    { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet' },
-  ],
+  anthropic: [{ id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet' }],
   openrouter: [
     { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
     { id: 'deepseek/deepseek-chat', label: 'DeepSeek V3' },
   ],
-  groq: [{ id: 'llama-3.3-70b-versatile', label: 'Groq Llama 3.3 70B' }],
+  groq: [{ id: 'llama-3.3-70b-versatile', label: 'Groq Llama 3.3' }],
   ollama: [{ id: 'llama3.2', label: 'Ollama llama3.2' }],
 };
 
 export function AiView() {
-  const { user, lang, pendingAiShare, clearPendingAiShare, setActiveTab, refreshUser } = useApp();
+  const { user, lang, pendingAiShare, clearPendingAiShare, setActiveTab, refreshUser, toast } = useApp();
   const isAr = lang === 'ar';
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [provider, setProvider] = useState('local-smart');
   const [model, setModel] = useState('lm-context-v1');
@@ -72,6 +70,10 @@ export function AiView() {
   const [messages, setMessages] = useState<AiMsg[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speakingTts, setSpeakingTts] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(false);
+
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageMime, setImageMime] = useState<string>('image/png');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -105,6 +107,44 @@ export function AiView() {
 
   if (!user) return null;
 
+  function speakReply(text: string) {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const clean = text.replace(/[*_`#>]/g, '').slice(0, 280);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = /[\u0600-\u06FF]/.test(clean) ? 'ar-EG' : 'en-US';
+    u.onstart = () => setSpeakingTts(true);
+    u.onend = () => setSpeakingTts(false);
+    u.onerror = () => setSpeakingTts(false);
+    window.speechSynthesis.speak(u);
+  }
+
+  function startSpeechInput() {
+    const Win = window as unknown as { SpeechRecognition?: new () => unknown; webkitSpeechRecognition?: new () => unknown };
+    const SR = Win.SpeechRecognition || Win.webkitSpeechRecognition;
+    if (!SR) {
+      toast(isAr ? 'متصفحك لا يدعم الإملاء الصوتي المباشر — استخدم كتابة الرسالة' : 'Speech recognition unavailable', 'info');
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec: any = new SR();
+    rec.lang = isAr ? 'ar-EG' : 'en-US';
+    rec.interimResults = false;
+    setListening(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (ev: any) => {
+      const spoken = ev.results?.[0]?.[0]?.transcript || '';
+      setListening(false);
+      if (spoken) {
+        setAutoSpeak(true);
+        sendPrompt(spoken, true);
+      }
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    rec.start();
+  }
+
   function handleProviderChange(nextP: string) {
     setProvider(nextP);
     const list = PROVIDER_MODELS[nextP];
@@ -124,16 +164,16 @@ export function AiView() {
     reader.readAsDataURL(file);
   }
 
-  async function sendPrompt(customPrompt?: string) {
+  async function sendPrompt(customPrompt?: string, forceTts = false) {
     if (!user) return;
     const text = (customPrompt !== undefined ? customPrompt : input).trim();
     if (!text && !pendingAiShare) return;
 
-    const finalPrompt = text || (isAr ? 'لخّص هذا المحتوى بدقة.' : 'Summarize this shared content.');
+    const finalPrompt = text || (isAr ? 'لخّص هذا المحتوى.' : 'Summarize this.');
     const userMsg: AiMsg = {
       id: `u_${Date.now()}`,
       role: 'user',
-      text: pendingAiShare ? `[مشارك بإذنك: ${pendingAiShare.title}]\n${finalPrompt}` : finalPrompt,
+      text: pendingAiShare ? `[${pendingAiShare.title}]\n${finalPrompt}` : finalPrompt,
       imagePreview: imagePreview || undefined,
     };
 
@@ -180,6 +220,7 @@ export function AiView() {
           blocked: res.blocked,
         },
       ]);
+      if (autoSpeak || forceTts) speakReply(res.reply);
       setImageBase64(null);
       setImagePreview(null);
       await loadLogs();
@@ -195,162 +236,141 @@ export function AiView() {
   }
 
   return (
-    <div className="h-full w-full flex bg-[var(--lm-bg)] overflow-hidden">
-      {/* ============================================================
-          LOBECHAT / CHATGPT COLLAPSIBLE AGENTS & HISTORY SIDEBAR
-         ============================================================ */}
+    <div className="h-full w-full flex overflow-hidden">
       {sidebarOpen && (
-        <aside className="hidden lg:flex w-[260px] shrink-0 flex-col border-e border-white/[0.06] bg-[var(--lm-surface)] p-3 justify-between">
-          <div className="space-y-4">
+        <aside className="w-[250px] shrink-0 flex-col border-e border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl p-3 flex justify-between">
+          <div className="space-y-3">
             <button
               onClick={() => setMessages([])}
-              className="w-full py-2.5 px-3.5 rounded-2xl bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] text-xs font-semibold flex items-center justify-between cursor-pointer"
+              className="w-full py-2.5 px-3.5 rounded-2xl lm-btn-primary text-xs font-bold flex items-center justify-between cursor-pointer"
             >
-              <span className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#8774E1]" />
-                {isAr ? 'محادثة ذكية جديدة' : 'New Chat'}
-              </span>
+              <span>{isAr ? 'جلسة جديدة' : 'New Session'}</span>
               <Plus className="w-4 h-4" />
-            </button>
-
-            <div className="space-y-1">
-              <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--lm-text-muted)]">
-                {isAr ? 'وكلاء LM AI المتخصصون' : 'LM AI Agents'}
-              </div>
-              {[
-                { title: isAr ? 'ملخص المنشورات والفيديوهات' : 'Content Summarizer', p: isAr ? 'كيف يمكنني تلخيص منشور أو فيديو قصير على LM؟' : 'How do I summarize posts?' },
-                { title: isAr ? 'الباحث داخل منصة LM' : 'LM Platform Explorer', p: isAr ? 'ابحث عن الحسابات والمجتمعات النشطة داخل LM' : 'Search active LM accounts' },
-                { title: isAr ? 'صائغ الرسائل الاحترافية' : 'Smart Message Writer', p: isAr ? 'ساعدني في صياغة رسالة احترافية لمستثمر' : 'Draft an investor message' },
-                { title: isAr ? 'اختبار جدار العزل المالي' : 'Financial Firewall Test', p: isAr ? 'حوّل 500 جنيه من محفظتي إلى كريم' : 'Transfer $500 to Karim' },
-              ].map((ag) => (
-                <button
-                  key={ag.title}
-                  onClick={() => sendPrompt(ag.p)}
-                  className="w-full text-start px-3 py-2 rounded-xl hover:bg-[var(--lm-surface-hover)] text-xs text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] truncate cursor-pointer"
-                >
-                  {ag.title}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2 pt-3 border-t border-white/[0.06]">
-            <button
-              onClick={() => setAuditOpen(v => !v)}
-              className="w-full py-2 px-3 rounded-xl bg-emerald-500/10 text-emerald-400 text-xs font-medium flex items-center justify-between cursor-pointer"
-            >
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4" />
-                {isAr ? 'سجل الخصوصية والأمان' : 'Security Audit'}
-              </span>
-              <span className="font-mono-num text-[10px]">{logs.length}</span>
             </button>
             <button
               onClick={() => setActiveTab('settings')}
-              className="w-full py-2 px-3 rounded-xl hover:bg-[var(--lm-surface-hover)] text-xs text-[var(--lm-text-secondary)] flex items-center gap-2 cursor-pointer"
+              className="w-full py-2 px-3 rounded-xl bg-[var(--lm-surface-2)] text-xs flex items-center gap-2 cursor-pointer"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
-              {isAr ? 'ربط مفاتيح الـ APIs' : 'Configure API Keys'}
+              {isAr ? 'مفاتيح الـ APIs' : 'API Keys'}
             </button>
           </div>
+          <button
+            onClick={() => setAuditOpen(v => !v)}
+            className="w-full py-2 px-3 rounded-xl bg-emerald-500/15 text-emerald-400 text-xs font-semibold flex items-center justify-between cursor-pointer"
+          >
+            <span className="flex items-center gap-1.5"><ShieldCheck className="w-4 h-4" /> Shield</span>
+            <span className="font-mono-num text-[10px]">{logs.length}</span>
+          </button>
         </aside>
       )}
 
-      {/* ============================================================
-          BORDERLESS LOBECHAT / CHATGPT CENTER CANVAS
-         ============================================================ */}
+      {/* MAIN 3D SPATIAL AI WORKSPACE */}
       <section className="flex-1 flex flex-col min-w-0 relative">
-        {/* Minimal Floating Model Pill Bar */}
         <header className="h-14 px-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(v => !v)}
-              className="hidden lg:flex w-9 h-9 rounded-xl hover:bg-[var(--lm-surface-hover)] items-center justify-center text-[var(--lm-text-secondary)] cursor-pointer"
+              className="w-9 h-9 rounded-full liquid-glass flex items-center justify-center cursor-pointer"
             >
               <PanelLeft className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center gap-1.5 p-1 rounded-full bg-[var(--lm-surface)] border border-[var(--lm-border)]">
+            <div className="liquid-glass rounded-full px-3 py-1 flex items-center gap-2">
               <select
                 value={provider}
                 onChange={(e) => handleProviderChange(e.target.value)}
-                className="bg-transparent px-2.5 py-1 text-xs font-semibold outline-none cursor-pointer"
+                className="bg-transparent text-xs font-bold outline-none cursor-pointer"
               >
-                <option value="local-smart" className="bg-[#18191E]">LM Smart</option>
-                <option value="gemini" className="bg-[#18191E]">Gemini {providerStatus.geminiConfigured ? '●' : ''}</option>
-                <option value="openai" className="bg-[#18191E]">OpenAI {providerStatus.openaiConfigured ? '●' : ''}</option>
-                <option value="anthropic" className="bg-[#18191E]">Claude {providerStatus.anthropicConfigured ? '●' : ''}</option>
-                <option value="openrouter" className="bg-[#18191E]">OpenRouter {providerStatus.openrouterConfigured ? '●' : ''}</option>
-                <option value="groq" className="bg-[#18191E]">Groq {providerStatus.groqConfigured ? '●' : ''}</option>
-                <option value="ollama" className="bg-[#18191E]">Ollama</option>
+                <option value="local-smart" className="bg-[#12141D]">LM Core</option>
+                <option value="gemini" className="bg-[#12141D]">Gemini {providerStatus.geminiConfigured ? '●' : ''}</option>
+                <option value="openai" className="bg-[#12141D]">OpenAI {providerStatus.openaiConfigured ? '●' : ''}</option>
+                <option value="anthropic" className="bg-[#12141D]">Claude {providerStatus.anthropicConfigured ? '●' : ''}</option>
+                <option value="openrouter" className="bg-[#12141D]">OpenRouter {providerStatus.openrouterConfigured ? '●' : ''}</option>
+                <option value="groq" className="bg-[#12141D]">Groq {providerStatus.groqConfigured ? '●' : ''}</option>
+                <option value="ollama" className="bg-[#12141D]">Ollama</option>
               </select>
-              <span className="text-[var(--lm-border-strong)]">|</span>
+              <span className="opacity-30">|</span>
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                className="bg-transparent px-2.5 py-1 text-xs text-[var(--lm-text-secondary)] font-mono-num outline-none cursor-pointer"
+                className="bg-transparent text-xs text-[var(--lm-text-secondary)] font-mono-num outline-none cursor-pointer"
               >
                 {(PROVIDER_MODELS[provider] || []).map(m => (
-                  <option key={m.id} value={m.id} className="bg-[#18191E]">{m.label}</option>
+                  <option key={m.id} value={m.id} className="bg-[#12141D]">{m.label}</option>
                 ))}
               </select>
             </div>
           </div>
 
-          <button
-            onClick={() => setAuditOpen(v => !v)}
-            className="px-3 py-1.5 rounded-full bg-[var(--lm-surface)] border border-[var(--lm-border)] text-[11px] flex items-center gap-1.5 cursor-pointer"
-          >
-            <Lock className="w-3 h-3 text-emerald-400" />
-            <span>{isAr ? 'معزول ماليًا وخاص' : 'Isolated & Private'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (speakingTts && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+                setAutoSpeak(v => !v);
+              }}
+              title={isAr ? 'النطق الصوتي التلقائي' : 'Voice Output'}
+              className={`w-9 h-9 rounded-full liquid-glass flex items-center justify-center cursor-pointer ${
+                autoSpeak ? 'text-[#38BDF8]' : 'text-[var(--lm-text-secondary)]'
+              }`}
+            >
+              {autoSpeak ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => setAuditOpen(v => !v)}
+              className="w-9 h-9 rounded-full liquid-glass flex items-center justify-center text-emerald-400 cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
-        {/* Conversation Area or Clean Center Welcome Screen */}
         <div className="flex-1 overflow-y-auto px-4">
           {messages.length === 0 ? (
-            <div className="h-full max-w-2xl mx-auto flex flex-col items-center justify-center text-center space-y-6 py-8">
-              <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#3390EC] to-[#8774E1] flex items-center justify-center text-white shadow-2xl">
-                <Sparkles className="w-8 h-8" />
-              </div>
-              <div className="space-y-2">
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-                  {isAr ? `كيف أساعدك اليوم يا ${user.displayName.split(' ')[0]}؟` : `How can I help today, ${user.displayNameEn.split(' ')[0]}?`}
-                </h1>
-                <p className="text-xs sm:text-sm text-[var(--lm-text-secondary)] max-w-md mx-auto">
-                  {isAr
-                    ? 'اربِط أي مفتاح API (Gemini / OpenAI / Claude / OpenRouter / Ollama) أو ابدأ فورًا بالمحرك المحلي.'
-                    : 'Connect any frontier API or start immediately with the local engine.'}
-                </p>
-              </div>
+            <div className="h-full max-w-xl mx-auto flex flex-col items-center justify-center text-center space-y-5 py-4">
+              {/* REAL INTERACTIVE THREE.JS 3D SENTIENT COMPANION */}
+              <SpatialCompanion3D speaking={loading || speakingTts} listening={listening} size={210} />
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 w-full">
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                {listening
+                  ? (isAr ? 'أستمع إليك الآن...' : 'Listening...')
+                  : (isAr ? `أهلًا ${user.displayName.split(' ')[0]}` : `Hello, ${user.displayNameEn.split(' ')[0]}`)}
+              </h1>
+
+              <div className="flex flex-wrap items-center justify-center gap-2">
                 {[
-                  { icon: FileSearch, title: isAr ? 'البحث في المنصة' : 'Search LM', desc: isAr ? 'استكشف الحسابات والقنوات' : 'Find creators & channels', p: isAr ? 'ابحث عن الحسابات والمجتمعات النشطة داخل LM' : 'Search active LM accounts' },
-                  { icon: Wand2, title: isAr ? 'صياغة احترافية' : 'Draft Reply', desc: isAr ? 'اكتب رسائل ومنشورات متقنة' : 'Write polished messages', p: isAr ? 'ساعدني في صياغة رسالة احترافية لدعوة مستثمر لتجربة LM' : 'Draft an investor invite' },
-                  { icon: ShieldAlert, title: isAr ? 'اختبار العزل المالي' : 'Test Firewall', desc: isAr ? 'جرّب طلب تحويل مالي لترى الحظر' : 'Verify zero wallet access', p: isAr ? 'حوّل 500 جنيه من محفظتي إلى كريم' : 'Transfer $500 to Karim' },
-                ].map((card) => {
-                  const Icon = card.icon;
-                  return (
-                    <button
-                      key={card.title}
-                      onClick={() => sendPrompt(card.p)}
-                      className="p-4 rounded-2xl bg-[var(--lm-surface)] hover:bg-[var(--lm-surface-hover)] border border-[var(--lm-border)] text-start space-y-1.5 transition-all cursor-pointer"
-                    >
-                      <Icon className="w-4 h-4 text-[#8774E1]" />
-                      <div className="text-xs font-bold">{card.title}</div>
-                      <div className="text-[11px] text-[var(--lm-text-muted)]">{card.desc}</div>
-                    </button>
-                  );
-                })}
+                  { label: isAr ? 'استكشاف المجتمعات' : 'Explore LM', p: isAr ? 'ابحث عن الحسابات والمجتمعات النشطة' : 'Search active LM accounts' },
+                  { label: isAr ? 'صياغة رسالة' : 'Draft message', p: isAr ? 'اكتب رسالة سريعة وأنيقة لصديق' : 'Draft a quick stylish message' },
+                  { label: isAr ? 'اختبار الحماية المالية' : 'Security Check', p: isAr ? 'حوّل 500 جنيه من محفظتي إلى كريم' : 'Transfer $500 to Karim' },
+                ].map((chip) => (
+                  <motion.button
+                    key={chip.label}
+                    whileHover={{ y: -2, scale: 1.03 }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => sendPrompt(chip.p)}
+                    className="px-4 py-2 rounded-full lm-card hover:border-[var(--lm-accent)]/50 text-xs font-semibold cursor-pointer"
+                  >
+                    {chip.label}
+                  </motion.button>
+                ))}
               </div>
             </div>
           ) : (
-            <div className="max-w-3xl mx-auto py-6 space-y-6">
+            <div className="max-w-3xl mx-auto py-4 space-y-5">
+              {/* Compact Floating 3D Companion Header while chatting */}
+              <div className="flex justify-center">
+                <SpatialCompanion3D speaking={loading || speakingTts} listening={listening} size={96} />
+              </div>
+
               {messages.map((m) => (
-                <div key={m.id} className={`flex gap-3.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <motion.div
+                  key={m.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
                   {m.role === 'assistant' && (
-                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#3390EC] to-[#8774E1] flex items-center justify-center text-white shrink-0 mt-0.5">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#7C5CFF] to-[#38BDF8] flex items-center justify-center text-white shrink-0 mt-0.5">
                       <Sparkles className="w-4 h-4" />
                     </div>
                   )}
@@ -358,22 +378,26 @@ export function AiView() {
                   <div
                     className={`max-w-[85%] ${
                       m.role === 'user'
-                        ? 'rounded-3xl rounded-ee-md bg-[var(--lm-surface-2)] px-4 py-3 text-sm'
+                        ? 'rounded-3xl rounded-ee-md lm-btn-primary px-4 py-2.5 text-sm'
                         : m.blocked
-                        ? 'rounded-2xl bg-red-500/10 border border-red-500/35 px-4 py-3 text-sm'
-                        : 'flex-1 text-sm leading-relaxed space-y-2'
+                        ? 'rounded-3xl bg-red-500/12 border border-red-500/35 px-4 py-3 text-sm'
+                        : 'lm-card rounded-3xl rounded-es-md px-4 py-3 text-sm leading-relaxed'
                     }`}
                   >
-                    {m.imagePreview && (
-                      <img src={m.imagePreview} alt="" className="max-h-48 rounded-2xl mb-2" />
-                    )}
+                    {m.imagePreview && <img src={m.imagePreview} alt="" className="max-h-48 rounded-2xl mb-2" />}
                     <div className="prose prose-invert prose-sm max-w-none">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
                     </div>
                     {m.provider && (
-                      <div className="pt-1.5 flex items-center gap-3 text-[10px] font-mono-num text-[var(--lm-text-muted)]">
-                        <span>{m.provider} • {m.model}</span>
-                        {m.latencyMs !== undefined && <span>{m.latencyMs}ms</span>}
+                      <div className="pt-1.5 flex items-center justify-between gap-3 text-[10px] font-mono-num text-[var(--lm-text-muted)]">
+                        <span>{m.model}</span>
+                        <button
+                          type="button"
+                          onClick={() => speakReply(m.text)}
+                          className="hover:text-[var(--lm-accent)] cursor-pointer flex items-center gap-1"
+                        >
+                          <Volume2 className="w-3 h-3" /> {m.latencyMs}ms
+                        </button>
                       </div>
                     )}
                   </div>
@@ -381,50 +405,39 @@ export function AiView() {
                   {m.role === 'user' && (
                     <UserAvatar initials={user.avatarInitials} color={user.avatarColor} avatarUrl={user.avatarUrl} size={32} />
                   )}
-                </div>
+                </motion.div>
               ))}
-              {loading && (
-                <div className="flex items-center gap-3 text-xs text-[var(--lm-text-muted)]">
-                  <div className="w-7 h-7 rounded-xl bg-[#8774E1]/20 flex items-center justify-center animate-pulse">
-                    <Sparkles className="w-3.5 h-3.5 text-[#8774E1]" />
-                  </div>
-                  <span>{isAr ? 'يفكر...' : 'Thinking...'}</span>
-                </div>
-              )}
               <div ref={bottomRef} />
             </div>
           )}
         </div>
 
-        {/* FLOATING ROUNDED COMPOSER PILL (ChatGPT / LobeChat Style) */}
-        <div className="px-4 pb-5 pt-2 shrink-0">
-          <div className="max-w-3xl mx-auto space-y-2">
+        {/* FLOATING 2026 VOICE + MULTIMODAL COMPOSER */}
+        <div className="px-4 pb-3 pt-1 shrink-0">
+          <div className="max-w-2xl mx-auto space-y-2">
             {pendingAiShare && (
-              <div className="px-4 py-2 rounded-2xl bg-[#8774E1]/15 border border-[#8774E1]/35 flex items-center justify-between text-xs">
-                <span className="truncate"><strong>{isAr ? 'محتوى مُشارَك بإذنك:' : 'Consented share:'}</strong> {pendingAiShare.title}</span>
+              <div className="px-4 py-2 rounded-2xl liquid-glass flex items-center justify-between text-xs">
+                <span className="truncate">{pendingAiShare.title}</span>
                 <button onClick={clearPendingAiShare} className="cursor-pointer"><X className="w-4 h-4" /></button>
               </div>
             )}
 
             {imagePreview && (
-              <div className="px-4 py-2 rounded-2xl bg-[var(--lm-surface)] border border-[var(--lm-border)] flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <img src={imagePreview} alt="" className="w-8 h-8 rounded-lg object-cover" />
-                  <span>{isAr ? 'صورة مرفقة للتحليل البصري' : 'Image attached'}</span>
-                </div>
+              <div className="px-4 py-2 rounded-2xl liquid-glass flex items-center justify-between text-xs">
+                <img src={imagePreview} alt="" className="w-8 h-8 rounded-lg object-cover" />
                 <button onClick={() => { setImageBase64(null); setImagePreview(null); }} className="cursor-pointer"><X className="w-4 h-4" /></button>
               </div>
             )}
 
             <form
               onSubmit={(e) => { e.preventDefault(); sendPrompt(); }}
-              className="rounded-3xl bg-[var(--lm-surface)] border border-[var(--lm-border-strong)] px-3 py-2 flex items-center gap-2 shadow-xl"
+              className="h-13 rounded-full liquid-glass px-2.5 flex items-center gap-2"
             >
               <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="w-9 h-9 rounded-full hover:bg-[var(--lm-surface-hover)] flex items-center justify-center text-[var(--lm-text-secondary)] cursor-pointer shrink-0"
+                className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-[var(--lm-text-secondary)] cursor-pointer shrink-0"
               >
                 <ImageIcon className="w-4 h-4" />
               </button>
@@ -432,14 +445,25 @@ export function AiView() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={isAr ? 'اسأل LM AI أي شيء...' : 'Message LM AI...'}
+                placeholder={isAr ? 'تحدث أو اسأل LM AI...' : 'Talk or ask LM AI...'}
                 className="flex-1 bg-transparent text-sm outline-none text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)]"
               />
 
               <button
+                type="button"
+                onClick={startSpeechInput}
+                title={isAr ? 'تحدث بصوتك مباشرةً' : 'Live Voice Talk'}
+                className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer shrink-0 transition-all ${
+                  listening ? 'bg-[#FF2D55] text-white animate-pulse' : 'hover:bg-white/10 text-[var(--lm-text-secondary)]'
+                }`}
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+
+              <button
                 type="submit"
                 disabled={loading || (!input.trim() && !pendingAiShare)}
-                className="w-9 h-9 rounded-full bg-[#8774E1] text-white flex items-center justify-center cursor-pointer disabled:opacity-35 shrink-0"
+                className="w-9 h-9 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer disabled:opacity-35 shrink-0"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -448,19 +472,17 @@ export function AiView() {
         </div>
       </section>
 
-      {/* SLIDE-OVER SECURITY AUDIT DRAWER */}
       {auditOpen && (
-        <aside className="w-80 shrink-0 border-s border-white/[0.07] bg-[var(--lm-surface)] p-4 flex flex-col">
+        <aside className="w-76 shrink-0 border-s border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl p-4 flex flex-col">
           <div className="flex items-center justify-between pb-3 border-b border-[var(--lm-border)]">
             <span className="text-xs font-bold flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              {isAr ? 'سجل الأمان والعزل المالي' : 'Security Audit Log'}
+              <ShieldCheck className="w-4 h-4 text-emerald-400" /> Shield Log
             </span>
             <button onClick={() => setAuditOpen(false)} className="cursor-pointer"><X className="w-4 h-4" /></button>
           </div>
           <div className="flex-1 overflow-y-auto py-3 space-y-2">
             {logs.map((l) => (
-              <div key={l.id} className="p-2.5 rounded-xl bg-[var(--lm-surface-2)] text-xs space-y-1">
+              <div key={l.id} className="p-2.5 rounded-2xl bg-[var(--lm-surface-2)] text-xs space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-mono-num text-[10px] font-bold">{l.action_type}</span>
                   <span className={`text-[9px] font-mono-num px-1.5 py-0.5 rounded font-bold ${

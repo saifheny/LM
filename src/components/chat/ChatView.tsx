@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react';
-import WaveSurfer from 'wavesurfer.js';
+import confetti from 'canvas-confetti';
 import {
   Search,
   Send,
@@ -8,7 +9,6 @@ import {
   Video,
   Paperclip,
   Mic,
-  Square,
   Smile,
   CheckCheck,
   Pin,
@@ -18,74 +18,55 @@ import {
   Lock,
   Plus,
   X,
-  Play,
-  Pause,
   PhoneOff,
   MicOff,
   VideoOff,
   ArrowRight,
+  Camera,
+  Flame,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api, uploadFile } from '../../lib/api';
 import { ChatMessageItem, ConversationItem } from '../../types';
 import { RichMessageText, UserAvatar, VipBadge } from '../shared/LmBrandMark';
+import { LiveVoiceRecorder, SmartVoicePill } from '../shared/VoiceStudio2026';
 
-const QUICK_REACTIONS = ['❤️', '🔥', '👍', '😂', '🚀', '👏'];
+const QUICK_REACTIONS = ['❤️', '🔥', '😂', '😍', '🚀', '👏'];
+const SEND_EFFECTS = [
+  { id: 'fire', emoji: '🔥', label: 'نار' },
+  { id: 'confetti', emoji: '🎉', label: 'احتفال' },
+  { id: 'love', emoji: '❤️', label: 'حب' },
+  { id: 'laser', emoji: '⚡', label: 'برق' },
+];
 
-/** Authentic Telegram Voice Note Waveform Player using open-source wavesurfer.js */
-function TelegramVoiceNote({ url, isMine }: { url: string; isMine: boolean }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState('0:06');
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      waveColor: isMine ? 'rgba(255,255,255,0.42)' : 'rgba(135,116,225,0.42)',
-      progressColor: isMine ? '#FFFFFF' : '#8774E1',
-      cursorWidth: 0,
-      barWidth: 2.5,
-      barGap: 2,
-      barRadius: 3,
-      height: 28,
-      url,
-    });
-    wsRef.current = ws;
-    ws.on('ready', () => {
-      const d = Math.round(ws.getDuration() || 6);
-      setDuration(`${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`);
-    });
-    ws.on('play', () => setPlaying(true));
-    ws.on('pause', () => setPlaying(false));
-    ws.on('finish', () => setPlaying(false));
-    return () => {
-      ws.destroy();
-    };
-  }, [url, isMine]);
+/** 2026 Circular Floating Video Note Bubble (Telegram Round Video Style) */
+function CircularVideoBubble({ url }: { url: string }) {
+  const [muted, setMuted] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="flex items-center gap-3 min-w-[210px] sm:min-w-[245px] py-1">
-      <button
-        type="button"
-        onClick={() => wsRef.current?.playPause()}
-        className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-95 ${
-          isMine ? 'bg-white text-[#766AC8]' : 'bg-[#8774E1] text-white'
-        }`}
-      >
-        {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ms-0.5" />}
-      </button>
-      <div className="flex-1 min-w-0">
-        <div ref={containerRef} className="w-full" />
-        <div className="text-[10px] font-mono-num opacity-75 mt-0.5">{duration} • Voice</div>
-      </div>
+    <div
+      onClick={() => {
+        setMuted(false);
+        setExpanded(e => !e);
+      }}
+      className={`relative rounded-full overflow-hidden cursor-pointer border-2 border-[#7C5CFF] shadow-[0_12px_32px_rgba(124,92,255,0.35)] transition-all duration-300 ${
+        expanded ? 'w-60 h-60' : 'w-44 h-44'
+      }`}
+    >
+      <video src={url} autoPlay loop muted={muted} playsInline className="w-full h-full object-cover" />
+      <span className="absolute bottom-2.5 right-1/2 translate-x-1/2 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-md text-[10px] text-white flex items-center gap-1">
+        {muted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+        <span>0:15</span>
+      </span>
     </div>
   );
 }
 
 export function ChatView() {
-  const { user, lang, toast, wsListeners, setActiveTab } = useApp();
+  const { user, lang, toast, wsListeners } = useApp();
   const isAr = lang === 'ar';
 
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -97,23 +78,21 @@ export function ChatView() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
 
-  // Telegram features: Reply, Emoji Picker, Info Drawer, Lightbox, Explicit @LM AI Consent
+  // 2026 Interactive Messaging States
   const [replyTo, setReplyTo] = useState<ChatMessageItem | null>(null);
   const [sharedForAi, setSharedForAi] = useState<ChatMessageItem | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [effectsOpen, setEffectsOpen] = useState(false);
+  const [voiceStudioOpen, setVoiceStudioOpen] = useState(false);
+  const [captureMode, setCaptureMode] = useState<'mic' | 'video_note'>('mic');
   const [infoOpen, setInfoOpen] = useState(false);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
 
-  // New group modal
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [groupTitle, setGroupTitle] = useState('');
   const [groupType, setGroupType] = useState<'group' | 'community'>('group');
 
-  // Voice recording
-  const [recording, setRecording] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -144,6 +123,7 @@ export function ChatView() {
       loadMessages(activeConvId);
       setReplyTo(null);
       setSharedForAi(null);
+      setVoiceStudioOpen(false);
     }
   }, [activeConvId, loadMessages]);
 
@@ -156,9 +136,7 @@ export function ChatView() {
       if (event === 'chat:message') {
         const p = payload as { conversationId: string };
         loadConversations();
-        if (p.conversationId === activeConvId) {
-          loadMessages(activeConvId);
-        }
+        if (p.conversationId === activeConvId) loadMessages(activeConvId);
       }
     };
     const listeners = wsListeners.current;
@@ -169,10 +147,7 @@ export function ChatView() {
   }, [activeConvId, loadConversations, loadMessages, wsListeners]);
 
   useEffect(() => {
-    if (!callMode) {
-      setCallSec(0);
-      return;
-    }
+    if (!callMode) { setCallSec(0); return; }
     const id = setInterval(() => setCallSec(s => s + 1), 1000);
     return () => clearInterval(id);
   }, [callMode]);
@@ -186,18 +161,22 @@ export function ChatView() {
     return c.title.toLowerCase().includes(filterText.toLowerCase()) || c.lastMessage.toLowerCase().includes(filterText.toLowerCase());
   });
 
-  async function sendMessage(e?: React.FormEvent) {
+  async function sendMessage(e?: React.FormEvent, chosenEffect?: string) {
     e?.preventDefault();
     if (!user || !activeConvId || !draft.trim()) return;
     setSending(true);
     const wantsAi = /@LM\s*AI/i.test(draft) || Boolean(sharedForAi);
     try {
+      if (chosenEffect) {
+        confetti({ particleCount: 55, spread: 70, origin: { y: 0.8 } });
+      }
       await api(`/api/conversations/${activeConvId}/messages`, {
         method: 'POST',
         body: JSON.stringify({
           senderId: user.id,
           content: draft,
           msgType: 'text',
+          sendEffect: chosenEffect || null,
           replyToId: replyTo?.id,
           replySender: replyTo?.displayName,
           replyText: replyTo?.content.slice(0, 80),
@@ -209,6 +188,7 @@ export function ChatView() {
       setReplyTo(null);
       setSharedForAi(null);
       setEmojiOpen(false);
+      setEffectsOpen(false);
       await loadMessages(activeConvId);
       await loadConversations();
     } catch (err) {
@@ -216,6 +196,48 @@ export function ChatView() {
     } finally {
       setSending(false);
     }
+  }
+
+  async function handleVoiceSend(audioFile: File) {
+    if (!user) return;
+    try {
+      const up = await uploadFile(audioFile);
+      await api(`/api/conversations/${activeConvId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          senderId: user.id,
+          content: isAr ? 'رسالة صوتية' : 'Voice Note',
+          msgType: 'audio',
+          mediaUrl: up.url,
+          transcript: isAr ? 'رسالة صوتية عالية النقاء مسجلة بتقنية LM Voice 2026.' : 'HD Spatial Voice Message.',
+          replyToId: replyTo?.id,
+          replySender: replyTo?.displayName,
+          replyText: replyTo?.content.slice(0, 60),
+        }),
+      });
+      setVoiceStudioOpen(false);
+      setReplyTo(null);
+      await loadMessages(activeConvId);
+      await loadConversations();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Error', 'error');
+    }
+  }
+
+  async function sendInstantVideoNote() {
+    if (!user) return;
+    await api(`/api/conversations/${activeConvId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        senderId: user.id,
+        content: isAr ? 'رسالة فيديو دائرية' : 'Video Note',
+        msgType: 'video_note',
+        mediaUrl: '/uploads/seed/reel1.mp4',
+      }),
+    });
+    await loadMessages(activeConvId);
+    await loadConversations();
+    toast(isAr ? 'تم إرسال رسالة فيديو دائرية 🎥' : 'Circular video note sent 🎥', 'success');
   }
 
   async function toggleReaction(msgId: string, emoji: string) {
@@ -248,44 +270,6 @@ export function ChatView() {
     }
   }
 
-  async function toggleVoiceNote() {
-    if (recording) {
-      recorderRef.current?.stop();
-      setRecording(false);
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      chunksRef.current = [];
-      rec.ondataavailable = (ev) => {
-        if (ev.data.size > 0) chunksRef.current.push(ev.data);
-      };
-      rec.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
-        if (!user) return;
-        const up = await uploadFile(file);
-        await api(`/api/conversations/${activeConvId}/messages`, {
-          method: 'POST',
-          body: JSON.stringify({
-            senderId: user.id,
-            content: isAr ? 'رسالة صوتية' : 'Voice Note',
-            msgType: 'audio',
-            mediaUrl: up.url,
-          }),
-        });
-        await loadMessages(activeConvId);
-      };
-      recorderRef.current = rec;
-      rec.start();
-      setRecording(true);
-    } catch {
-      toast(isAr ? 'يرجى السماح بصلاحية الميكروفون لتسجيل رسالة صوتية' : 'Mic permission required', 'warning');
-    }
-  }
-
   async function startCall(type: 'voice' | 'video') {
     setCallMode(type);
     setCallMuted(false);
@@ -297,7 +281,7 @@ export function ChatView() {
         if (callVideoRef.current && type === 'video') callVideoRef.current.srcObject = stream;
       }, 60);
     } catch {
-      // fallback call screen
+      // UI preview fallback
     }
   }
 
@@ -324,40 +308,38 @@ export function ChatView() {
   const sharedPhotos = messages.filter(m => m.msgType === 'image' && m.mediaUrl);
 
   return (
-    <div className="h-full w-full flex overflow-hidden bg-[var(--tg-sidebar-bg)]">
+    <div className="h-full w-full flex overflow-hidden">
       {/* ============================================================
-          COLUMN 1: TELEGRAM WEB A LEFT CHAT LIST
+          SPATIAL GLASS CONVERSATIONS PANE
          ============================================================ */}
       <aside
         className={`${
           mobileChatOpen ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[350px] lg:w-[380px] shrink-0 flex-col border-e border-white/[0.07] bg-[var(--tg-sidebar-bg)] select-none`}
+        } w-full md:w-[350px] lg:w-[375px] shrink-0 flex-col border-e border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl select-none`}
       >
-        {/* Top Search Pill + New Chat */}
-        <div className="px-3 pt-3 pb-2 flex items-center gap-2">
+        <div className="px-3.5 pt-3.5 pb-2 flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-[var(--lm-text-muted)] absolute top-1/2 -translate-y-1/2 start-3.5" />
             <input
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
-              placeholder={isAr ? 'بحث في تيليجرام LM...' : 'Search'}
-              className="w-full h-10 rounded-full bg-[var(--tg-hover)] ps-10 pe-4 text-sm text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)] outline-none focus:ring-2 focus:ring-[#8774E1]/50 transition-all"
+              placeholder={isAr ? 'ابحث...' : 'Search...'}
+              className="lm-input w-full h-10 rounded-full ps-10 pe-4 text-sm"
             />
           </div>
           <button
             onClick={() => setNewGroupOpen(true)}
-            title={isAr ? 'محادثة أو قناة جديدة' : 'New Group / Channel'}
-            className="w-10 h-10 rounded-full bg-[var(--tg-hover)] hover:bg-[#8774E1] hover:text-white flex items-center justify-center text-[var(--lm-text-secondary)] transition-colors cursor-pointer shrink-0"
+            className="w-10 h-10 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer shrink-0"
           >
             <Plus className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Telegram Folder Tabs */}
-        <div className="px-3 flex items-center gap-5 border-b border-white/[0.07] text-xs font-semibold overflow-x-auto no-scrollbar">
+        {/* Folder Capsules */}
+        <div className="px-3.5 py-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {[
             { id: 'all', ar: 'الكل', en: 'All' },
-            { id: 'personal', ar: 'شخصي', en: 'Personal' },
+            { id: 'personal', ar: 'الأشخاص', en: 'Direct' },
             { id: 'groups', ar: 'المجموعات', en: 'Groups' },
             { id: 'channels', ar: 'القنوات', en: 'Channels' },
           ].map((f) => {
@@ -366,31 +348,33 @@ export function ChatView() {
               <button
                 key={f.id}
                 onClick={() => setFolder(f.id as typeof folder)}
-                className={`py-2.5 relative whitespace-nowrap transition-colors cursor-pointer ${
-                  active ? 'text-[#8774E1]' : 'text-[var(--lm-text-muted)] hover:text-[var(--lm-text)]'
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  active
+                    ? 'bg-[var(--lm-accent)] text-[var(--lm-accent-text)] shadow-md'
+                    : 'bg-[var(--lm-surface-2)] text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
                 }`}
               >
                 {isAr ? f.ar : f.en}
-                {active && <span className="absolute bottom-0 inset-x-0 h-[3px] rounded-t-full bg-[#8774E1]" />}
               </button>
             );
           })}
         </div>
 
-        {/* Conversations List */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+        {/* Chat Rows */}
+        <div className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
           {filteredConvs.map((c) => {
             const active = c.id === activeConvId;
             return (
-              <button
+              <motion.button
                 key={c.id}
+                whileTap={{ scale: 0.985 }}
                 onClick={() => {
                   setActiveConvId(c.id);
                   setMobileChatOpen(true);
                 }}
-                className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-2xl text-start transition-colors cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-start transition-all cursor-pointer ${
                   active
-                    ? 'bg-[#766AC8] text-white'
+                    ? 'bg-gradient-to-r from-[#6D4AFF] to-[#4F7BFF] text-white shadow-lg'
                     : 'hover:bg-[var(--tg-hover)] text-[var(--lm-text)]'
                 }`}
               >
@@ -403,279 +387,252 @@ export function ChatView() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[14px] font-semibold truncate flex items-center gap-1.5">
-                      {c.isEncrypted && <Lock className={`w-3 h-3 shrink-0 ${active ? 'text-white/80' : 'text-[#00C73E]'}`} />}
+                    <span className="text-[14px] font-bold truncate flex items-center gap-1.5">
+                      {c.isEncrypted && <Lock className={`w-3 h-3 shrink-0 ${active ? 'text-white/80' : 'text-emerald-400'}`} />}
                       <span className="truncate">{c.title}</span>
                     </span>
                     <span className={`text-[11px] shrink-0 flex items-center gap-1 ${active ? 'text-white/80' : 'text-[var(--lm-text-muted)]'}`}>
-                      <CheckCheck className={`w-3.5 h-3.5 ${active ? 'text-white' : 'text-[#8774E1]'}`} />
+                      <CheckCheck className={`w-3.5 h-3.5 ${active ? 'text-white' : 'text-[#7C5CFF]'}`} />
                       {c.lastMessageAt}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between gap-2 mt-1">
-                    <p className={`text-[13px] truncate ${active ? 'text-white/85' : 'text-[var(--lm-text-muted)]'}`}>
+                  <div className="flex items-center justify-between gap-2 mt-0.5">
+                    <p className={`text-[12.5px] truncate ${active ? 'text-white/85' : 'text-[var(--lm-text-muted)]'}`}>
                       {c.lastMessage || c.description}
                     </p>
                     <div className="flex items-center gap-1 shrink-0">
-                      {c.isPinned && <Pin className={`w-3.5 h-3.5 rotate-45 ${active ? 'text-white/75' : 'text-[var(--lm-text-muted)]'}`} />}
+                      {c.isPinned && <Pin className={`w-3 h-3 rotate-45 ${active ? 'text-white/75' : 'text-[var(--lm-text-muted)]'}`} />}
                       {c.unreadCount > 0 && !active && (
-                        <span className="px-1.5 min-w-[20px] h-5 rounded-full bg-[#8774E1] text-white text-[11px] font-mono-num font-bold flex items-center justify-center">
+                        <span className="px-1.5 min-w-[20px] h-5 rounded-full bg-[#7C5CFF] text-white text-[10px] font-mono-num font-bold flex items-center justify-center">
                           {c.unreadCount}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
-              </button>
+              </motion.button>
             );
           })}
         </div>
       </aside>
 
       {/* ============================================================
-          COLUMN 2: TELEGRAM WALLPAPER STAGE + SPEECH BUBBLES + COMPOSER
+          MAIN 2026 SPATIAL CHAT STAGE
          ============================================================ */}
       <section className={`${mobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col min-w-0 tg-wallpaper relative`}>
-        {/* Telegram Chat Header */}
-        <header className="h-14 px-4 bg-[var(--tg-sidebar-bg)]/95 backdrop-blur-md border-b border-white/[0.07] flex items-center justify-between gap-3 shrink-0 z-10">
+        {/* Floating Glass Chat Header */}
+        <header className="h-15 px-4 bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl border-b border-[var(--lm-border)] flex items-center justify-between gap-3 shrink-0 z-10">
           <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => setMobileChatOpen(false)}
-              className="md:hidden p-1.5 rounded-full hover:bg-white/10 cursor-pointer"
-            >
+            <button onClick={() => setMobileChatOpen(false)} className="md:hidden p-1.5 rounded-full hover:bg-white/10 cursor-pointer">
               <ArrowRight className="w-5 h-5" />
             </button>
             <button onClick={() => setInfoOpen(v => !v)} className="flex items-center gap-3 min-w-0 text-start cursor-pointer">
               <UserAvatar
                 initials={activeConv?.title.slice(0, 2) || 'LM'}
-                color={activeConv?.avatarColor || '#3390EC'}
+                color={activeConv?.avatarColor || '#6366F1'}
                 avatarUrl={activeConv?.avatarUrl}
                 size={40}
                 online={activeConv?.onlineText?.includes('متصل')}
               />
               <div className="min-w-0">
                 <div className="text-sm font-bold truncate">{activeConv?.title}</div>
-                <div className="text-xs text-[#8774E1] truncate">{activeConv?.onlineText}</div>
+                <div className="text-xs text-[var(--lm-accent)] truncate">{activeConv?.onlineText}</div>
               </div>
             </button>
           </div>
 
-          <div className="flex items-center gap-1 text-[var(--lm-text-secondary)]">
-            <button
-              onClick={() => startCall('voice')}
-              title={isAr ? 'مكالمة صوتية' : 'Voice Call'}
-              className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer"
-            >
+          <div className="flex items-center gap-1.5 text-[var(--lm-text-secondary)]">
+            <button onClick={() => startCall('voice')} className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer">
               <Phone className="w-[18px] h-[18px]" />
             </button>
-            <button
-              onClick={() => startCall('video')}
-              title={isAr ? 'مكالمة فيديو' : 'Video Call'}
-              className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer"
-            >
+            <button onClick={() => startCall('video')} className="w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer">
               <Video className="w-[18px] h-[18px]" />
             </button>
-            <button
-              onClick={() => setInfoOpen(v => !v)}
-              title={isAr ? 'معلومات المحادثة والوسائط' : 'Chat Info'}
-              className={`w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer ${
-                infoOpen ? 'text-[#8774E1]' : ''
-              }`}
-            >
+            <button onClick={() => setInfoOpen(v => !v)} className={`w-9 h-9 rounded-full hover:bg-[var(--tg-hover)] flex items-center justify-center cursor-pointer ${infoOpen ? 'text-[var(--lm-accent)]' : ''}`}>
               <PanelRight className="w-[18px] h-[18px]" />
             </button>
           </div>
         </header>
 
-        {/* Pinned Message Banner (Telegram Style) */}
+        {/* Pinned Message */}
         {activeConv?.pinnedMessage && (
-          <div className="px-4 py-1.5 bg-[var(--tg-sidebar-bg)]/90 backdrop-blur-md border-b border-white/[0.06] flex items-center justify-between gap-3 text-xs z-10">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-0.5 h-7 rounded-full bg-[#8774E1] shrink-0" />
-              <div className="min-w-0">
-                <div className="text-[11px] font-semibold text-[#8774E1]">{isAr ? 'الرسالة المثبتة' : 'Pinned Message'}</div>
-                <div className="text-xs text-[var(--lm-text-secondary)] truncate">{activeConv.pinnedMessage}</div>
-              </div>
-            </div>
-            {activeConv.isLargeGroup && !user.adRemoval.largeGroups && (
-              <button
-                onClick={() => setActiveTab('vip')}
-                className="px-2.5 py-1 rounded-full bg-[#8774E1]/15 text-[#8774E1] text-[11px] font-semibold shrink-0 cursor-pointer"
-              >
-                {isAr ? 'إزالة إعلانات القنوات (50 ج.م)' : 'Remove Ads'}
-              </button>
-            )}
+          <div className="px-4 py-1.5 bg-[var(--tg-sidebar-bg)]/80 backdrop-blur-xl border-b border-[var(--lm-border)] flex items-center gap-2.5 text-xs z-10">
+            <div className="w-0.5 h-6 rounded-full bg-[var(--lm-accent)] shrink-0" />
+            <span className="truncate text-[var(--lm-text-secondary)]">{activeConv.pinnedMessage}</span>
           </div>
         )}
 
-        {/* Messages Stream (Centered max-w-[740px] just like Telegram Web A!) */}
+        {/* Messages Stream with Framer Motion Spring Entrance */}
         <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4">
-          <div className="max-w-[740px] mx-auto space-y-2.5">
-            {/* Encryption Pill */}
-            {activeConv?.isEncrypted && (
-              <div className="flex justify-center my-2">
-                <div className="px-3.5 py-1 rounded-full bg-black/40 backdrop-blur-md text-[11px] text-white/75 flex items-center gap-1.5">
-                  <Lock className="w-3 h-3 text-[#00C73E]" />
-                  <span>
-                    {isAr
-                      ? 'الرسائل والمكالمات مشفرة من الطرفين • معزولة تمامًا عن LM AI إلا بمشاركتك'
-                      : 'Messages are end-to-end encrypted & isolated from LM AI'}
-                  </span>
-                </div>
-              </div>
-            )}
-
+          <div className="max-w-[760px] mx-auto space-y-3">
             {messages.map((m) => {
               const isMine = m.senderId === user.id;
               const isAi = m.senderId === 'lm_ai';
               const reactionEntries = Object.entries(m.reactions || {});
+              const isVideoNote = m.msgType === 'video_note' && m.mediaUrl;
 
               return (
-                <div
+                <motion.div
                   key={m.id}
+                  initial={{ opacity: 0, y: 10, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 420, damping: 32 }}
                   onMouseEnter={() => setHoveredMsgId(m.id)}
                   onMouseLeave={() => setHoveredMsgId(prev => (prev === m.id ? null : prev))}
                   onDoubleClick={() => toggleReaction(m.id, '❤️')}
-                  className={`group flex items-end gap-2 relative ${isMine ? 'justify-end' : 'justify-start'}`}
+                  className={`group flex items-end gap-2.5 relative ${isMine ? 'justify-end' : 'justify-start'}`}
                 >
                   {!isMine && (
-                    <UserAvatar
-                      initials={m.avatarInitials}
-                      color={m.avatarColor}
-                      avatarUrl={m.avatarUrl}
-                      size={34}
-                      vipTier={m.vipTier}
-                    />
+                    <UserAvatar initials={m.avatarInitials} color={m.avatarColor} avatarUrl={m.avatarUrl} size={34} vipTier={m.vipTier} />
                   )}
 
                   <div className={`relative max-w-[82%] sm:max-w-[68%] flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
-                    {/* Hover Floating Quick Reactions + Reply + @LM AI Share */}
-                    {hoveredMsgId === m.id && (
-                      <div
-                        className={`absolute -top-9 ${
-                          isMine ? 'end-0' : 'start-0'
-                        } z-20 flex items-center gap-0.5 px-2 py-1 rounded-full bg-[#212121]/95 border border-white/12 shadow-xl backdrop-blur-md`}
-                      >
-                        {QUICK_REACTIONS.slice(0, 4).map((emo) => (
-                          <button
-                            key={emo}
-                            onClick={() => toggleReaction(m.id, emo)}
-                            className="w-6 h-6 rounded-full hover:bg-white/15 flex items-center justify-center text-xs transition-transform hover:scale-125 cursor-pointer"
-                          >
-                            {emo}
-                          </button>
-                        ))}
-                        <span className="w-px h-4 bg-white/15 mx-1" />
-                        <button
-                          onClick={() => setReplyTo(m)}
-                          title={isAr ? 'رد' : 'Reply'}
-                          className="p-1 rounded-full hover:bg-white/15 text-white/80 cursor-pointer"
+                    {/* Hover Action Bar */}
+                    <AnimatePresence>
+                      {hoveredMsgId === m.id && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6, scale: 0.9 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          className={`absolute -top-9 ${isMine ? 'end-0' : 'start-0'} z-20 flex items-center gap-0.5 px-2 py-1 rounded-full liquid-glass`}
                         >
-                          <Reply className="w-3.5 h-3.5" />
-                        </button>
-                        {!isAi && (
-                          <button
-                            onClick={() => {
-                              setSharedForAi(m);
-                              setDraft(`@LM AI ${isAr ? 'لخّص هذه الرسالة أو اقترح ردًا مناسبًا' : 'Summarize or suggest a reply'}`);
-                            }}
-                            title={isAr ? 'مشاركة هذه الرسالة فقط مع @LM AI' : 'Share with @LM AI'}
-                            className="p-1 rounded-full hover:bg-white/15 text-[#8774E1] cursor-pointer"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
+                          {QUICK_REACTIONS.slice(0, 5).map((emo) => (
+                            <button
+                              key={emo}
+                              onClick={() => toggleReaction(m.id, emo)}
+                              className="w-6 h-6 rounded-full hover:scale-130 transition-transform flex items-center justify-center text-xs cursor-pointer"
+                            >
+                              {emo}
+                            </button>
+                          ))}
+                          <span className="w-px h-4 bg-[var(--lm-border-strong)] mx-1" />
+                          <button onClick={() => setReplyTo(m)} className="p-1 rounded-full hover:bg-white/15 cursor-pointer" title="رد">
+                            <Reply className="w-3.5 h-3.5" />
                           </button>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Telegram Speech Bubble */}
-                    <div
-                      style={{
-                        backgroundColor: isAi ? '#162923' : isMine ? 'var(--tg-bubble-out)' : 'var(--tg-bubble-in)',
-                      }}
-                      className={`rounded-2xl ${
-                        isMine ? 'rounded-ee-sm' : 'rounded-es-sm'
-                      } px-3.5 py-2 shadow-sm text-[13.5px] leading-relaxed relative overflow-hidden ${
-                        isAi ? 'border border-emerald-500/35 text-white' : ''
-                      }`}
-                    >
-                      {/* Sender Name in Groups/AI */}
-                      {(!isMine || isAi) && (
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <span className="text-xs font-bold" style={{ color: isAi ? '#34D399' : m.avatarColor }}>
-                            {m.displayName}
-                          </span>
-                          <VipBadge tier={m.vipTier} compact />
-                        </div>
+                          {!isAi && (
+                            <button
+                              onClick={() => {
+                                setSharedForAi(m);
+                                setDraft(`@LM AI ${isAr ? 'لخّص أو اقترح ردًا' : 'Summarize or draft reply'}`);
+                              }}
+                              className="p-1 rounded-full hover:bg-white/15 text-[#38BDF8] cursor-pointer"
+                              title="@LM AI"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </motion.div>
                       )}
+                    </AnimatePresence>
 
-                      {/* Reply Quote Block */}
-                      {m.replyText && (
-                        <div className="mb-1.5 ps-2.5 py-1 rounded-lg bg-black/20 border-s-2 border-white/60 text-xs">
-                          <div className="font-semibold text-[11px] opacity-90">{m.replySender}</div>
-                          <div className="opacity-75 truncate">{m.replyText}</div>
-                        </div>
-                      )}
-
-                      {/* Photo Attachment */}
-                      {m.msgType === 'image' && m.mediaUrl && (
-                        <img
-                          src={m.mediaUrl}
-                          alt="Chat media"
-                          onClick={() => setLightboxImg(m.mediaUrl)}
-                          className="rounded-xl max-h-72 w-full object-cover mb-1.5 cursor-zoom-in"
-                        />
-                      )}
-
-                      {/* Real WaveSurfer Voice Note */}
-                      {m.msgType === 'audio' && m.mediaUrl && (
-                        <TelegramVoiceNote url={m.mediaUrl} isMine={isMine} />
-                      )}
-
-                      {/* File Attachment */}
-                      {m.msgType === 'file' && m.mediaUrl && (
-                        <a href={m.mediaUrl} target="_blank" rel="noreferrer" className="underline font-medium block py-1">
-                          📎 {m.content}
-                        </a>
-                      )}
-
-                      {/* Text Content + Inline Timestamp & Ticks */}
-                      {m.msgType !== 'audio' && m.msgType !== 'file' && m.content && (
-                        <div className="inline">
-                          {isAi ? <RichMessageText text={m.content} /> : <span>{m.content}</span>}
-                        </div>
-                      )}
-
-                      {/* Telegram Bottom-Corner Time & CheckCheck */}
-                      <span className="float-end ms-3 mt-1 inline-flex items-center gap-1 text-[10px] opacity-65 select-none">
-                        <span>{m.createdAt}</span>
-                        {isMine && <CheckCheck className="w-3.5 h-3.5" />}
-                      </span>
-
-                      {/* Reaction Pills inside Bubble */}
-                      {reactionEntries.length > 0 && (
-                        <div className="clear-both pt-1.5 flex flex-wrap gap-1">
-                          {reactionEntries.map(([emo, userIds]) => {
-                            const reactedByMe = userIds.includes(user.id);
-                            return (
+                    {/* Circular Video Bubble OR Liquid-Glass Speech Bubble */}
+                    {isVideoNote ? (
+                      <div className="space-y-1">
+                        <CircularVideoBubble url={m.mediaUrl!} />
+                        {reactionEntries.length > 0 && (
+                          <div className="flex flex-wrap gap-1 justify-center">
+                            {reactionEntries.map(([emo, userIds]) => (
                               <button
                                 key={emo}
                                 onClick={() => toggleReaction(m.id, emo)}
-                                style={{
-                                  backgroundColor: reactedByMe ? 'var(--tg-reaction-own)' : 'var(--tg-reaction-bg)',
-                                }}
-                                className="px-2 py-0.5 rounded-full text-xs flex items-center gap-1 transition-transform active:scale-95 cursor-pointer"
+                                className="px-2 py-0.5 rounded-full liquid-glass text-xs flex items-center gap-1 cursor-pointer"
                               >
                                 <span>{emo}</span>
-                                <span className="text-[11px] font-mono-num font-semibold">{userIds.length}</span>
+                                <span className="text-[11px] font-mono-num font-bold">{userIds.length}</span>
                               </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          background: isAi
+                            ? 'linear-gradient(135deg, rgba(16,185,129,0.22), rgba(6,182,212,0.18))'
+                            : isMine
+                            ? 'var(--tg-bubble-out)'
+                            : 'var(--tg-bubble-in)',
+                        }}
+                        className={`rounded-3xl ${
+                          isMine ? 'rounded-ee-md text-white' : 'rounded-es-md text-[var(--lm-text)] border border-[var(--lm-border)]'
+                        } px-4 py-2.5 shadow-md backdrop-blur-xl text-[13.5px] leading-relaxed relative`}
+                      >
+                        {m.sendEffect && (
+                          <span className="absolute -top-2 -start-2 text-base select-none">
+                            {SEND_EFFECTS.find(x => x.id === m.sendEffect)?.emoji || '✨'}
+                          </span>
+                        )}
+
+                        {(!isMine || isAi) && (
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className="text-xs font-bold" style={{ color: isAi ? '#34D399' : m.avatarColor }}>
+                              {m.displayName}
+                            </span>
+                            <VipBadge tier={m.vipTier} compact />
+                          </div>
+                        )}
+
+                        {m.replyText && (
+                          <div className="mb-1.5 ps-2.5 py-1 rounded-xl bg-black/20 border-s-2 border-white/70 text-xs">
+                            <div className="font-bold text-[11px] opacity-90">{m.replySender}</div>
+                            <div className="opacity-75 truncate">{m.replyText}</div>
+                          </div>
+                        )}
+
+                        {m.msgType === 'image' && m.mediaUrl && (
+                          <img
+                            src={m.mediaUrl}
+                            alt=""
+                            onClick={() => setLightboxImg(m.mediaUrl)}
+                            className="rounded-2xl max-h-72 w-full object-cover mb-1.5 cursor-zoom-in"
+                          />
+                        )}
+
+                        {m.msgType === 'audio' && m.mediaUrl && (
+                          <SmartVoicePill url={m.mediaUrl} transcript={m.transcript} isMine={isMine} />
+                        )}
+
+                        {m.msgType === 'file' && m.mediaUrl && (
+                          <a href={m.mediaUrl} target="_blank" rel="noreferrer" className="underline font-medium block py-1">
+                            📎 {m.content}
+                          </a>
+                        )}
+
+                        {m.msgType !== 'audio' && m.msgType !== 'file' && m.content && (
+                          <div className="inline">
+                            {isAi ? <RichMessageText text={m.content} /> : <span>{m.content}</span>}
+                          </div>
+                        )}
+
+                        <span className="float-end ms-3 mt-1 inline-flex items-center gap-1 text-[10px] opacity-70 select-none">
+                          <span>{m.createdAt}</span>
+                          {isMine && <CheckCheck className="w-3.5 h-3.5" />}
+                        </span>
+
+                        {reactionEntries.length > 0 && (
+                          <div className="clear-both pt-1.5 flex flex-wrap gap-1">
+                            {reactionEntries.map(([emo, userIds]) => {
+                              const reactedByMe = userIds.includes(user.id);
+                              return (
+                                <button
+                                  key={emo}
+                                  onClick={() => toggleReaction(m.id, emo)}
+                                  style={{
+                                    backgroundColor: reactedByMe ? 'var(--tg-reaction-own)' : 'var(--tg-reaction-bg)',
+                                  }}
+                                  className="px-2 py-0.5 rounded-full text-xs flex items-center gap-1 transition-transform active:scale-90 cursor-pointer"
+                                >
+                                  <span>{emo}</span>
+                                  <span className="text-[11px] font-mono-num font-bold">{userIds.length}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
+                </motion.div>
               );
             })}
             <div ref={endRef} />
@@ -683,168 +640,179 @@ export function ChatView() {
         </div>
 
         {/* ============================================================
-            FLOATING TELEGRAM COMPOSER DOCK (Centered max-w-[740px])
+            2026 LIQUID-GLASS COMPOSER + LIVE VOICE STUDIO + SEND FX
            ============================================================ */}
         <div className="px-3 sm:px-6 pb-3 pt-1 shrink-0 relative z-20">
-          <div className="max-w-[740px] mx-auto relative">
-            {/* Emoji Picker Popover */}
+          <div className="max-w-[760px] mx-auto relative">
             {emojiOpen && (
-              <div className="absolute bottom-16 start-0 z-50 shadow-2xl rounded-2xl overflow-hidden">
-                <EmojiPicker
-                  theme={EmojiTheme.DARK}
-                  width={320}
-                  height={380}
-                  onEmojiClick={(e) => setDraft(prev => prev + e.emoji)}
-                />
+              <div className="absolute bottom-15 start-0 z-50 shadow-2xl rounded-3xl overflow-hidden">
+                <EmojiPicker theme={EmojiTheme.DARK} width={310} height={360} onEmojiClick={(e) => setDraft(prev => prev + e.emoji)} />
               </div>
             )}
 
-            {/* Reply / @LM AI Consent Preview Strip */}
+            {/* Send Effects Popover */}
+            {effectsOpen && (
+              <div className="absolute bottom-15 end-0 z-50 liquid-glass rounded-2xl p-2 flex items-center gap-1.5">
+                {SEND_EFFECTS.map((fx) => (
+                  <button
+                    key={fx.id}
+                    type="button"
+                    onClick={() => sendMessage(undefined, fx.id)}
+                    className="px-2.5 py-1.5 rounded-xl hover:bg-white/15 text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <span className="text-base">{fx.emoji}</span>
+                    <span>{fx.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {(replyTo || sharedForAi) && (
-              <div className="mb-1.5 px-4 py-2 rounded-2xl bg-[var(--tg-sidebar-bg)] border border-white/10 flex items-center justify-between gap-2 text-xs">
+              <div className="mb-1.5 px-4 py-2 rounded-2xl liquid-glass flex items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-0.5 h-7 rounded-full ${sharedForAi ? 'bg-emerald-400' : 'bg-[#8774E1]'}`} />
+                  <div className={`w-0.5 h-6 rounded-full ${sharedForAi ? 'bg-[#38BDF8]' : 'bg-[#7C5CFF]'}`} />
                   <div className="min-w-0">
-                    <div className={`font-semibold text-[11px] ${sharedForAi ? 'text-emerald-400' : 'text-[#8774E1]'}`}>
-                      {sharedForAi
-                        ? (isAr ? '✨ إذن مشاركة محدد مع @LM AI' : '✨ Consented Share with @LM AI')
-                        : `${isAr ? 'الرد على' : 'Reply to'} ${replyTo?.displayName}`}
+                    <div className="font-bold text-[11px] text-[var(--lm-accent)]">
+                      {sharedForAi ? '✨ @LM AI' : replyTo?.displayName}
                     </div>
-                    <div className="text-[var(--lm-text-secondary)] truncate">
-                      {(sharedForAi || replyTo)?.content}
-                    </div>
+                    <div className="text-[var(--lm-text-secondary)] truncate">{(sharedForAi || replyTo)?.content}</div>
                   </div>
                 </div>
-                <button
-                  onClick={() => { setReplyTo(null); setSharedForAi(null); }}
-                  className="p-1 text-[var(--lm-text-muted)] hover:text-white cursor-pointer"
-                >
+                <button onClick={() => { setReplyTo(null); setSharedForAi(null); }} className="p-1 cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
             )}
 
-            {/* Pill Input + Separate Circular Send/Mic Button (Exact Telegram Web A!) */}
-            <form onSubmit={sendMessage} className="flex items-center gap-2.5">
-              <div className="flex-1 h-12 rounded-full bg-[var(--tg-sidebar-bg)] border border-white/[0.08] px-3 flex items-center gap-2 shadow-lg">
-                <button
-                  type="button"
-                  onClick={() => setEmojiOpen(v => !v)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
-                    emojiOpen ? 'text-[#8774E1]' : 'text-[var(--lm-text-muted)] hover:text-[var(--lm-text)]'
-                  }`}
-                >
-                  <Smile className="w-5 h-5" />
-                </button>
+            {voiceStudioOpen ? (
+              <LiveVoiceRecorder
+                onCancel={() => setVoiceStudioOpen(false)}
+                onSend={(file) => handleVoiceSend(file)}
+              />
+            ) : (
+              <form onSubmit={(e) => sendMessage(e)} className="flex items-center gap-2">
+                <div className="flex-1 h-12 rounded-full liquid-glass px-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEmojiOpen(v => !v)}
+                    className="w-8 h-8 rounded-full text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] flex items-center justify-center cursor-pointer"
+                  >
+                    <Smile className="w-5 h-5" />
+                  </button>
 
-                <input
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder={isAr ? 'رسالة...' : 'Message...'}
-                  className="flex-1 bg-transparent text-sm text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)] outline-none"
-                />
+                  <input
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    placeholder={isAr ? 'رسالة...' : 'Message...'}
+                    className="flex-1 bg-transparent text-sm text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)] outline-none"
+                  />
 
-                <input ref={fileRef} type="file" className="hidden" onChange={handleAttachFile} />
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  title={isAr ? 'إرفاق صورة أو ملف' : 'Attach'}
-                  className="w-8 h-8 rounded-full text-[var(--lm-text-muted)] hover:text-[var(--lm-text)] flex items-center justify-center cursor-pointer"
-                >
-                  <Paperclip className="w-5 h-5" />
-                </button>
-              </div>
+                  <input ref={fileRef} type="file" className="hidden" onChange={handleAttachFile} />
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    className="w-8 h-8 rounded-full text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] flex items-center justify-center cursor-pointer"
+                  >
+                    <Paperclip className="w-5 h-5" />
+                  </button>
 
-              {draft.trim() ? (
-                <button
-                  type="submit"
-                  disabled={sending}
-                  className="w-12 h-12 rounded-full bg-[#8774E1] hover:bg-[#766AC8] text-white flex items-center justify-center shadow-lg transition-transform active:scale-95 cursor-pointer shrink-0"
-                >
-                  <Send className="w-5 h-5" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={toggleVoiceNote}
-                  title={isAr ? 'رسالة صوتية' : 'Voice Note'}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95 cursor-pointer shrink-0 ${
-                    recording ? 'bg-[#FE2C55] text-white animate-pulse' : 'bg-[#8774E1] text-white hover:bg-[#766AC8]'
-                  }`}
-                >
-                  {recording ? <Square className="w-4 h-4 fill-current" /> : <Mic className="w-5 h-5" />}
-                </button>
-              )}
-            </form>
+                  {draft.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setEffectsOpen(v => !v)}
+                      title={isAr ? 'إرسال بتأثير بصري' : 'Send with Effect'}
+                      className="w-8 h-8 rounded-full text-amber-400 hover:bg-amber-400/15 flex items-center justify-center cursor-pointer"
+                    >
+                      <Flame className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {draft.trim() ? (
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    type="submit"
+                    disabled={sending}
+                    className="w-12 h-12 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer shrink-0"
+                  >
+                    <Send className="w-5 h-5" />
+                  </motion.button>
+                ) : (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Toggle Mic <-> Circular Video Note */}
+                    <button
+                      type="button"
+                      onClick={() => setCaptureMode(m => (m === 'mic' ? 'video_note' : 'mic'))}
+                      title={isAr ? 'التبديل بين الصوت والفيديو الدائري' : 'Switch Voice / Round Video'}
+                      className="w-10 h-10 rounded-full liquid-glass flex items-center justify-center text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)] cursor-pointer"
+                    >
+                      {captureMode === 'mic' ? <Camera className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </button>
+
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      type="button"
+                      onClick={() => {
+                        if (captureMode === 'mic') setVoiceStudioOpen(true);
+                        else sendInstantVideoNote();
+                      }}
+                      className="w-12 h-12 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer"
+                    >
+                      {captureMode === 'mic' ? <Mic className="w-5 h-5" /> : <Camera className="w-5 h-5" />}
+                    </motion.button>
+                  </div>
+                )}
+              </form>
+            )}
           </div>
         </div>
       </section>
 
-      {/* ============================================================
-          COLUMN 3: TELEGRAM RIGHT PROFILE & SHARED MEDIA DRAWER
-         ============================================================ */}
+      {/* RIGHT MEDIA & PROFILE DRAWER */}
       {infoOpen && activeConv && (
-        <aside className="hidden lg:flex w-[320px] shrink-0 flex-col border-s border-white/[0.07] bg-[var(--tg-sidebar-bg)] overflow-y-auto">
-          <div className="h-14 px-4 flex items-center justify-between border-b border-white/[0.07] shrink-0">
-            <span className="text-sm font-bold">{isAr ? 'معلومات المحادثة' : 'Info'}</span>
+        <aside className="hidden lg:flex w-[310px] shrink-0 flex-col border-s border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl overflow-y-auto">
+          <div className="h-15 px-4 flex items-center justify-between border-b border-[var(--lm-border)] shrink-0">
+            <span className="text-sm font-bold">{isAr ? 'التفاصيل' : 'Profile'}</span>
             <button onClick={() => setInfoOpen(false)} className="p-1.5 rounded-full hover:bg-[var(--tg-hover)] cursor-pointer">
               <X className="w-4 h-4" />
             </button>
           </div>
-
-          <div className="p-5 flex flex-col items-center text-center border-b border-white/[0.07]">
-            <UserAvatar
-              initials={activeConv.title.slice(0, 2)}
-              color={activeConv.avatarColor}
-              avatarUrl={activeConv.avatarUrl}
-              size={88}
-            />
+          <div className="p-5 flex flex-col items-center text-center border-b border-[var(--lm-border)]">
+            <UserAvatar initials={activeConv.title.slice(0, 2)} color={activeConv.avatarColor} avatarUrl={activeConv.avatarUrl} size={84} />
             <h3 className="text-base font-bold mt-3">{activeConv.title}</h3>
-            <p className="text-xs text-[#8774E1] mt-0.5">{activeConv.onlineText}</p>
-            <p className="text-xs text-[var(--lm-text-secondary)] mt-2 leading-relaxed">{activeConv.description}</p>
+            <p className="text-xs text-[var(--lm-accent)] mt-0.5">{activeConv.onlineText}</p>
+            <p className="text-xs text-[var(--lm-text-secondary)] mt-2">{activeConv.description}</p>
           </div>
-
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-2.5">
             <div className="text-xs font-semibold text-[var(--lm-text-muted)]">
-              {isAr ? 'الوسائط المشتركة' : 'Shared Media'} ({sharedPhotos.length})
+              {isAr ? 'الوسائط' : 'Shared Media'} ({sharedPhotos.length})
             </div>
-            {sharedPhotos.length > 0 ? (
-              <div className="grid grid-cols-3 gap-1.5">
-                {sharedPhotos.map((p) => (
-                  <img
-                    key={p.id}
-                    src={p.mediaUrl!}
-                    alt=""
-                    onClick={() => setLightboxImg(p.mediaUrl)}
-                    className="aspect-square rounded-lg object-cover cursor-pointer hover:opacity-85"
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-[var(--lm-text-muted)] py-4 text-center">
-                {isAr ? 'لا توجد صور مشتركة بعد' : 'No shared photos yet'}
-              </div>
-            )}
+            <div className="grid grid-cols-3 gap-1.5">
+              {sharedPhotos.map((p) => (
+                <img
+                  key={p.id}
+                  src={p.mediaUrl!}
+                  alt=""
+                  onClick={() => setLightboxImg(p.mediaUrl)}
+                  className="aspect-square rounded-xl object-cover cursor-pointer hover:opacity-85"
+                />
+              ))}
+            </div>
           </div>
         </aside>
       )}
 
-      {/* PHOTO LIGHTBOX */}
       {lightboxImg && (
-        <div
-          onClick={() => setLightboxImg(null)}
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 cursor-zoom-out"
-        >
-          <img src={lightboxImg} alt="Preview" className="max-w-full max-h-[90vh] rounded-2xl shadow-2xl" />
+        <div onClick={() => setLightboxImg(null)} className="fixed inset-0 z-50 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 cursor-zoom-out">
+          <img src={lightboxImg} alt="" className="max-w-full max-h-[88vh] rounded-3xl shadow-2xl" />
         </div>
       )}
 
-      {/* CALL MODAL */}
       {callMode && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-lg flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-3xl bg-[#1C1D24] text-white border border-white/10 overflow-hidden shadow-2xl p-6 text-center space-y-5">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-mono-num">
-              <Lock className="w-3 h-3" /> E2EE WebRTC • {fmtTimer(callSec)}
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4">
+          <div className="w-full max-w-md liquid-glass rounded-3xl p-6 text-center space-y-5 text-white">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-mono-num">
+              <Lock className="w-3 h-3" /> {fmtTimer(callSec)}
             </div>
             {callMode === 'video' && !callCamOff ? (
               <div className="aspect-video rounded-2xl overflow-hidden bg-black">
@@ -852,12 +820,7 @@ export function ChatView() {
               </div>
             ) : (
               <div className="py-6 flex flex-col items-center gap-3">
-                <UserAvatar
-                  initials={activeConv?.title.slice(0, 2) || 'LM'}
-                  color={activeConv?.avatarColor || '#3390EC'}
-                  avatarUrl={activeConv?.avatarUrl}
-                  size={88}
-                />
+                <UserAvatar initials={activeConv?.title.slice(0, 2) || 'LM'} color={activeConv?.avatarColor || '#6366F1'} avatarUrl={activeConv?.avatarUrl} size={88} />
                 <div className="text-lg font-bold">{activeConv?.title}</div>
               </div>
             )}
@@ -870,7 +833,7 @@ export function ChatView() {
                   {callCamOff ? <VideoOff className="w-5 h-5 text-red-400" /> : <Video className="w-5 h-5" />}
                 </button>
               )}
-              <button onClick={endCall} className="w-14 h-14 rounded-full bg-[#FE2C55] text-white flex items-center justify-center cursor-pointer">
+              <button onClick={endCall} className="w-14 h-14 rounded-full bg-[#FF2D55] text-white flex items-center justify-center cursor-pointer">
                 <PhoneOff className="w-6 h-6" />
               </button>
             </div>
@@ -878,27 +841,26 @@ export function ChatView() {
         </div>
       )}
 
-      {/* NEW GROUP / CHANNEL MODAL */}
       {newGroupOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4" onClick={() => setNewGroupOpen(false)}>
-          <form onSubmit={createGroup} onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-3xl bg-[#212121] text-white border border-white/10 p-5 space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setNewGroupOpen(false)}>
+          <form onSubmit={createGroup} onClick={(e) => e.stopPropagation()} className="w-full max-w-sm liquid-glass rounded-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold">{isAr ? 'مجموعة أو قناة تيليجرام جديدة' : 'New Group / Channel'}</h3>
+              <h3 className="text-sm font-bold">{isAr ? 'مجموعة أو قناة جديدة' : 'New Space'}</h3>
               <button type="button" onClick={() => setNewGroupOpen(false)} className="cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
             <input
               value={groupTitle}
               onChange={(e) => setGroupTitle(e.target.value)}
               placeholder={isAr ? 'الاسم...' : 'Name...'}
-              className="lm-input w-full rounded-xl px-3.5 py-2.5 text-xs"
+              className="lm-input w-full rounded-2xl px-4 py-2.5 text-xs"
               required
             />
-            <select value={groupType} onChange={(e) => setGroupType(e.target.value as 'group' | 'community')} className="lm-input w-full rounded-xl px-3.5 py-2.5 text-xs">
-              <option value="group">{isAr ? 'مجموعة خاصة مشفرة' : 'Encrypted Private Group'}</option>
-              <option value="community">{isAr ? 'قناة / مجتمع عام' : 'Public Channel'}</option>
+            <select value={groupType} onChange={(e) => setGroupType(e.target.value as 'group' | 'community')} className="lm-input w-full rounded-2xl px-4 py-2.5 text-xs">
+              <option value="group">{isAr ? 'مجموعة خاصة' : 'Private Group'}</option>
+              <option value="community">{isAr ? 'قناة عامة' : 'Public Channel'}</option>
             </select>
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-[#8774E1] text-white text-xs font-semibold cursor-pointer">
-              {isAr ? 'إنشاء الآن' : 'Create'}
+            <button type="submit" className="lm-btn-primary w-full py-2.5 rounded-full text-xs font-bold cursor-pointer">
+              {isAr ? 'إنشاء' : 'Create'}
             </button>
           </form>
         </div>

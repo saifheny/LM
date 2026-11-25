@@ -171,13 +171,35 @@ export interface ChatMessageItem {
   avatarUrl: string | null;
   vipTier: VipTier;
   content: string;
-  msgType: 'text' | 'image' | 'audio' | 'file' | 'ai_reply';
+  msgType: 'text' | 'image' | 'audio' | 'video_note' | 'file' | 'ai_reply';
   mediaUrl: string | null;
+  transcript: string | null;
+  sendEffect: string | null;
   replyToId: string | null;
   replySender: string | null;
   replyText: string | null;
   reactions: Record<string, string[]>;
   aiConsentRef: string | null;
+  createdAt: string;
+}
+
+export interface VideoCommentItem {
+  id: string;
+  videoId: string;
+  userId: string;
+  parentId: string | null;
+  displayName: string;
+  username: string;
+  avatarColor: string;
+  avatarInitials: string;
+  avatarUrl: string | null;
+  vipTier: VipTier;
+  content: string;
+  audioUrl: string | null;
+  audioDurationSec: number;
+  transcript: string | null;
+  likesCount: number;
+  likedByMe: boolean;
   createdAt: string;
 }
 

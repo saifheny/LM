@@ -2,128 +2,163 @@
 
 :root,
 [data-theme="obsidian"] {
-  --lm-bg: #0F0F12;
-  --lm-surface: #18191E;
-  --lm-surface-2: #21232B;
-  --lm-surface-hover: #2A2D37;
-  --lm-border: rgba(255, 255, 255, 0.07);
-  --lm-border-strong: rgba(255, 255, 255, 0.14);
-  --lm-text: #F5F6F8;
-  --lm-text-secondary: #A2A8B4;
-  --lm-text-muted: #6E7482;
-  --lm-accent: #8774E1; /* Telegram Web A Dark Signature Accent */
-  --lm-accent-blue: #3390EC;
-  --lm-accent-soft: rgba(135, 116, 225, 0.16);
+  --lm-bg: #05060B;
+  --lm-bg-mesh:
+    radial-gradient(at 15% 12%, rgba(99, 102, 241, 0.16) 0px, transparent 48%),
+    radial-gradient(at 85% 18%, rgba(56, 189, 248, 0.12) 0px, transparent 45%),
+    radial-gradient(at 52% 88%, rgba(168, 85, 247, 0.12) 0px, transparent 52%);
+  --lm-surface: rgba(20, 22, 31, 0.72);
+  --lm-surface-solid: #12141D;
+  --lm-surface-2: rgba(30, 34, 48, 0.65);
+  --lm-surface-hover: rgba(44, 49, 68, 0.72);
+  --lm-glass-dock: rgba(16, 18, 26, 0.68);
+  --lm-glass-highlight: rgba(255, 255, 255, 0.22);
+  --lm-border: rgba(255, 255, 255, 0.09);
+  --lm-border-strong: rgba(255, 255, 255, 0.18);
+  --lm-text: #F8FAFC;
+  --lm-text-secondary: #A5B0C4;
+  --lm-text-muted: #69748C;
+  --lm-accent: #7C5CFF;
+  --lm-accent-2: #38BDF8;
+  --lm-accent-blue: #38BDF8;
+  --lm-accent-soft: rgba(124, 92, 255, 0.18);
   --lm-accent-text: #FFFFFF;
-  --lm-gold: #D4AF37;
-  --lm-emerald: #00C73E;
-  --lm-tiktok: #FE2C55;
+  --lm-gold: #F5C451;
+  --lm-emerald: #10B981;
+  --lm-tiktok: #FF2D55;
 
-  /* Official Telegram Web A Dark Tokens (from Ajaxy/telegram-tt themes.json) */
-  --tg-sidebar-bg: #212121;
-  --tg-chat-bg: #0F0F0F;
-  --tg-bubble-in: #212121;
-  --tg-bubble-out: #766AC8;
-  --tg-hover: #2C2C2C;
-  --tg-reaction-bg: #2B2A35;
-  --tg-reaction-own: #675CAF;
+  --tg-sidebar-bg: rgba(14, 16, 24, 0.84);
+  --tg-chat-bg: #06070D;
+  --tg-bubble-in: rgba(26, 29, 42, 0.88);
+  --tg-bubble-out: linear-gradient(135deg, #6D4AFF 0%, #4F7BFF 100%);
+  --tg-bubble-out-flat: #6355F8;
+  --tg-hover: rgba(255, 255, 255, 0.06);
+  --tg-reaction-bg: rgba(255, 255, 255, 0.08);
+  --tg-reaction-own: rgba(124, 92, 255, 0.45);
 }
 
+/* SYSTEM 2: PEARL VISION 2026 (Apple visionOS Frosted Daylight) */
 [data-theme="alabaster"] {
-  --lm-bg: #F4F4F5;
-  --lm-surface: #FFFFFF;
-  --lm-surface-2: #EFEFF3;
-  --lm-surface-hover: #E4E4E9;
-  --lm-border: rgba(0, 0, 0, 0.08);
-  --lm-border-strong: rgba(0, 0, 0, 0.15);
-  --lm-text: #0F172A;
-  --lm-text-secondary: #525866;
-  --lm-text-muted: #707579;
-  --lm-accent: #3390EC;
-  --lm-accent-blue: #3390EC;
-  --lm-accent-soft: rgba(51, 144, 236, 0.12);
+  --lm-bg: #ECF0F7;
+  --lm-bg-mesh:
+    radial-gradient(at 14% 15%, rgba(99, 102, 241, 0.13) 0px, transparent 50%),
+    radial-gradient(at 86% 12%, rgba(14, 165, 233, 0.13) 0px, transparent 48%),
+    radial-gradient(at 50% 90%, rgba(236, 72, 153, 0.08) 0px, transparent 50%);
+  --lm-surface: rgba(255, 255, 255, 0.76);
+  --lm-surface-solid: #FFFFFF;
+  --lm-surface-2: rgba(241, 245, 252, 0.85);
+  --lm-surface-hover: rgba(226, 232, 244, 0.85);
+  --lm-glass-dock: rgba(255, 255, 255, 0.72);
+  --lm-glass-highlight: rgba(255, 255, 255, 0.95);
+  --lm-border: rgba(15, 23, 42, 0.08);
+  --lm-border-strong: rgba(15, 23, 42, 0.15);
+  --lm-text: #0B1120;
+  --lm-text-secondary: #475569;
+  --lm-text-muted: #64748B;
+  --lm-accent: #4F46E5;
+  --lm-accent-2: #0284C7;
+  --lm-accent-blue: #0284C7;
+  --lm-accent-soft: rgba(79, 70, 229, 0.12);
   --lm-accent-text: #FFFFFF;
-  --lm-gold: #B4830B;
-  --lm-emerald: #00A734;
-  --lm-tiktok: #FE2C55;
+  --lm-gold: #C48A06;
+  --lm-emerald: #059669;
+  --lm-tiktok: #FF2D55;
 
-  /* Official Telegram Web A Light Tokens */
-  --tg-sidebar-bg: #FFFFFF;
-  --tg-chat-bg: #99BA92;
-  --tg-bubble-in: #FFFFFF;
-  --tg-bubble-out: #EEFFDE;
-  --tg-hover: #F4F4F5;
-  --tg-reaction-bg: #EBF3FD;
-  --tg-reaction-own: #C6EAB2;
+  --tg-sidebar-bg: rgba(255, 255, 255, 0.82);
+  --tg-chat-bg: #E5ECF6;
+  --tg-bubble-in: rgba(255, 255, 255, 0.94);
+  --tg-bubble-out: linear-gradient(135deg, #4F46E5 0%, #2563EB 100%);
+  --tg-bubble-out-flat: #4F46E5;
+  --tg-hover: rgba(15, 23, 42, 0.05);
+  --tg-reaction-bg: rgba(15, 23, 42, 0.07);
+  --tg-reaction-own: rgba(79, 70, 229, 0.2);
 }
 
 [data-theme="royal-gold"] {
-  --lm-bg: #0B0A08;
-  --lm-surface: #15130F;
-  --lm-surface-2: #1E1B15;
-  --lm-surface-hover: #29241B;
-  --lm-border: rgba(212, 175, 55, 0.14);
-  --lm-border-strong: rgba(212, 175, 55, 0.28);
-  --lm-text: #FAF6EE;
-  --lm-text-secondary: #B8AD96;
-  --lm-text-muted: #7C7360;
-  --lm-accent: #D4AF37;
-  --lm-accent-blue: #D4AF37;
-  --lm-accent-soft: rgba(212, 175, 55, 0.16);
-  --lm-accent-text: #0B0A08;
-  --tg-sidebar-bg: #14120E;
-  --tg-chat-bg: #0A0907;
-  --tg-bubble-in: #1B1812;
-  --tg-bubble-out: #6E581B;
-  --tg-hover: #242018;
-  --tg-reaction-bg: #252015;
-  --tg-reaction-own: #8A6F22;
+  --lm-bg: #080705;
+  --lm-bg-mesh: radial-gradient(at 50% 0%, rgba(212, 175, 55, 0.18), transparent 55%);
+  --lm-surface: rgba(24, 20, 14, 0.78);
+  --lm-surface-solid: #16130D;
+  --lm-surface-2: rgba(36, 30, 20, 0.72);
+  --lm-surface-hover: rgba(50, 42, 28, 0.78);
+  --lm-glass-dock: rgba(20, 17, 12, 0.75);
+  --lm-glass-highlight: rgba(245, 196, 81, 0.35);
+  --lm-border: rgba(212, 175, 55, 0.16);
+  --lm-border-strong: rgba(212, 175, 55, 0.32);
+  --lm-text: #FBF7EE;
+  --lm-text-secondary: #C2B59B;
+  --lm-text-muted: #847963;
+  --lm-accent: #E5B842;
+  --lm-accent-2: #FDE68A;
+  --lm-accent-blue: #E5B842;
+  --lm-accent-soft: rgba(229, 184, 66, 0.18);
+  --lm-accent-text: #090806;
+  --tg-sidebar-bg: rgba(18, 15, 10, 0.88);
+  --tg-chat-bg: #070604;
+  --tg-bubble-in: rgba(30, 25, 18, 0.9);
+  --tg-bubble-out: linear-gradient(135deg, #B8860B 0%, #D4AF37 100%);
+  --tg-bubble-out-flat: #C4961A;
+  --tg-hover: rgba(212, 175, 55, 0.09);
+  --tg-reaction-bg: rgba(255, 255, 255, 0.08);
+  --tg-reaction-own: rgba(212, 175, 55, 0.35);
 }
 
 [data-theme="emerald-reserve"] {
-  --lm-bg: #070C0A;
-  --lm-surface: #0F1714;
-  --lm-surface-2: #15211C;
-  --lm-surface-hover: #1D2E27;
-  --lm-border: rgba(16, 185, 129, 0.14);
-  --lm-border-strong: rgba(16, 185, 129, 0.28);
-  --lm-text: #F0F9F5;
-  --lm-text-secondary: #94B5A7;
-  --lm-text-muted: #5C7C6F;
+  --lm-bg: #040907;
+  --lm-bg-mesh: radial-gradient(at 50% 0%, rgba(16, 185, 129, 0.18), transparent 55%);
+  --lm-surface: rgba(13, 24, 20, 0.78);
+  --lm-surface-solid: #0D1814;
+  --lm-surface-2: rgba(20, 36, 30, 0.72);
+  --lm-surface-hover: rgba(28, 48, 40, 0.78);
+  --lm-glass-dock: rgba(10, 20, 16, 0.75);
+  --lm-glass-highlight: rgba(52, 211, 153, 0.32);
+  --lm-border: rgba(16, 185, 129, 0.16);
+  --lm-border-strong: rgba(16, 185, 129, 0.32);
+  --lm-text: #F0FDF4;
+  --lm-text-secondary: #94B8A8;
+  --lm-text-muted: #5C7D6F;
   --lm-accent: #10B981;
+  --lm-accent-2: #34D399;
   --lm-accent-blue: #10B981;
-  --lm-accent-soft: rgba(16, 185, 129, 0.15);
-  --lm-accent-text: #052E1E;
-  --tg-sidebar-bg: #0E1613;
-  --tg-chat-bg: #060B09;
-  --tg-bubble-in: #14201B;
-  --tg-bubble-out: #0F5C43;
-  --tg-hover: #1A2923;
-  --tg-reaction-bg: #172620;
-  --tg-reaction-own: #147A58;
+  --lm-accent-soft: rgba(16, 185, 129, 0.18);
+  --lm-accent-text: #042F1E;
+  --tg-sidebar-bg: rgba(11, 20, 17, 0.88);
+  --tg-chat-bg: #040806;
+  --tg-bubble-in: rgba(18, 32, 26, 0.9);
+  --tg-bubble-out: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  --tg-bubble-out-flat: #059669;
+  --tg-hover: rgba(16, 185, 129, 0.09);
+  --tg-reaction-bg: rgba(255, 255, 255, 0.08);
+  --tg-reaction-own: rgba(16, 185, 129, 0.35);
 }
 
 [data-theme="imperial-onyx"] {
-  --lm-bg: #060608;
-  --lm-surface: #101116;
-  --lm-surface-2: #181A22;
-  --lm-surface-hover: #21242F;
-  --lm-border: rgba(226, 232, 240, 0.1);
-  --lm-border-strong: rgba(212, 175, 55, 0.34);
+  --lm-bg: #040406;
+  --lm-bg-mesh: radial-gradient(at 50% 0%, rgba(226, 232, 240, 0.12), transparent 55%);
+  --lm-surface: rgba(16, 17, 23, 0.8);
+  --lm-surface-solid: #101117;
+  --lm-surface-2: rgba(25, 27, 36, 0.75);
+  --lm-surface-hover: rgba(36, 39, 52, 0.8);
+  --lm-glass-dock: rgba(12, 13, 18, 0.78);
+  --lm-glass-highlight: rgba(255, 255, 255, 0.28);
+  --lm-border: rgba(226, 232, 240, 0.12);
+  --lm-border-strong: rgba(245, 196, 81, 0.36);
   --lm-text: #F8FAFC;
   --lm-text-secondary: #A1AAB8;
   --lm-text-muted: #646D7E;
-  --lm-accent: #E2E8F0;
-  --lm-accent-blue: #8774E1;
-  --lm-accent-soft: rgba(226, 232, 240, 0.12);
-  --lm-accent-text: #090A0D;
-  --tg-sidebar-bg: #121318;
-  --tg-chat-bg: #07070A;
-  --tg-bubble-in: #191B22;
-  --tg-bubble-out: #4A447A;
-  --tg-hover: #20222B;
-  --tg-reaction-bg: #222430;
-  --tg-reaction-own: #5C5499;
+  --lm-accent: #F1F5F9;
+  --lm-accent-2: #F5C451;
+  --lm-accent-blue: #94A3B8;
+  --lm-accent-soft: rgba(241, 245, 249, 0.14);
+  --lm-accent-text: #06070B;
+  --tg-sidebar-bg: rgba(13, 14, 20, 0.9);
+  --tg-chat-bg: #040407;
+  --tg-bubble-in: rgba(23, 25, 34, 0.92);
+  --tg-bubble-out: linear-gradient(135deg, #334155 0%, #475569 100%);
+  --tg-bubble-out-flat: #3B495E;
+  --tg-hover: rgba(255, 255, 255, 0.06);
+  --tg-reaction-bg: rgba(255, 255, 255, 0.08);
+  --tg-reaction-own: rgba(245, 196, 81, 0.3);
 }
 
 * {
@@ -137,6 +172,7 @@ body,
   margin: 0;
   padding: 0;
   background-color: var(--lm-bg);
+  background-image: var(--lm-bg-mesh);
   color: var(--lm-text);
   font-family: 'IBM Plex Sans Arabic', 'Inter', system-ui, -apple-system, sans-serif;
   overflow: hidden;
@@ -148,16 +184,40 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
-/* Telegram Chat Subtle Geometric Doodle Wallpaper */
+/* 2026 Liquid-Glass Specular Surfaces */
+.liquid-glass {
+  background: var(--lm-glass-dock);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid var(--lm-border-strong);
+  box-shadow:
+    inset 0 1px 0 0 var(--lm-glass-highlight),
+    0 20px 48px -12px rgba(0, 0, 0, 0.55);
+}
+
+.lm-card {
+  background: var(--lm-surface);
+  backdrop-filter: blur(22px) saturate(175%);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  border: 1px solid var(--lm-border);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+}
+
+.lm-card-subtle {
+  background: var(--lm-surface-2);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--lm-border);
+}
+
+/* 2026 Spatial Chat Mesh Canvas */
 .tg-wallpaper {
   background-color: var(--tg-chat-bg);
   background-image:
-    radial-gradient(circle at 18% 22%, rgba(135, 116, 225, 0.14), transparent 45%),
-    radial-gradient(circle at 82% 78%, rgba(51, 144, 236, 0.11), transparent 45%),
-    url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='0.032' stroke-width='1.4'%3E%3Ccircle cx='24' cy='24' r='7'/%3E%3Cpath d='M78 18l8 14H70z'/%3E%3Crect x='18' y='76' width='13' height='13' rx='3' transform='rotate(-12 18 76)'/%3E%3Cpath d='M82 78c6 0 11 5 11 11s-5 11-11 11-11-5-11-11'/%3E%3Ccircle cx='58' cy='56' r='3.5'/%3E%3Cpath d='M104 46l-7 7m0-7l7 7'/%3E%3C/g%3E%3C/svg%3E");
+    radial-gradient(circle at 20% 18%, rgba(124, 92, 255, 0.14), transparent 44%),
+    radial-gradient(circle at 82% 76%, rgba(56, 189, 248, 0.11), transparent 44%),
+    radial-gradient(circle at 50% 50%, rgba(236, 72, 153, 0.05), transparent 55%);
 }
 
-/* Hide scrollbars where appropriate while keeping scroll */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -174,38 +234,29 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(148, 163, 184, 0.22);
   border-radius: 999px;
 }
 
-/* Surface helpers */
-.lm-card {
-  background-color: var(--lm-surface);
-  border: 1px solid var(--lm-border);
-}
-
-.lm-card-subtle {
-  background-color: var(--lm-surface-2);
-  border: 1px solid var(--lm-border);
-}
-
 .lm-btn-primary {
-  background-color: var(--lm-accent);
+  background: linear-gradient(135deg, var(--lm-accent), var(--lm-accent-2));
   color: var(--lm-accent-text);
-  transition: opacity 0.15s ease, transform 0.12s ease;
+  box-shadow: 0 8px 22px -6px var(--lm-accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease;
 }
 .lm-btn-primary:hover {
-  opacity: 0.92;
+  opacity: 0.95;
+  transform: translateY(-1px);
 }
 .lm-btn-primary:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 .lm-btn-ghost {
-  background-color: transparent;
+  background-color: var(--lm-surface-2);
   color: var(--lm-text-secondary);
   border: 1px solid var(--lm-border);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: all 0.16s ease;
 }
 .lm-btn-ghost:hover {
   background-color: var(--lm-surface-hover);
@@ -216,46 +267,46 @@ body,
   background-color: var(--lm-surface-2);
   border: 1px solid var(--lm-border);
   color: var(--lm-text);
-  transition: border-color 0.15s ease;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 .lm-input:focus {
   outline: none;
   border-color: var(--lm-accent);
+  box-shadow: 0 0 0 3px var(--lm-accent-soft);
 }
 .lm-input::placeholder {
   color: var(--lm-text-muted);
 }
 
-/* Story ring gradient (Instagram / Telegram Stories) */
 .story-ring {
-  background: linear-gradient(45deg, #F58529, #DD2A7B, #8134AF, #515BD4);
+  background: conic-gradient(from 180deg, #FF2D55, #FF9500, #AF52DE, #5856D6, #FF2D55);
   padding: 2.5px;
 }
 
 @keyframes floatUpHeart {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(0.75) rotate(0deg);
+    transform: translateY(0) scale(0.65) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-95px) scale(1.25) rotate(8deg);
   }
   100% {
     opacity: 0;
-    transform: translateY(-190px) scale(1.35) rotate(-14deg);
+    transform: translateY(-210px) scale(1.4) rotate(-12deg);
   }
 }
 
 .animate-float-heart {
-  animation: floatUpHeart 1.8s ease-out forwards;
+  animation: floatUpHeart 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @keyframes spinSlow {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .animate-vinyl {
-  animation: spinSlow 5s linear infinite;
+  animation: spinSlow 4.8s linear infinite;
 }
