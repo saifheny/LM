@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Mic, X, FileText } from 'lucide-react';
+import { Play, Pause, Mic, X, Captions } from 'lucide-react';
 import { ChromeArrowButton } from './HardwareUI';
 
 /**
- * Monochrome 2026 Smart Voice Pill:
- * - Fluid WaveSurfer audio waveform (zero purple/neon gradients)
+ * Monochrome Smart Voice Pill:
+ * - WaveSurfer audio waveform
  * - 1x / 1.5x / 2x Playback Speed toggle
- * - Instant AI Voice-to-Text Transcript drawer ("أ ب")
+ * - Professional Captions icon for Voice-to-Text transcription (zero text clutter)
  */
 export function SmartVoicePill({
   url,
@@ -78,11 +78,11 @@ export function SmartVoicePill({
           <div ref={containerRef} className="w-full" />
           <div className="flex items-center justify-between text-[10px] font-mono-num text-[#8E8E93] mt-0.5">
             <span>{duration}</span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={cycleSpeed}
-                className="px-1.5 py-0.2 rounded bg-white/[0.08] hover:bg-white/[0.14] text-[#E4E4E7] font-semibold cursor-pointer"
+                className="px-1.5 py-0.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[#E4E4E7] font-semibold cursor-pointer"
               >
                 {speed}x
               </button>
@@ -93,13 +93,13 @@ export function SmartVoicePill({
                     e.stopPropagation();
                     setShowTranscript(v => !v);
                   }}
-                  title="تحويل الصوت لنص"
-                  className={`px-1.5 py-0.2 rounded flex items-center gap-0.5 cursor-pointer ${
-                    showTranscript ? 'bg-[#F5F5F7] text-black font-semibold' : 'bg-white/[0.08] hover:bg-white/[0.14] text-[#E4E4E7]'
+                  title="تحويل الصوت إلى نص"
+                  aria-label="تحويل الصوت إلى نص"
+                  className={`w-6 h-5 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                    showTranscript ? 'bg-[#F5F5F7] text-black' : 'bg-white/[0.08] hover:bg-white/[0.15] text-[#D4D4D8]'
                   }`}
                 >
-                  <FileText className="w-2.5 h-2.5" />
-                  <span>أ ب</span>
+                  <Captions className="w-3.5 h-3.5" strokeWidth={2} />
                 </button>
               )}
             </div>
@@ -108,7 +108,7 @@ export function SmartVoicePill({
       </div>
 
       {showTranscript && transcript && (
-        <div className="text-[11.5px] leading-relaxed text-[#D4D4D8] pt-1.5 border-t border-white/[0.08]">
+        <div className="text-[12px] leading-relaxed text-[#D4D4D8] pt-1.5 border-t border-white/[0.08]">
           {transcript}
         </div>
       )}
@@ -116,17 +116,12 @@ export function SmartVoicePill({
   );
 }
 
-/**
- * Monochrome Live Frequency Spectrum Voice Recorder Bar
- */
 export function LiveVoiceRecorder({
   onCancel,
   onSend,
-  placeholderLabel = 'جارٍ التسجيل...',
 }: {
   onCancel: () => void;
   onSend: (audioFile: File, durationSec: number) => void;
-  placeholderLabel?: string;
 }) {
   const [bars, setBars] = useState<number[]>(Array(24).fill(18));
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -201,7 +196,7 @@ export function LiveVoiceRecorder({
   const secStr = (elapsedMs / 1000).toFixed(1);
 
   return (
-    <div className="w-full min-h-[52px] rounded-full bg-[#070708] border border-white/[0.1] ps-2.5 pe-1.5 py-1.5 flex items-center gap-3 text-[#F5F5F7]">
+    <div className="w-full min-h-[52px] rounded-full bg-[#070709]/95 backdrop-blur-md border border-white/[0.11] ps-2.5 pe-1.5 py-1.5 flex items-center gap-3 text-[#F5F5F7]">
       <button
         type="button"
         onClick={() => {
@@ -228,8 +223,6 @@ export function LiveVoiceRecorder({
           />
         ))}
       </div>
-
-      <span className="hidden sm:inline text-[11px] text-[#71717A] truncate">{placeholderLabel}</span>
 
       <ChromeArrowButton
         size={40}

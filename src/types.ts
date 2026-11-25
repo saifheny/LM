@@ -6,7 +6,6 @@ export type NavTab =
   | 'live'
   | 'chat'
   | 'ai'
-  | 'finance'
   | 'settings';
 
 export type Lang = 'ar' | 'en';
@@ -89,7 +88,11 @@ export interface PostCommentItem {
   avatarInitials: string;
   avatarUrl: string | null;
   verified: boolean;
+  isAi?: boolean;
   content: string;
+  audioUrl: string | null;
+  audioDurationSec: number;
+  transcript: string | null;
   createdAt: string;
 }
 
@@ -239,11 +242,3 @@ export interface LiveRoomState {
   totalGiftsEgp: number;
   viewersCount: number;
 }
-
-export const COUNTRY_META: Record<CountryCode, { ar: string; en: string; currency: string; symbol: string; flag: string }> = {
-  EG: { ar: 'مصر', en: 'Egypt', currency: 'EGP', symbol: 'ج.م', flag: '🇪🇬' },
-  SA: { ar: 'السعودية', en: 'Saudi Arabia', currency: 'SAR', symbol: 'ر.س', flag: '🇸🇦' },
-  AE: { ar: 'الإمارات', en: 'UAE', currency: 'AED', symbol: 'د.إ', flag: '🇦🇪' },
-  US: { ar: 'الولايات المتحدة', en: 'United States', currency: 'USD', symbol: '$', flag: '🇺🇸' },
-  EU: { ar: 'أوروبا', en: 'Europe', currency: 'EUR', symbol: '€', flag: '🇪🇺' },
-};

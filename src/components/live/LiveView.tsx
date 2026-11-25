@@ -9,11 +9,14 @@ import {
   Camera,
   CameraOff,
   Share2,
-  X,
 } from 'lucide-react';
 import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
 import { UserAvatar } from '../shared/LmBrandMark';
 import { ObsidianComposerPill } from '../shared/HardwareUI';
+import { MobileInlineNavTrigger } from '../layout/AppShell';
+import { useLayout } from '../../context/LayoutContext';
+import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
+import { TikTokGiftItem, TikTokGiftSheet } from './TikTokGiftSheet';
 import { apiGet, apiPost } from '../../lib/api';
 
 interface LiveViewProps {
@@ -22,14 +25,8 @@ interface LiveViewProps {
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
 }
 
-const LIVE_GIFTS = [
-  { id: 'rose', icon: '🌹', name: 'وردة', price: 25 },
-  { id: 'bolt', icon: '⚡', name: 'برق', price: 100 },
-  { id: 'fire', icon: '🔥', name: 'شعلة', price: 250 },
-  { id: 'rocket', icon: '🚀', name: 'انطلاق', price: 1000 },
-];
-
 export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
+  const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string>('live_1');
   const [roomState, setRoomState] = useState<LiveRoomState | null>(null);
@@ -37,11 +34,15 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
   const [pinMode, setPinMode] = useState(false);
   const [muted, setMuted] = useState(true);
   const [giftTrayOpen, setGiftTrayOpen] = useState(false);
-  const [floatingHearts, setFloatingHearts] = useState<Array<{ id: number; offset: number }>>([]);
-  const [giftBanner, setGiftBanner] = useState<{ sender: string; giftName: string } | null>(null);
+  const [giftBanner, setGiftBanner] = useState<{ sender: string; giftName: string; payment?: string } | null>(null);
   const [statusMsg, setStatusMsg] = useState('');
 
-  // Optional creator webcam live mode
+  // TikTok Rapid Multi-Tap Burst Designs & Combo Counter
+  const [bursts, setBursts] = useState<TapBurstItem[]>([]);
+  const comboRef = useRef({ count: 0, lastMs: 0 });
+  const stageRef = useRef<HTMLDivElement | null>(null);
+
+  // Creator live camera mode
   const [cameraLive, setCameraLive] = useState(false);
   const camVideoRef = useRef<HTMLVideoElement | null>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
@@ -78,7 +79,7 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
       const g = lastWsEvent.payload as { roomId: string; sender: string; giftName: string };
       if (g.roomId === activeRoomId) {
         setGiftBanner({ sender: g.sender, giftName: g.giftName });
-        setTimeout(() => setGiftBanner(null), 3000);
+        setTimeout(() => setGiftBanner(null), 3200);
       }
     }
   }, [lastWsEvent, activeRoomId]);
@@ -113,13 +114,24 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
     }
   }
 
-  function spawnHeart() {
-    const id = Date.now() + Math.random();
-    const offset = Math.round((Math.random() - 0.5) * 44);
-    setFloatingHearts(prev => [...prev.slice(-10), { id, offset }]);
+  function triggerStageTapBurst(clientX?: number, clientY?: number) {
+    const rect = stageRef.current?.getBoundingClientRect();
+    const x = clientX !== undefined && rect ? clientX - rect.left : (rect?.width || 360) * 0.5;
+    const y = clientY !== undefined && rect ? clientY - rect.top : (rect?.height || 640) * 0.5;
+
+    const now = Date.now();
+    if (now - comboRef.current.lastMs < 800) {
+      comboRef.current.count += 1;
+    } else {
+      comboRef.current.count = 1;
+    }
+    comboRef.current.lastMs = now;
+
+    const item = createTapBurst(x, y, comboRef.current.count);
+    setBursts(prev => [...prev.slice(-14), item]);
     setTimeout(() => {
-      setFloatingHearts(prev => prev.filter(h => h.id !== id));
-    }, 1300);
+      setBursts(prev => prev.filter(b => b.id !== item.id));
+    }, 900);
   }
 
   async function handleSendComment(e: React.FormEvent) {
@@ -127,6 +139,7 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
     if (!commentText.trim() || !activeRoomId) return;
     const text = commentText.trim();
     setCommentText('');
+    setComposerFocused(false);
     try {
       if (pinMode) {
         await apiPost(`/api/live/rooms/${activeRoomId}/highlight`, { userId: user.id, text });
@@ -140,30 +153,37 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
     }
   }
 
-  async function sendGift(icon: string, name: string, price: number) {
+  async function handleSendGiftFromSheet(gift: TikTokGiftItem, paymentLabel: string) {
+    setGiftTrayOpen(false);
     await apiPost(`/api/live/rooms/${activeRoomId}/gift`, {
       userId: user.id,
-      giftName: `${icon} ${name}`,
-      giftValueEgp: price,
+      giftName: `${gift.icon} ${gift.name} (${paymentLabel})`,
+      giftValueEgp: gift.price,
     });
-    setGiftTrayOpen(false);
-    spawnHeart();
+    setGiftBanner({ sender: user.displayName, giftName: `${gift.icon} ${gift.name}`, payment: paymentLabel });
+    triggerStageTapBurst();
   }
 
   const activeRoom = rooms.find(r => r.id === activeRoomId) || rooms[0];
 
   return (
     <div className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center">
-      {/* Full-Screen TikTok Live Stage (Zero Side Containers / Zero Cards!) */}
-      <div className="relative w-full h-full max-w-[540px] mx-auto bg-black overflow-hidden">
+      {/* Full-Screen TikTok Live Stage (Zero Side Containers) */}
+      <div
+        ref={stageRef}
+        onClick={(e) => {
+          setComposerFocused(false);
+          setMobileNavExpanded(false);
+          if (giftTrayOpen) {
+            setGiftTrayOpen(false);
+            return;
+          }
+          triggerStageTapBurst(e.clientX, e.clientY);
+        }}
+        className="relative w-full h-full max-w-[520px] mx-auto bg-black overflow-hidden cursor-pointer"
+      >
         {cameraLive ? (
-          <video
-            ref={camVideoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
+          <video ref={camVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
         ) : activeRoom?.videoUrl ? (
           <video
             key={activeRoom.videoUrl}
@@ -172,34 +192,32 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
             loop
             playsInline
             muted={muted}
-            onClick={spawnHeart}
-            className="w-full h-full object-cover cursor-pointer"
+            className="w-full h-full object-cover"
           />
         ) : (
           <div className="w-full h-full bg-black" />
         )}
 
-        {/* Subtle Top & Bottom Vignettes Only for Text Legibility */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/75 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
+        {/* Multi-Design TikTok Rapid Tap Bursts */}
+        <TapBurstOverlay items={bursts} />
 
-        {/* Top Floating TikTok Host & Stream Switcher Bar */}
-        <div className="absolute top-4 inset-x-4 z-20 flex items-center justify-between gap-2">
-          {/* Host Pill */}
+        {/* Subtle Legibility Gradients */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/75 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
+
+        {/* Top Floating Host & Viewer Controls */}
+        <div onClick={e => e.stopPropagation()} className="absolute top-4 inset-x-4 z-20 flex items-center justify-between gap-2">
           {activeRoom && (
             <div className="flex items-center gap-2 ps-1 pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12]">
               <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={32} online />
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-white truncate max-w-[120px]">{activeRoom.hostName}</div>
-                <div className="text-[10px] text-white/70 truncate max-w-[120px]">{activeRoom.title}</div>
+                <div className="text-xs font-semibold text-white truncate max-w-[125px]">{activeRoom.hostName}</div>
+                <div className="text-[10px] text-white/70 truncate max-w-[125px]">{activeRoom.title}</div>
               </div>
-              <span className="ms-1 px-2.5 py-1 rounded-full bg-[#EF4444] text-white text-[10px] font-bold tracking-wide">
-                LIVE
-              </span>
+              <span className="ms-1 px-2 py-0.5 rounded-full bg-[#EF4444] text-white text-[10px] font-bold">LIVE</span>
             </div>
           )}
 
-          {/* Right Controls: Viewers, Mute, Webcam */}
           <div className="flex items-center gap-1.5">
             <div className="px-2.5 py-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] flex items-center gap-1.5 text-xs font-mono-num text-white">
               <Eye className="w-3.5 h-3.5 text-white/80" />
@@ -217,7 +235,6 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
             <button
               type="button"
               onClick={toggleCameraBroadcast}
-              title="بث بالكاميرا"
               className={`w-8 h-8 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer ${
                 cameraLive ? 'bg-white text-black border-white' : 'bg-black/55 border-white/[0.12] text-white'
               }`}
@@ -227,9 +244,9 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
           </div>
         </div>
 
-        {/* Stream Switcher Pills (Switch Rooms Directly on Stage) */}
+        {/* Stream Switcher Pills */}
         {rooms.length > 1 && (
-          <div className="absolute top-16 start-4 z-20 flex items-center gap-1.5">
+          <div onClick={e => e.stopPropagation()} className="absolute top-16 start-4 z-20 flex items-center gap-1.5">
             {rooms.map(r => {
               const active = r.id === activeRoomId;
               return (
@@ -238,9 +255,7 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
                   type="button"
                   onClick={() => setActiveRoomId(r.id)}
                   className={`px-2.5 py-1 rounded-full text-[11px] backdrop-blur-md transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-white text-black font-semibold'
-                      : 'bg-black/45 border border-white/[0.12] text-white/80 hover:text-white'
+                    active ? 'bg-white text-black font-semibold' : 'bg-black/45 border border-white/[0.12] text-white/80 hover:text-white'
                   }`}
                 >
                   {r.hostName.split(' ')[0]}
@@ -250,136 +265,124 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
           </div>
         )}
 
-        {/* Transient Gift Toast */}
+        {/* Animated Gift Toast Banner */}
         {giftBanner && (
-          <div className="absolute top-28 start-4 z-30 px-3.5 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 flex items-center gap-2 text-xs text-white">
+          <div className="absolute top-28 start-4 z-30 px-4 py-2 rounded-full bg-black/80 backdrop-blur-md border border-white/20 flex items-center gap-2 text-xs text-white">
             <span className="font-semibold">{giftBanner.sender}</span>
-            <span className="text-white/75">أرسل {giftBanner.giftName}</span>
+            <span className="text-white/85">أرسل {giftBanner.giftName}</span>
+            {giftBanner.payment && <span className="text-[10px] text-[#FACC15]">• {giftBanner.payment}</span>}
           </div>
         )}
 
-        {/* Active Pinned Comment Pill (Above Overlay Stream) */}
-        {roomState?.activeHighlight && (
-          <div className="absolute bottom-[310px] start-4 end-16 z-20 px-3 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2.5">
+        {/* Active Pinned Comment */}
+        {!giftTrayOpen && roomState?.activeHighlight && (
+          <div
+            onClick={e => e.stopPropagation()}
+            className="absolute bottom-[260px] start-4 end-16 z-20 px-3 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2"
+          >
             <Pin className="w-3.5 h-3.5 text-white shrink-0" />
-            <div className="min-w-0 flex-1">
-              <span className="text-xs font-semibold text-white me-1.5">{roomState.activeHighlight.displayName}:</span>
-              <span className="text-xs text-white/90">{roomState.activeHighlight.text}</span>
+            <div className="min-w-0 flex-1 text-xs">
+              <span className="font-semibold text-white me-1.5">{roomState.activeHighlight.displayName}:</span>
+              <span className="text-white/90">{roomState.activeHighlight.text}</span>
             </div>
           </div>
         )}
 
-        {/* Transparent TikTok Live Overlay Comments (Zero Container Box!) */}
-        <div className="absolute bottom-[132px] start-4 z-20 w-[76%] max-w-[360px] max-h-[170px] overflow-y-auto no-scrollbar live-comments-mask space-y-1.5 pointer-events-auto">
-          {(roomState?.recentMessages || []).slice(-25).map(msg => (
-            <div key={msg.id} className="flex items-start gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
-              <span className="font-semibold text-white/75 shrink-0">{msg.displayName}</span>
-              <span className={msg.isGift ? 'text-[#FBBF24] font-medium' : 'text-white'}>{msg.text}</span>
-            </div>
-          ))}
-          <div ref={commentsEndRef} />
-        </div>
-
-        {/* Floating Hearts Animation */}
-        <div className="pointer-events-none absolute bottom-36 end-6 z-30">
-          {floatingHearts.map(h => (
-            <div
-              key={h.id}
-              style={{ marginInlineEnd: `${h.offset}px` }}
-              className="animate-float-clean text-[#FF2D55]"
-            >
-              <Heart className="w-6 h-6 fill-current" />
-            </div>
-          ))}
-        </div>
-
-        {/* Right Floating TikTok Action Icons */}
-        <div className="absolute bottom-[136px] end-3.5 z-20 flex flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={spawnHeart}
-            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white hover:text-[#FF2D55] flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
+        {/* Transparent Floating TikTok Comments (Hidden cleanly while Gift Sheet is open!) */}
+        {!giftTrayOpen && (
+          <div
+            onClick={e => e.stopPropagation()}
+            className="absolute bottom-[80px] start-4 z-20 w-[76%] max-w-[350px] max-h-[168px] overflow-y-auto no-scrollbar live-comments-mask space-y-1.5"
           >
-            <Heart className="w-5 h-5 fill-current" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setGiftTrayOpen(v => !v)}
-            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
-          >
-            <Gift className="w-5 h-5" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setPinMode(v => !v)}
-            title="تثبيت تعليق"
-            className={`w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition-colors ${
-              pinMode ? 'bg-white text-black border-white' : 'bg-black/55 border-white/[0.14] text-white'
-            }`}
-          >
-            <Pin className="w-4 h-4" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigator.clipboard?.writeText(window.location.href)}
-            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer"
-          >
-            <Share2 className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Minimal Floating Gift Strip */}
-        {giftTrayOpen && (
-          <div className="absolute bottom-[132px] inset-x-4 z-30 p-2 rounded-2xl bg-[#070709]/95 backdrop-blur-md border border-white/[0.14] flex items-center justify-between gap-1.5">
-            {LIVE_GIFTS.map(g => (
-              <button
-                key={g.id}
-                type="button"
-                onClick={() => sendGift(g.icon, g.name, g.price)}
-                className="flex-1 py-2 rounded-xl hover:bg-white/[0.06] flex flex-col items-center gap-0.5 cursor-pointer"
-              >
-                <span className="text-lg">{g.icon}</span>
-                <span className="text-[11px] text-white font-medium">{g.name}</span>
-                <span className="text-[10px] font-mono-num text-[#8E8E93]">{g.price}</span>
-              </button>
+            {(roomState?.recentMessages || []).slice(-25).map(msg => (
+              <div key={msg.id} className="flex items-start gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
+                <span className="font-semibold text-white/75 shrink-0">{msg.displayName}</span>
+                <span className={msg.isGift ? 'text-[#FACC15] font-medium' : 'text-white'}>{msg.text}</span>
+              </div>
             ))}
+            <div ref={commentsEndRef} />
+          </div>
+        )}
+
+        {/* Floating Side Action Buttons (Hidden cleanly while Gift Sheet is open!) */}
+        {!giftTrayOpen && (
+          <div onClick={e => e.stopPropagation()} className="absolute bottom-[82px] end-3.5 z-20 flex flex-col items-center gap-3">
             <button
               type="button"
-              onClick={() => setGiftTrayOpen(false)}
-              className="w-7 h-7 rounded-full text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
+              onClick={() => triggerStageTapBurst()}
+              className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white hover:text-[#FF2D55] flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
             >
-              <X className="w-4 h-4" />
+              <Heart className="w-5 h-5 fill-current" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setComposerFocused(false);
+                setGiftTrayOpen(true);
+              }}
+              className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
+            >
+              <Gift className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPinMode(v => !v)}
+              className={`w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition-colors ${
+                pinMode ? 'bg-white text-black border-white' : 'bg-black/55 border-white/[0.14] text-white'
+              }`}
+            >
+              <Pin className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText(window.location.href)}
+              className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer"
+            >
+              <Share2 className="w-4 h-4" />
             </button>
           </div>
         )}
 
         {statusMsg && (
-          <div className="absolute bottom-[132px] inset-x-8 z-30 py-1.5 px-3 rounded-full bg-black/85 border border-white/15 text-center text-xs text-white">
+          <div className="absolute bottom-24 inset-x-8 z-30 py-1.5 px-3 rounded-full bg-black/85 border border-white/15 text-center text-xs text-white">
             {statusMsg}
           </div>
         )}
 
-        {/* Bottom Image 1 Pitch-Black Composer Pill Above Nav Dock */}
-        <div className="absolute bottom-[68px] inset-x-3.5 z-20">
-          <ObsidianComposerPill
-            value={commentText}
-            onChange={setCommentText}
-            onSubmit={handleSendComment}
-            placeholder={
-              pinMode
-                ? lang === 'ar'
-                  ? 'اكتب تعليقًا لتثبيته أعلى البث...'
-                  : 'Pin a comment...'
-                : lang === 'ar'
-                ? 'أضف تعليقًا...'
-                : 'Add comment...'
-            }
-            disabled={!commentText.trim()}
+        {/* Bottom Floating Composer + Mobile Morphing Nav Pill (Disappears completely when Gift Sheet opens!) */}
+        {!giftTrayOpen && (
+          <div
+            onClick={e => e.stopPropagation()}
+            className="absolute bottom-3.5 inset-x-3.5 z-20 flex items-center gap-2"
+          >
+            <MobileInlineNavTrigger lang={lang} />
+            {!mobileNavExpanded && (
+              <div className="flex-1 min-w-0">
+                <ObsidianComposerPill
+                  value={commentText}
+                  onChange={setCommentText}
+                  onSubmit={handleSendComment}
+                  onFocus={() => setComposerFocused(true)}
+                  onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
+                  placeholder={pinMode ? 'تعليق مثبت...' : lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
+                  disabled={!commentText.trim()}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 50-Gift Interactive TikTok Catalog Drawer with Payment Method Selection */}
+        {giftTrayOpen && (
+          <TikTokGiftSheet
+            balance={user.demoBalanceEgp}
+            onClose={() => setGiftTrayOpen(false)}
+            onSendGift={handleSendGiftFromSheet}
           />
-        </div>
+        )}
       </div>
     </div>
   );

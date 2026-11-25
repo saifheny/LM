@@ -14,7 +14,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 5;
+const TARGET_DB_VERSION = 6;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -127,7 +127,10 @@ export function initDatabase() {
       post_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       parent_id TEXT,
-      content TEXT NOT NULL,
+      content TEXT DEFAULT '',
+      audio_url TEXT,
+      audio_duration_sec INTEGER DEFAULT 6,
+      transcript TEXT,
       created_at TEXT DEFAULT 'منذ 5 د',
       FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
     );
@@ -279,7 +282,7 @@ function seedInitialData() {
 
   insertUser.run(
     'u_karim', 'karim', '123456', 'كريم فؤاد', 'Karim Fouad',
-    'Global Tech & Macro • NYC / CAI',
+    'Tech & Media • NYC / CAI',
     '#27272A', 'كف', '/uploads/seed/avatar_karim.jpg', 1, 'US', 31000, 6200, 94200, 184
   );
 
@@ -299,59 +302,61 @@ function seedInitialData() {
   insertStory.run('s_1', 'u_mariam', '/uploads/seed/story_1.jpg', 'كواليس السيت أب قبل البث المباشر');
   insertStory.run('s_2', 'u_youssef', '/uploads/seed/post_cairo.jpg', 'القاهرة وقت الغروب');
   insertStory.run('s_3', 'u_nour', '/uploads/seed/story_2.jpg', 'تلوين الفيلم القصير الجديد');
-  insertStory.run('s_4', 'u_karim', '/uploads/seed/story_3.jpg', 'افتتاح جلسة الأسواق');
+  insertStory.run('s_4', 'u_karim', '/uploads/seed/story_3.jpg', 'لقطات من المكتب');
 
   const insertPost = db.prepare(`
     INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, poll_json, location, score, likes_count, comments_count, shares_count, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  insertPost.run(
+    'p_1', 'u_nour', 'عام',
+    'الغروب من فوق النيل النهاردة كان لوحة سينمائية هادية جدًا. لقطتين بدون أي فلاتر، إيه رأيكم في توازن الإضاءة؟',
+    '/uploads/seed/post_cairo.jpg', JSON.stringify(['/uploads/seed/post_cairo.jpg', '/uploads/seed/post_nile.jpg']),
+    null, 'الزمالك، القاهرة', 1420, 1420, 3, 214, 'منذ 14 د'
+  );
+
+  insertPost.run(
+    'p_2', 'u_mariam', 'عام',
+    'خلصنا معايرة الصوت في الاستوديو.. البث المباشر شغال دلوقتي بجودة نقية وبدون أي تأخير.',
+    '/uploads/seed/post_studio.jpg', JSON.stringify(['/uploads/seed/post_studio.jpg']),
+    null, 'الشيخ زايد', 984, 984, 2, 128, 'منذ 42 د'
+  );
+
   const poll1 = JSON.stringify({
-    question: 'ما الأولوية الأهم في تطبيقات 2026 الشاملة برأيك؟',
+    question: 'ما أكثر ميزة تستخدمها يوميًا؟',
     options: [
-      { id: 'opt_1', text: 'السرعة الصفرية وغياب التهنيج (120fps)', votes: 614 },
-      { id: 'opt_2', text: 'تشفير المحادثات وعزل الذكاء الاصطناعي', votes: 428 },
-      { id: 'opt_3', text: 'تصميم أسود نقي بدون حاويات مزدحمة', votes: 519 },
-      { id: 'opt_4', text: 'ربط الـ API المفتوح بدون احتكار', votes: 287 },
+      { id: 'opt_1', text: 'المحادثات السريعة والرسائل الصوتية', votes: 614 },
+      { id: 'opt_2', text: 'الفيديوهات القصيرة والبث المباشر', votes: 519 },
+      { id: 'opt_3', text: 'المساعد الذكي والترجمة الفورية', votes: 428 },
     ],
   });
 
   insertPost.run(
-    'p_1', 'u_youssef', 'تقنية',
-    'تصميم الواجهات في 2026 بيتجه بالكامل لإلغاء الصناديق والحاويات المكدسة؛ النص والميديا على خلفية OLED سوداء نقية مع فواصل شعرية دقيقة بيدي راحة بصرية وسرعة استجابة فورية.',
-    null, '[]', poll1, 'القاهرة', 1420, 1420, 4, 312, 'منذ 14 د'
+    'p_3', 'u_youssef', 'عام',
+    'التجربة الأنظف دائمًا هي اللي بتسيب الصورة والمحتوى يتكلموا بدون زحمة عناصر حولهم.',
+    null, '[]', poll1, 'القاهرة', 815, 815, 2, 95, 'منذ ساعة'
   );
 
   insertPost.run(
-    'p_2', 'u_nour', 'مصر',
-    'الغروب من فوق النيل النهاردة كان لوحة سينمائية هادية جدًا. لقطتين بدون أي فلاتر، إيه رأيكم في توازن الإضاءة؟',
-    '/uploads/seed/post_cairo.jpg', JSON.stringify(['/uploads/seed/post_cairo.jpg', '/uploads/seed/post_nile.jpg']),
-    null, 'الزمالك، القاهرة', 984, 984, 2, 185, 'منذ 42 د'
+    'p_4', 'u_karim', 'عام',
+    'الجيل الجديد من معالجات الهواتف والذكاء الاصطناعي المحلي بيغير شكل التطبيقات بالكامل في 2026.',
+    '/uploads/seed/post_tech1.jpg', JSON.stringify(['/uploads/seed/post_tech1.jpg', '/uploads/seed/post_tech2.jpg']),
+    null, 'نيويورك • القاهرة', 642, 642, 1, 88, 'منذ ساعتين'
   );
 
-  insertPost.run(
-    'p_3', 'u_karim', 'أسواق',
-    'حركة السيولة في قطاع الرقائق والبنية التحتية للذكاء الاصطناعي بتسجل قمم جديدة في الربع الحالي، بينما EGX30 بيحافظ على زخم صاعد قوي فوق مستوى 30,400 نقطة.',
-    '/uploads/seed/post_tech1.jpg', JSON.stringify(['/uploads/seed/post_tech1.jpg']),
-    null, 'نيويورك • القاهرة', 642, 642, 1, 96, 'منذ ساعة'
-  );
-
-  insertPost.run(
-    'p_4', 'u_mariam', 'صوتيات',
-    'خلصنا معايرة الصوت في الاستوديو.. البث المباشر شغال دلوقتي بجودة نقية وبدون أي تأخير.',
-    '/uploads/seed/post_studio.jpg', JSON.stringify(['/uploads/seed/post_studio.jpg']),
-    null, 'الشيخ زايد', 815, 815, 1, 124, 'منذ ساعتين'
-  );
-
-  const insertPostComment = db.prepare('INSERT INTO post_comments (id, post_id, user_id, parent_id, content, created_at) VALUES (?, ?, ?, ?, ?, ?)');
-  insertPostComment.run('pc_1', 'p_1', 'u_karim', null, 'اتفق 100%، غياب البطاقات الرمادية والتوهج بيخلي القراءة أسرع بمراحل زي X مع عمق نقاشات Reddit.', 'منذ 11 د');
-  insertPostComment.run('pc_2', 'p_1', 'u_youssef', 'pc_1', 'بالظبط، وكمان استهلاك الـ GPU بينزل للصفر تقريبًا فالتمرير بيفضل 120 إطار ثابت.', 'منذ 9 د');
-  insertPostComment.run('pc_3', 'p_1', 'u_omar', 'pc_1', 'خصوصًا على شاشات الـ OLED، الأسود الحقيقي #000000 مريح جدًا للعين بالليل.', 'منذ 6 د');
-  insertPostComment.run('pc_4', 'p_1', 'u_mariam', null, 'التصويت الثالث والرابع مع بعض هما المعادلة الصح!', 'منذ 4 د');
-  insertPostComment.run('pc_5', 'p_2', 'u_mariam', null, 'الكادر الثاني على النيل تحفة بجد.', 'منذ 30 د');
-  insertPostComment.run('pc_6', 'p_2', 'u_nour', 'pc_5', 'شكرًا يا مريم! اتصورت بعد الغروب بـ 8 دقايق.', 'منذ 26 د');
-  insertPostComment.run('pc_7', 'p_3', 'u_youssef', null, 'قطاع التكنولوجيا والبنوك شايلين المؤشر بقوة الأسبوع ده.', 'منذ 45 د');
-  insertPostComment.run('pc_8', 'p_4', 'u_omar', null, 'العزل الصوتي الجديد فرق جدًا في وضوح الترددات.', 'منذ ساعة');
+  const insertPostComment = db.prepare(`
+    INSERT INTO post_comments (id, post_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertPostComment.run('pc_1', 'p_1', 'u_mariam', null, 'الكادر الثاني على النيل تحفة بجد، توزيع الظلال ممتاز.', null, 0, null, 'منذ 11 د');
+  insertPostComment.run('pc_2', 'p_1', 'u_nour', 'pc_1', '', '/uploads/seed/voice_note_1.wav', 6, 'شكرًا يا مريم! صورتها بعد الغروب بثماني دقائق بعدسة 35mm.', 'منذ 8 د');
+  insertPostComment.run('pc_3', 'p_1', 'u_karim', null, 'الألوان الطبيعية دايمًا بتكسب.', null, 0, null, 'منذ 5 د');
+  insertPostComment.run('pc_4', 'p_2', 'u_omar', null, 'العزل الصوتي الجديد فرق جدًا في وضوح الترددات.', null, 0, null, 'منذ 25 د');
+  insertPostComment.run('pc_5', 'p_2', 'u_youssef', null, 'منتظرين البث!', null, 0, null, 'منذ 15 د');
+  insertPostComment.run('pc_6', 'p_3', 'u_karim', null, 'البساطة والسرعة أهم من أي شيء.', null, 0, null, 'منذ 30 د');
+  insertPostComment.run('pc_7', 'p_3', 'u_mariam', null, 'متفقة تمامًا.', null, 0, null, 'منذ 18 د');
+  insertPostComment.run('pc_8', 'p_4', 'u_youssef', null, 'نقلة حقيقية في الأداء على الأجهزة.', null, 0, null, 'منذ ساعة');
 
   const insertVideo = db.prepare(`
     INSERT INTO short_videos (
@@ -362,13 +367,13 @@ function seedInitialData() {
   insertVideo.run('v_1', 'u_mariam', 'لما الإضاءة والموسيقى يندمجوا في لحظة واحدة', 'أقوى لقطة صورناها الأسبوع ده من الاستوديو', '#تصوير #سينما #القاهرة', 'Cairo Midnight — Mariam Studio', '/uploads/seed/reel1.mp4', '/uploads/seed/post_studio.jpg', 15, 248900, 4, 31400, 12800, 1950000);
   insertVideo.run('v_2', 'u_nour', 'صوت المية والهوا بس بدون أي صخب', 'فصلان آخر الأسبوع', '#سفر #هدوء #طبيعة', 'Ocean Breeze — Nour Original', '/uploads/seed/reel2.mp4', '/uploads/seed/post_nile.jpg', 15, 164200, 2, 24100, 7430, 1120000);
   insertVideo.run('v_3', 'u_karim', 'طريق مفتوح وموسيقى آخر الليل', 'التجربة الكاملة على الطريق الساحلي', '#ليل #طريق #موسيقى', 'Nightrunner — Synth', '/uploads/seed/reel3.mp4', '/uploads/seed/post_tech1.jpg', 15, 92400, 1, 11900, 4120, 840000);
-  insertVideo.run('v_4', 'u_youssef', 'التفاصيل البسيطة بتصنع كل الفارق', 'لقطات من يوم شغل مكثف في القاهرة', '#تصميم #تقنية #مصر', 'Focus Flow — Youssef', '/uploads/seed/reel4.mp4', '/uploads/seed/post_cairo.jpg', 15, 312000, 3, 52800, 19400, 2840000);
+  insertVideo.run('v_4', 'u_youssef', 'التفاصيل البسيطة بتصنع كل الفارق', 'لقطات من يوم شغل مكثف', '#تصميم #تقنية #مصر', 'Focus Flow — Youssef', '/uploads/seed/reel4.mp4', '/uploads/seed/post_cairo.jpg', 15, 312000, 3, 52800, 19400, 2840000);
 
   const insertVidComment = db.prepare(`
     INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, likes_count, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertVidComment.run('vc_1', 'v_1', 'u_youssef', null, 'الكادر وتدريج الإضاءة في حتة تانية خالص 👏', null, 0, null, 842, 'منذ 12 د');
+  insertVidComment.run('vc_1', 'v_1', 'u_youssef', null, 'الكادر وتدريج الإضاءة في حتة تانية خالص', null, 0, null, 842, 'منذ 12 د');
   insertVidComment.run('vc_2', 'v_1', 'u_mariam', 'vc_1', '', '/uploads/seed/voice_note_1.wav', 6, 'شكرًا جدًا يا يوسف! صورناها بعد الغروب بدقايق بإضاءة طبيعية بالكامل.', 219, 'منذ 9 د');
   insertVidComment.run('vc_3', 'v_1', 'u_nour', 'vc_1', 'عدسة الـ 35mm فرقت جدًا في العمق هنا.', null, 0, null, 94, 'منذ 5 د');
   insertVidComment.run('vc_4', 'v_1', 'u_karim', null, '', '/uploads/seed/voice_note_1.wav', 6, 'الموسيقى راكبة على حركة الكاميرا بالملي، مستوى عالمي.', 315, 'منذ 18 د');
@@ -380,8 +385,8 @@ function seedInitialData() {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertConv.run('c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Host', '#27272A', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن', 'بروفة الصوت الساعة 8:30 قبل البث المباشر', 1, 2, 1, 2);
-  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo Macro', '#27272A', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 0, 1, 2);
-  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#27272A', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 1, 1, 2);
+  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo', '#27272A', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 1, 1, 2);
+  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#27272A', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 0, 1, 2);
   insertConv.run('c_founders', 'community', 'channels', 'Cairo Builders & Tech', 'مجتمع المطورين وصناع المحتوى', '#27272A', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل', 'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً', 0, 3, 0, 18940);
   insertConv.run('c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير', 'تنسيق التصوير والموسيقى', '#27272A', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين', null, 0, 0, 1, 14);
 
@@ -392,12 +397,12 @@ function seedInitialData() {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  insertMsg.run('m_1', 'c_mariam', 'u_mariam', 'شوف الكادر ده من سطح الاستوديو وقت الغروب', 'image', '/uploads/seed/post_cairo.jpg', null, 0, null, null, null, JSON.stringify({ heart: ['u_youssef'], fire: ['u_youssef', 'u_mariam'] }), '09:38 م');
-  insertMsg.run('m_2', 'c_mariam', 'u_youssef', 'الإضاءة وتفاصيل السما ممتازة، اعتمدي الزاوية دي للبرومو.', 'text', null, null, 0, 'm_1', 'مريم الشريف', 'شوف الكادر ده من سطح الاستوديو وقت الغروب', JSON.stringify({ thumbs: ['u_mariam'] }), '09:40 م');
+  insertMsg.run('m_1', 'c_mariam', 'u_mariam', 'Just finished color grading the sunset frame — sending it to you now.', 'image', '/uploads/seed/post_cairo.jpg', null, 0, null, null, null, JSON.stringify({ heart: ['u_youssef'], fire: ['u_youssef', 'u_mariam'] }), '09:38 م');
+  insertMsg.run('m_2', 'c_mariam', 'u_youssef', 'الإضاءة وتفاصيل السما ممتازة، اعتمدي الزاوية دي للبرومو.', 'text', null, null, 0, 'm_1', 'مريم الشريف', 'Just finished color grading the sunset frame', JSON.stringify({ thumbs: ['u_mariam'] }), '09:40 م');
   insertMsg.run('m_3', 'c_mariam', 'u_mariam', 'رسالة صوتية', 'audio', '/uploads/seed/voice_note_1.wav', 'كل حاجة جاهزة تمامًا، المايك والكاميرا اتظبطوا وهنطلع في الميعاد بالثانية.', 0, null, null, null, JSON.stringify({ zap: ['u_youssef'] }), '09:42 م');
   insertMsg.run('m_4', 'c_mariam', 'u_mariam', 'رسالة فيديو دائرية', 'video_note', '/uploads/seed/reel2.mp4', null, 0, null, null, null, JSON.stringify({ fire: ['u_youssef'] }), '09:44 م');
 
-  insertMsg.run('m_5', 'c_karim', 'u_karim', 'مؤشر السوق قفل على ارتفاع 2.4% النهاردة، السيولة في قطاع التقنية قوية جدًا.', 'text', null, null, 0, null, null, null, JSON.stringify({ zap: ['u_youssef'], hundred: ['u_karim'] }), '08:16 م');
+  insertMsg.run('m_5', 'c_karim', 'u_karim', 'Hey! Just finished testing the new release in New York — performance feels super fast and clean. Are we ready for tonight?', 'text', null, null, 0, null, null, null, JSON.stringify({ zap: ['u_youssef'], hundred: ['u_karim'] }), '08:16 م');
   insertMsg.run('m_6', 'c_nour', 'u_nour', 'بعتلك النسخة النهائية من المونتاج، قول لي رأيك في الإيقاع.', 'text', null, null, 0, null, null, null, '{}', '07:50 م');
   insertMsg.run('m_7', 'c_founders', 'u_youssef', 'مساء النور جميعًا — شاركونا أحدث المشاريع المفتوحة اللي شغالين عليها الأسبوع ده.', 'text', null, null, 0, null, null, null, JSON.stringify({ fire: ['u_mariam', 'u_karim'], heart: ['u_nour'] }), '06:30 م');
 
@@ -406,31 +411,12 @@ function seedInitialData() {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertLive.run('live_1', 'u_mariam', 'سهرة القاهرة المباشرة • صوتيات وسينما', 'مباشر', '/uploads/seed/reel1.mp4', 'cairo-studio', 4820, 1, 10, 25, 18400);
-  insertLive.run('live_2', 'u_karim', 'تغطية جلسة الأسواق والتكنولوجيا لحظة بلحظة', 'أسواق', '/uploads/seed/reel3.mp4', 'market-desk', 2390, 1, 10, 25, 9750);
-
-  const insertLedger = db.prepare(`
-    INSERT INTO ledger_entries (id, user_id, debit_account, credit_account, amount_egp, category, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  insertLedger.run('led_1', 'u_youssef', 'reserve:sandbox', 'wallet:u_youssef:egp', 48500, 'sandbox_init', 'رصيد تجريبي للمحفظة');
-  insertLedger.run('led_2', 'u_mariam', 'gifts:live_1', 'creator:u_mariam', 750, 'gift_creator', 'عائد هدايا البث المباشر (75%)');
-  insertLedger.run('led_3', 'u_mariam', 'gifts:live_1', 'lm:commission', 250, 'gift_fee', 'حصة المنصة من الهدايا (25%)');
-
-  const insertAudit = db.prepare(`
-    INSERT INTO ai_security_logs (id, user_id, action_type, decision, reason)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  insertAudit.run('aud_1', 'u_youssef', 'PRIVATE_CHAT_GUARD', 'BLOCKED', 'المحادثات الخاصة مشفرة ومعزولة تلقائيًا عن LM AI.');
-  insertAudit.run('aud_2', 'u_youssef', 'WALLET_ISOLATION', 'BLOCKED', 'العمليات المالية معزولة تمامًا عن صلاحيات LM AI.');
+  insertLive.run('live_2', 'u_karim', 'جولة ليلية وموسيقى حية', 'موسيقى', '/uploads/seed/reel3.mp4', 'night-drive', 2390, 1, 10, 25, 9750);
 }
 
 export function mapUserRow(row: Record<string, unknown>): UserProfile {
   let adRemoval = { videos: false, largeGroups: false, ai: false, investment: false };
-  try {
-    adRemoval = JSON.parse(String(row.ad_removal_json || '{}'));
-  } catch {
-    // keep defaults
-  }
+  try { adRemoval = JSON.parse(String(row.ad_removal_json || '{}')); } catch { /* ignore */ }
   return {
     id: String(row.id),
     username: String(row.username),

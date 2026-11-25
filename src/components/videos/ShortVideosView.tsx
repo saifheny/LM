@@ -15,12 +15,17 @@ import {
   X,
   Mic,
   CornerDownLeft,
+  Play,
+  Pause,
+  RotateCcw,
+  RotateCw,
 } from 'lucide-react';
 
 import { Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
 import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
+import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface ShortVideosViewProps {
@@ -34,11 +39,27 @@ function compactNum(n: number): string {
   return String(n);
 }
 
+function fmtSec(sec: number): string {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
 export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
+  const [feedTab, setFeedTab] = useState<'following' | 'friends' | 'for_you'>('for_you');
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState(true);
-  const [heartBurst, setHeartBurst] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(15);
+  const [seekBadge, setSeekBadge] = useState<'back' | 'forward' | null>(null);
+
+  // Rapid multi-tap burst engine (TikTok multi-design bursts)
+  const [bursts, setBursts] = useState<TapBurstItem[]>([]);
+  const comboRef = useRef({ count: 0, lastMs: 0 });
+  const singleTapTimerRef = useRef<number | null>(null);
+
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
 
   // Comments Drawer
@@ -64,7 +85,15 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
     loadVideos();
   }, [loadVideos]);
 
+  const orderedVideos = React.useMemo(() => {
+    if (feedTab === 'following') return [...videos].reverse();
+    if (feedTab === 'friends') return videos.slice(1).concat(videos.slice(0, 1));
+    return videos;
+  }, [videos, feedTab]);
+
   useEffect(() => {
+    setPaused(false);
+    setCurrentTime(0);
     Object.entries(videoRefs.current).forEach(([idxStr, el]) => {
       if (!el) return;
       if (Number(idxStr) === activeIndex) {
@@ -74,10 +103,46 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
         el.pause();
       }
     });
-  }, [activeIndex, videos.length]);
+  }, [activeIndex, orderedVideos.length, feedTab]);
 
-  async function toggleLike(v: ShortVideoItem) {
-    const res = await apiPost<{ ok: boolean; liked: boolean }>(`/api/videos/${v.id}/like`, { userId: user.id });
+  function getActiveVideoEl() {
+    return videoRefs.current[activeIndex] || null;
+  }
+
+  function togglePlayPause() {
+    const el = getActiveVideoEl();
+    if (!el) return;
+    if (el.paused) {
+      el.play().catch(() => {});
+      setPaused(false);
+    } else {
+      el.pause();
+      setPaused(true);
+    }
+  }
+
+  function seekBy(deltaSec: number) {
+    const el = getActiveVideoEl();
+    if (!el) return;
+    const dur = el.duration || duration || 15;
+    el.currentTime = Math.max(0, Math.min(dur, el.currentTime + deltaSec));
+    setCurrentTime(el.currentTime);
+    setSeekBadge(deltaSec < 0 ? 'back' : 'forward');
+    setTimeout(() => setSeekBadge(null), 550);
+  }
+
+  function scrubTo(val: number) {
+    const el = getActiveVideoEl();
+    if (!el) return;
+    el.currentTime = val;
+    setCurrentTime(val);
+  }
+
+  async function toggleLike(v: ShortVideoItem, forceLike = false) {
+    const res = await apiPost<{ ok: boolean; liked: boolean }>(`/api/videos/${v.id}/like`, {
+      userId: user.id,
+      forceLike,
+    });
     setVideos(prev =>
       prev.map(item =>
         item.id === v.id
@@ -89,6 +154,42 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
           : item
       )
     );
+  }
+
+  /**
+   * TikTok-Accurate Stage Tap Handler:
+   * - Single tap -> Play / Pause cleanly
+   * - Rapid multi-taps (< 320ms) -> Multi-design TikTok Burst + Like Combo!
+   */
+  function handleStagePointer(e: React.MouseEvent<HTMLDivElement>, v: ShortVideoItem) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const now = Date.now();
+
+    if (now - comboRef.current.lastMs < 340) {
+      if (singleTapTimerRef.current) {
+        window.clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      comboRef.current.count += 1;
+      comboRef.current.lastMs = now;
+
+      const burst = createTapBurst(x, y, comboRef.current.count);
+      setBursts(prev => [...prev.slice(-14), burst]);
+      setTimeout(() => setBursts(prev => prev.filter(b => b.id !== burst.id)), 900);
+      toggleLike(v, true);
+      return;
+    }
+
+    comboRef.current.count = 1;
+    comboRef.current.lastMs = now;
+
+    if (singleTapTimerRef.current) window.clearTimeout(singleTapTimerRef.current);
+    singleTapTimerRef.current = window.setTimeout(() => {
+      togglePlayPause();
+      singleTapTimerRef.current = null;
+    }, 240);
   }
 
   async function toggleSave(v: ShortVideoItem) {
@@ -137,7 +238,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
       parentId: replyTo?.id || null,
       audioUrl: up.url,
       audioDurationSec: durationSec,
-      transcript: 'رد صوتي مسجّل بجودة استوديو LM.',
+      transcript: 'رسالة صوتية مسجلة في التعليقات.',
     });
     setReplyTo(null);
     const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${drawerVideo.id}/comments?userId=${user.id}`);
@@ -181,33 +282,52 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
 
   return (
     <div className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center">
-      {/* Top Floating Minimal Controls */}
-      <div className="absolute top-4 inset-x-4 z-20 max-w-[500px] mx-auto flex items-center justify-between pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-4 text-sm font-semibold">
-          <span className="text-white border-b-2 border-white pb-1">{lang === 'ar' ? 'لك' : 'For You'}</span>
-          <span className="text-white/50 pb-1">{lang === 'ar' ? 'أصدقاء' : 'Following'}</span>
-        </div>
-
-        <div className="pointer-events-auto flex items-center gap-2">
+      {/* Centered TikTok Reels Column */}
+      <div className="relative w-full h-full max-w-[500px] mx-auto bg-black overflow-hidden">
+        {/* Exact TikTok Centered Top Navigation Tabs: متابعون | أصدقاء | لك */}
+        <div className="absolute top-4 inset-x-4 z-30 flex items-center justify-between pointer-events-none">
           <button
             type="button"
             onClick={() => setMuted(m => !m)}
-            className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer"
+            className="pointer-events-auto w-8 h-8 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.12] text-white flex items-center justify-center cursor-pointer"
           >
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
+
+          {/* Dead-Center Tabs */}
+          <div className="pointer-events-auto flex items-center gap-5 text-[14px] font-semibold">
+            {[
+              { id: 'following' as const, ar: 'متابعون', en: 'Following' },
+              { id: 'friends' as const, ar: 'أصدقاء', en: 'Friends' },
+              { id: 'for_you' as const, ar: 'لك', en: 'For You' },
+            ].map(tab => {
+              const active = feedTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFeedTab(tab.id)}
+                  className={`pb-1.5 relative transition-colors cursor-pointer drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
+                    active ? 'text-white' : 'text-white/55 hover:text-white/85'
+                  }`}
+                >
+                  <span>{lang === 'ar' ? tab.ar : tab.en}</span>
+                  {active && <span className="absolute bottom-0 inset-x-1 h-[2.5px] rounded-full bg-white" />}
+                </button>
+              );
+            })}
+          </div>
+
           <button
             type="button"
             onClick={() => setUploadOpen(true)}
-            className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center cursor-pointer"
+            className="pointer-events-auto w-8 h-8 rounded-full bg-white text-black flex items-center justify-center cursor-pointer"
           >
             <Plus className="w-4 h-4" strokeWidth={2.4} />
           </button>
         </div>
-      </div>
 
-      {/* Full-Screen Vertical Swiper Stage */}
-      <div className="w-full h-full max-w-[500px] mx-auto bg-black">
+        {/* Full-Screen Vertical Swiper */}
         <Swiper
           direction="vertical"
           modules={[Mousewheel, Keyboard]}
@@ -217,122 +337,207 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
           onSlideChange={(sw: SwiperClass) => setActiveIndex(sw.activeIndex)}
           className="w-full h-full"
         >
-          {videos.map((v, idx) => (
-            <SwiperSlide key={v.id} className="w-full h-full relative bg-black">
-              <video
-                ref={el => {
-                  videoRefs.current[idx] = el;
-                }}
-                src={v.videoUrl || '/uploads/seed/reel1.mp4'}
-                poster={v.posterUrl || undefined}
-                loop
-                playsInline
-                muted={muted}
-                onDoubleClick={() => {
-                  if (!v.likedByMe) toggleLike(v);
-                  setHeartBurst(true);
-                  setTimeout(() => setHeartBurst(false), 650);
-                }}
-                onClick={e => {
-                  const el = e.currentTarget;
-                  if (el.paused) el.play().catch(() => {});
-                  else el.pause();
-                }}
-                className="w-full h-full object-cover cursor-pointer"
-              />
+          {orderedVideos.map((v, idx) => (
+            <SwiperSlide key={`${feedTab}-${v.id}`} className="w-full h-full relative bg-black">
+              <div onClick={e => handleStagePointer(e, v)} className="w-full h-full relative cursor-pointer">
+                <video
+                  ref={el => {
+                    videoRefs.current[idx] = el;
+                  }}
+                  src={v.videoUrl || '/uploads/seed/reel1.mp4'}
+                  poster={v.posterUrl || undefined}
+                  loop
+                  playsInline
+                  muted={muted}
+                  onTimeUpdate={e => {
+                    if (idx === activeIndex) {
+                      setCurrentTime(e.currentTarget.currentTime);
+                      if (e.currentTarget.duration) setDuration(e.currentTarget.duration);
+                    }
+                  }}
+                  onLoadedMetadata={e => {
+                    if (idx === activeIndex && e.currentTarget.duration) {
+                      setDuration(e.currentTarget.duration);
+                    }
+                  }}
+                  className="w-full h-full object-cover"
+                />
 
-              {heartBurst && idx === activeIndex && (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-30">
-                  <Heart className="w-24 h-24 text-[#FF2D55] fill-current animate-ping" />
+                {/* TikTok Rapid-Tap Multi-Design Bursts */}
+                {idx === activeIndex && <TapBurstOverlay items={bursts} />}
+
+                {/* Centered TikTok Playback & Seek Controls (-5s | Play/Pause | +5s) */}
+                {idx === activeIndex && paused && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    className="absolute inset-0 z-20 flex items-center justify-center gap-6 bg-black/25"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => seekBy(-5)}
+                      title="-5 ثوانٍ"
+                      className="w-11 h-11 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white flex flex-col items-center justify-center cursor-pointer active:scale-90 transition-transform"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span className="text-[9px] font-mono-num">5s</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={togglePlayPause}
+                      className="w-16 h-16 rounded-full bg-black/65 backdrop-blur-md border border-white/20 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
+                    >
+                      <Play className="w-7 h-7 fill-current ms-0.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => seekBy(5)}
+                      title="+5 ثوانٍ"
+                      className="w-11 h-11 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white flex flex-col items-center justify-center cursor-pointer active:scale-90 transition-transform"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                      <span className="text-[9px] font-mono-num">5s</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Quick Seek Indicator */}
+                {idx === activeIndex && seekBadge && (
+                  <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 px-4 py-1.5 rounded-full bg-black/75 border border-white/15 text-xs font-mono-num text-white">
+                    {seekBadge === 'back' ? '« 5s-' : '+5s »'}
+                  </div>
+                )}
+
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+
+                {/* Bottom Metadata */}
+                <div onClick={e => e.stopPropagation()} className="absolute bottom-24 md:bottom-12 start-4 end-16 z-20 text-start space-y-1">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                    <span>@{v.username}</span>
+                    {v.verified && <VerifiedIcon />}
+                  </div>
+                  <p className="text-[13.5px] text-white/95 leading-snug">{v.title}</p>
+                  {v.tags && <p className="text-xs text-white/65">{v.tags}</p>}
+                  <div className="flex items-center gap-2 text-xs text-white/80 pt-0.5">
+                    <Music2 className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{v.audioTitle}</span>
+                  </div>
                 </div>
-              )}
 
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
-
-              {/* Bottom Caption Metadata */}
-              <div className="absolute bottom-20 start-4 end-16 z-20 text-start space-y-1.5">
-                <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
-                  <span>@{v.username}</span>
-                  {v.verified && <VerifiedIcon />}
-                </div>
-                <p className="text-[13.5px] text-white/95 leading-snug">{v.title}</p>
-                {v.tags && <p className="text-xs text-white/65">{v.tags}</p>}
-                <div className="flex items-center gap-2 text-xs text-white/80 pt-0.5">
-                  <Music2 className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{v.audioTitle}</span>
-                </div>
-              </div>
-
-              {/* Right TikTok Action Rail */}
-              <div className="absolute bottom-20 end-3 z-20 flex flex-col items-center gap-4">
-                <div className="relative mb-1">
+                {/* Right TikTok Action Rail (Static Crisp Audio Badge — Zero Wobbling/Spinning!) */}
+                <div onClick={e => e.stopPropagation()} className="absolute bottom-24 md:bottom-12 end-3 z-20 flex flex-col items-center gap-4">
                   <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={42} />
+
+                  <button
+                    type="button"
+                    onClick={() => toggleLike(v)}
+                    className="flex flex-col items-center gap-1 cursor-pointer"
+                  >
+                    <Heart
+                      className={`w-7 h-7 ${v.likedByMe ? 'text-[#FF2D55] fill-current' : 'text-white'}`}
+                      strokeWidth={1.9}
+                    />
+                    <span className="text-[11px] font-mono-num text-white">{compactNum(v.likesCount)}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openComments(v)}
+                    className="flex flex-col items-center gap-1 cursor-pointer"
+                  >
+                    <MessageCircle className="w-7 h-7 text-white" strokeWidth={1.9} />
+                    <span className="text-[11px] font-mono-num text-white">{compactNum(v.commentsCount)}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleSave(v)}
+                    className="flex flex-col items-center gap-1 cursor-pointer"
+                  >
+                    <Bookmark
+                      className={`w-6 h-6 ${v.savedByMe ? 'text-[#FACC15] fill-current' : 'text-white'}`}
+                      strokeWidth={1.9}
+                    />
+                    <span className="text-[11px] font-mono-num text-white">{compactNum(v.savesCount)}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(window.location.href)}
+                    className="flex flex-col items-center gap-1 cursor-pointer"
+                  >
+                    <Share2 className="w-6 h-6 text-white" strokeWidth={1.9} />
+                  </button>
+
+                  {/* Clean Static Audio Thumbnail (No erratic motion!) */}
+                  <div className="w-9 h-9 rounded-xl bg-[#141417] border border-white/20 flex items-center justify-center">
+                    <Music2 className="w-4 h-4 text-white" />
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => toggleLike(v)}
-                  className="flex flex-col items-center gap-1 cursor-pointer active:scale-90 transition-transform"
-                >
-                  <Heart
-                    className={`w-7 h-7 ${v.likedByMe ? 'text-[#FF2D55] fill-current' : 'text-white'}`}
-                    strokeWidth={1.9}
-                  />
-                  <span className="text-[11px] font-mono-num text-white">{compactNum(v.likesCount)}</span>
-                </button>
+                {/* TikTok Bottom Scrubber Bar + Time + Quick Skip/Pause Controls */}
+                {idx === activeIndex && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    className="absolute bottom-16 md:bottom-2 inset-x-4 z-30 flex items-center gap-2.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={togglePlayPause}
+                      className="text-white/85 hover:text-white cursor-pointer shrink-0"
+                    >
+                      {paused ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5 fill-current" />}
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => openComments(v)}
-                  className="flex flex-col items-center gap-1 cursor-pointer active:scale-90 transition-transform"
-                >
-                  <MessageCircle className="w-7 h-7 text-white" strokeWidth={1.9} />
-                  <span className="text-[11px] font-mono-num text-white">{compactNum(v.commentsCount)}</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => seekBy(-5)}
+                      className="text-white/70 hover:text-white cursor-pointer shrink-0"
+                      title="-5s"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => toggleSave(v)}
-                  className="flex flex-col items-center gap-1 cursor-pointer active:scale-90 transition-transform"
-                >
-                  <Bookmark
-                    className={`w-6 h-6 ${v.savedByMe ? 'text-[#FACC15] fill-current' : 'text-white'}`}
-                    strokeWidth={1.9}
-                  />
-                  <span className="text-[11px] font-mono-num text-white">{compactNum(v.savesCount)}</span>
-                </button>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(1, duration)}
+                      step={0.1}
+                      value={Math.min(currentTime, duration)}
+                      onChange={e => scrubTo(Number(e.target.value))}
+                      className="flex-1 h-1 accent-white bg-white/25 rounded-full cursor-pointer"
+                    />
 
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard?.writeText(window.location.href)}
-                  className="flex flex-col items-center gap-1 cursor-pointer"
-                >
-                  <Share2 className="w-6 h-6 text-white" strokeWidth={1.9} />
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => seekBy(5)}
+                      className="text-white/70 hover:text-white cursor-pointer shrink-0"
+                      title="+5s"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                    </button>
 
-                <div className="w-9 h-9 rounded-full bg-[#141417] border-4 border-[#27272A] flex items-center justify-center animate-vinyl">
-                  <Music2 className="w-3.5 h-3.5 text-white" />
-                </div>
+                    <span className="text-[10.5px] font-mono-num text-white/75 shrink-0">
+                      {fmtSec(currentTime)} / {fmtSec(duration)}
+                    </span>
+                  </div>
+                )}
               </div>
             </SwiperSlide>
           ))}
         </Swiper>
       </div>
 
-      {/* Threaded & Voice-Reply Comments Sheet */}
+      {/* Comments & Voice-Replies Drawer */}
       {drawerVideo && (
-        <div
-          onClick={() => setDrawerVideo(null)}
-          className="fixed inset-0 z-50 bg-black/65 flex items-end justify-center"
-        >
+        <div onClick={() => setDrawerVideo(null)} className="fixed inset-0 z-50 bg-black/65 flex items-end justify-center">
           <div
             onClick={e => e.stopPropagation()}
             className="w-full max-w-[520px] h-[68vh] rounded-t-3xl bg-[#050507] border-t border-x border-white/[0.12] flex flex-col overflow-hidden"
           >
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
-              <span className="text-xs font-semibold text-white">
-                {comments.length} {lang === 'ar' ? 'تعليق ورد صوتي' : 'Comments'}
-              </span>
+              <span className="text-xs font-semibold text-white">{comments.length} تعليق</span>
               <button
                 type="button"
                 onClick={() => setDrawerVideo(null)}
@@ -354,7 +559,6 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                           <span className="font-semibold text-[#F5F5F7]">{c.displayName}</span>
                           <span className="text-[#71717A]">{c.createdAt}</span>
                         </div>
-
                         {c.audioUrl ? (
                           <div className="mt-1.5 p-2.5 rounded-2xl bg-[#0D0D10] border border-white/[0.08]">
                             <SmartVoicePill url={c.audioUrl} transcript={c.transcript} compact />
@@ -362,19 +566,15 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                         ) : (
                           <p className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">{c.content}</p>
                         )}
-
-                        <div className="mt-1.5 flex items-center gap-4 text-[11px] text-[#71717A]">
-                          <button
-                            type="button"
-                            onClick={() => setReplyTo({ id: c.id, name: c.displayName })}
-                            className="hover:text-white flex items-center gap-1 cursor-pointer"
-                          >
-                            <CornerDownLeft className="w-3 h-3" />
-                            <span>رد</span>
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setReplyTo({ id: c.id, name: c.displayName })}
+                          className="mt-1.5 text-[11px] text-[#71717A] hover:text-white flex items-center gap-1 cursor-pointer"
+                        >
+                          <CornerDownLeft className="w-3 h-3" />
+                          <span>رد</span>
+                        </button>
                       </div>
-
                       <button
                         type="button"
                         onClick={() => toggleCommentLike(c.id)}
@@ -412,7 +612,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
               })}
             </div>
 
-            <div className="p-3 border-t border-white/[0.08] bg-black">
+            <div className="p-3 bg-black">
               {replyTo && (
                 <div className="mb-1.5 px-3 flex items-center justify-between text-[11px] text-[#8E8E93]">
                   <span>الرد على {replyTo.name}</span>
@@ -423,22 +623,17 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
               )}
 
               {recordingVoice ? (
-                <LiveVoiceRecorder
-                  onCancel={() => setRecordingVoice(false)}
-                  onSend={submitVoiceComment}
-                  placeholderLabel="رد صوتي على الفيديو..."
-                />
+                <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={submitVoiceComment} />
               ) : (
                 <ObsidianComposerPill
                   value={commentDraft}
                   onChange={setCommentDraft}
                   onSubmit={submitTextComment}
-                  placeholder={lang === 'ar' ? 'أضف تعليقًا أو سجل ردًا صوتيًا...' : 'Add comment or voice reply...'}
+                  placeholder={lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
                   extraEnd={
                     <button
                       type="button"
                       onClick={() => setRecordingVoice(true)}
-                      title="رد صوتي"
                       className="w-8 h-8 rounded-full flex items-center justify-center text-[#71717A] hover:text-white cursor-pointer shrink-0"
                     >
                       <Mic className="w-[18px] h-[18px]" strokeWidth={1.8} />
@@ -452,7 +647,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
         </div>
       )}
 
-      {/* Minimal Upload Reel Modal */}
+      {/* Upload Reel Modal */}
       {uploadOpen && (
         <div onClick={() => setUploadOpen(false)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <form
@@ -461,7 +656,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
             className="w-full max-w-[400px] rounded-2xl bg-[#070709] border border-white/[0.12] p-5 space-y-3"
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
-              <span className="text-sm font-semibold text-white">نشر ريلز جديد</span>
+              <span className="text-sm font-semibold text-white">نشر ريلز</span>
               <button type="button" onClick={() => setUploadOpen(false)} className="text-[#71717A] hover:text-white cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
@@ -469,13 +664,13 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
             <input
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
-              placeholder="عنوان الفيديو..."
+              placeholder="العنوان..."
               className="w-full h-11 rounded-xl bg-black border border-white/[0.1] px-3.5 text-xs text-white outline-none"
             />
             <input
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
-              placeholder="الوسوم (مثال: #القاهرة #سينما)"
+              placeholder="الوسوم..."
               className="w-full h-11 rounded-xl bg-black border border-white/[0.1] px-3.5 text-xs text-white outline-none"
             />
             <input ref={fileRef} type="file" accept="video/*" onChange={handleVideoUploadFile} className="hidden" />
@@ -485,7 +680,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                 onClick={() => fileRef.current?.click()}
                 className="px-3.5 py-2 rounded-full bg-white/[0.06] border border-white/[0.1] text-xs text-[#E4E4E7] cursor-pointer"
               >
-                {uploadedVideoUrl ? 'تم إرفاق الفيديو ✓' : 'اختيار ملف فيديو'}
+                {uploadedVideoUrl ? 'تم إرفاق الفيديو ✓' : 'اختيار فيديو'}
               </button>
               <ChromeArrowButton type="submit" disabled={!newTitle.trim()} size={38} />
             </div>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Lang, NavTab, UserProfile } from './types';
 import { apiGet } from './lib/api';
+import { LayoutProvider } from './context/LayoutContext';
 import { AppShell } from './components/layout/AppShell';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { SocialView } from './components/social/SocialView';
@@ -8,7 +9,6 @@ import { ShortVideosView } from './components/videos/ShortVideosView';
 import { LiveView } from './components/live/LiveView';
 import { ChatView } from './components/chat/ChatView';
 import { AiView } from './components/ai/AiView';
-import { FinanceView } from './components/finance/FinanceView';
 import { ApiHubView } from './components/settings/ApiHubView';
 
 export function App() {
@@ -80,39 +80,38 @@ export function App() {
   }
 
   return (
-    <AppShell
-      user={currentUser}
-      allUsers={users}
-      activeTab={activeTab}
-      onSelectTab={setActiveTab}
-      lang={lang}
-      onToggleLang={() => setLang(l => (l === 'ar' ? 'en' : 'ar'))}
-      wsOnline={wsOnline}
-      onSwitchUser={(u) => setCurrentUser(u)}
-      onLogout={() => setCurrentUser(null)}
-    >
-      {activeTab === 'social' && (
-        <SocialView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
-      )}
-      {activeTab === 'videos' && (
-        <ShortVideosView user={currentUser} lang={lang} />
-      )}
-      {activeTab === 'live' && (
-        <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
-      )}
-      {activeTab === 'chat' && (
-        <ChatView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
-      )}
-      {activeTab === 'ai' && (
-        <AiView user={currentUser} lang={lang} />
-      )}
-      {activeTab === 'finance' && (
-        <FinanceView user={currentUser} lang={lang} />
-      )}
-      {activeTab === 'settings' && (
-        <ApiHubView lang={lang} />
-      )}
-    </AppShell>
+    <LayoutProvider activeTab={activeTab} onSelectTab={setActiveTab}>
+      <AppShell
+        user={currentUser}
+        allUsers={users}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        lang={lang}
+        onToggleLang={() => setLang(l => (l === 'ar' ? 'en' : 'ar'))}
+        wsOnline={wsOnline}
+        onSwitchUser={(u) => setCurrentUser(u)}
+        onLogout={() => setCurrentUser(null)}
+      >
+        {activeTab === 'social' && (
+          <SocialView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
+        )}
+        {activeTab === 'videos' && (
+          <ShortVideosView user={currentUser} lang={lang} />
+        )}
+        {activeTab === 'live' && (
+          <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
+        )}
+        {activeTab === 'chat' && (
+          <ChatView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
+        )}
+        {activeTab === 'ai' && (
+          <AiView user={currentUser} lang={lang} />
+        )}
+        {activeTab === 'settings' && (
+          <ApiHubView lang={lang} />
+        )}
+      </AppShell>
+    </LayoutProvider>
   );
 }
 

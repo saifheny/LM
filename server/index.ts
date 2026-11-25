@@ -60,7 +60,7 @@ function getUserOrNull(id: string) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'LM Super App Core v5', wsClients: wsClients.size });
+  res.json({ ok: true, service: 'LM Core v6', wsClients: wsClients.size });
 });
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -72,6 +72,91 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
     mimeType: req.file.mimetype,
     size: req.file.size,
   });
+});
+
+// ============================================================
+// INSTANT MESSAGE TRANSLATION (Cloud AI / Free Open Endpoint / Offline Fallback)
+// ============================================================
+const LANG_NAMES: Record<string, string> = {
+  ar: 'Arabic',
+  en: 'English',
+  fr: 'French',
+  es: 'Spanish',
+  de: 'German',
+  tr: 'Turkish',
+};
+
+const SEED_TRANSLATIONS: Record<string, Record<string, string>> = {
+  'Just finished color grading the sunset frame — sending it to you now.': {
+    ar: 'انتهيت للتو من تلوين لقطة الغروب — أرسلها لك الآن.',
+    fr: "Je viens de terminer l'étalonnage du coucher de soleil — je te l'envoie maintenant.",
+    es: 'Acabo de terminar la corrección de color del atardecer — te lo envío ahora.',
+    de: 'Ich bin gerade mit dem Color Grading des Sonnenuntergangs fertig — ich schicke es dir jetzt.',
+    tr: 'Gün batımı karesinin renk düzenlemesini yeni bitirdim — şimdi sana gönderiyorum.',
+  },
+  'Hey! Just finished testing the new release in New York — performance feels super fast and clean. Are we ready for tonight?': {
+    ar: 'أهلًا! انتهيت للتو من اختبار الإصدار الجديد في نيويورك — الأداء سريع جدًا ونظيف. هل نحن جاهزون لليلة؟',
+    fr: "Salut ! Je viens de tester la nouvelle version à New York — les performances sont ultra fluides. On est prêts pour ce soir ?",
+    es: '¡Hola! Acabo de probar la nueva versión en Nueva York — el rendimiento es súper rápido y limpio. ¿Listos para esta noche?',
+    de: 'Hey! Habe gerade das neue Release in New York getestet — extrem schnell und sauber. Bereit für heute Abend?',
+    tr: 'Selam! New York’ta yeni sürümü test etmeyi bitirdim — performans çok hızlı ve akıcı. Bu geceye hazır mıyız?',
+  },
+};
+
+app.post('/api/translate', async (req, res) => {
+  const { text, targetLang } = req.body as { text: string; targetLang: string };
+  const clean = (text || '').trim();
+  const lang = LANG_NAMES[targetLang] ? targetLang : 'ar';
+  if (!clean) return res.status(400).json({ ok: false, error: 'النص فارغ.' });
+
+  // 1. Check exact instant seed cache first for 0ms latency
+  if (SEED_TRANSLATIONS[clean]?.[lang]) {
+    return res.json({ ok: true, translated: SEED_TRANSLATIONS[clean][lang], targetLang: lang });
+  }
+
+  // 2. If Gemini API key is configured, translate natively with Gemini 3.5 Flash-Lite
+  const cfg = loadProviderConfig();
+  if (cfg.geminiApiKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: cfg.geminiApiKey });
+      const out = await ai.interactions.create({
+        model: 'gemini-3.5-flash-lite',
+        input: `Translate the following message naturally into ${LANG_NAMES[lang]}. Return ONLY the translated text without quotes or notes:\n\n${clean}`,
+      });
+      if (out.output_text?.trim()) {
+        return res.json({ ok: true, translated: out.output_text.trim(), targetLang: lang });
+      }
+    } catch {
+      // fall through to public open translation API
+    }
+  }
+
+  // 3. Free open-source Google Translate GTX endpoint (no key required)
+  try {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(lang)}&dt=t&q=${encodeURIComponent(clean)}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(4500) });
+    if (r.ok) {
+      const data = (await r.json()) as unknown[];
+      const chunks = Array.isArray(data[0]) ? (data[0] as Array<[string]>) : [];
+      const joined = chunks.map(c => c[0]).join('').trim();
+      if (joined) {
+        return res.json({ ok: true, translated: joined, targetLang: lang });
+      }
+    }
+  } catch {
+    // offline fallback below
+  }
+
+  // 4. Clean offline fallback if computer has no internet
+  const fallbackLabels: Record<string, string> = {
+    ar: `[ترجمة للعربية]: ${clean}`,
+    en: `[English Translation]: ${clean}`,
+    fr: `[Traduction FR]: ${clean}`,
+    es: `[Traducción ES]: ${clean}`,
+    de: `[Übersetzung DE]: ${clean}`,
+    tr: `[TR Çeviri]: ${clean}`,
+  };
+  return res.json({ ok: true, translated: fallbackLabels[lang] || clean, targetLang: lang });
 });
 
 // ============================================================
@@ -156,7 +241,7 @@ app.get('/api/search', (req, res) => {
 });
 
 // ============================================================
-// COMMUNITY HYBRID STREAM (X + Reddit: Upvotes, Polls, Nested Threads)
+// COMMUNITY FEED (Instagram Clean Flow + Voice & @LM AI Comments)
 // ============================================================
 app.get('/api/stories', (_req, res) => {
   const rows = db.prepare(`
@@ -250,14 +335,13 @@ app.get('/api/posts', (req, res) => {
 });
 
 app.post('/api/posts', (req, res) => {
-  const { userId, content, topic, mediaUrl, poll } = req.body as {
+  const { userId, content, mediaUrl, poll } = req.body as {
     userId: string;
     content: string;
-    topic?: string;
     mediaUrl?: string;
     poll?: { question: string; options: string[] } | null;
   };
-  if (!userId || !content?.trim()) return res.status(400).json({ ok: false, error: 'محتوى المنشور مطلوب.' });
+  if (!userId || (!content?.trim() && !mediaUrl)) return res.status(400).json({ ok: false, error: 'محتوى المنشور مطلوب.' });
   const id = `p_${uuid().slice(0, 8)}`;
   const urlsJson = mediaUrl ? JSON.stringify([mediaUrl]) : '[]';
 
@@ -274,8 +358,8 @@ app.post('/api/posts', (req, res) => {
 
   db.prepare(`
     INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, poll_json, score, likes_count, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 'الآن')
-  `).run(id, userId, topic || 'عام', content.trim(), mediaUrl || null, urlsJson, pollJson);
+    VALUES (?, ?, 'عام', ?, ?, ?, ?, 1, 1, 'الآن')
+  `).run(id, userId, (content || '').trim(), mediaUrl || null, urlsJson, pollJson);
 
   db.prepare('INSERT OR REPLACE INTO post_votes (post_id, user_id, vote) VALUES (?, ?, 1)').run(id, userId);
   broadcast('social:new_post', { id });
@@ -339,54 +423,81 @@ app.post('/api/posts/:id/repost', (req, res) => {
   res.json({ ok: true, sharesCount: Number(row?.shares_count || 0) });
 });
 
-app.post('/api/posts/:id/like', (req, res) => {
-  const { userId } = req.body as { userId: string };
-  const postId = req.params.id;
-  const existing = db.prepare('SELECT 1 FROM post_likes WHERE post_id = ? AND user_id = ?').get(postId, userId);
-  if (existing) {
-    db.prepare('DELETE FROM post_likes WHERE post_id = ? AND user_id = ?').run(postId, userId);
-    db.prepare('UPDATE posts SET likes_count = MAX(0, likes_count - 1) WHERE id = ?').run(postId);
-    res.json({ ok: true, liked: false });
-  } else {
-    db.prepare('INSERT INTO post_likes (post_id, user_id) VALUES (?, ?)').run(postId, userId);
-    db.prepare('UPDATE posts SET likes_count = likes_count + 1 WHERE id = ?').run(postId);
-    res.json({ ok: true, liked: true });
-  }
-});
-
 app.get('/api/posts/:id/comments', (req, res) => {
   const rows = db.prepare(`
     SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
-    FROM post_comments c JOIN users u ON c.user_id = u.id
+    FROM post_comments c LEFT JOIN users u ON c.user_id = u.id
     WHERE c.post_id = ? ORDER BY c.rowid ASC
   `).all(req.params.id) as Array<Record<string, unknown>>;
 
   res.json({
     ok: true,
-    comments: rows.map(r => ({
-      id: r.id,
-      postId: r.post_id,
-      userId: r.user_id,
-      parentId: r.parent_id ? String(r.parent_id) : null,
-      displayName: r.display_name,
-      username: r.username,
-      avatarColor: r.avatar_color,
-      avatarInitials: r.avatar_initials,
-      avatarUrl: r.avatar_url,
-      verified: Boolean(r.verified),
-      content: r.content,
-      createdAt: r.created_at,
-    })),
+    comments: rows.map(r => {
+      const isAi = r.user_id === 'lm_ai';
+      return {
+        id: r.id,
+        postId: r.post_id,
+        userId: r.user_id,
+        parentId: r.parent_id ? String(r.parent_id) : null,
+        displayName: isAi ? 'LM AI' : (r.display_name || 'مستخدم'),
+        username: isAi ? 'lm_ai' : (r.username || 'user'),
+        avatarColor: '#27272A',
+        avatarInitials: isAi ? 'AI' : (r.avatar_initials || 'LM'),
+        avatarUrl: isAi ? null : (r.avatar_url ? String(r.avatar_url) : null),
+        verified: isAi ? true : Boolean(r.verified),
+        isAi,
+        content: r.content || '',
+        audioUrl: r.audio_url ? String(r.audio_url) : null,
+        audioDurationSec: Number(r.audio_duration_sec || 6),
+        transcript: r.transcript ? String(r.transcript) : null,
+        createdAt: r.created_at,
+      };
+    }),
   });
 });
 
-app.post('/api/posts/:id/comments', (req, res) => {
-  const { userId, content, parentId } = req.body as { userId: string; content: string; parentId?: string | null };
-  if (!content?.trim()) return res.status(400).json({ ok: false, error: 'اكتب ردًا.' });
+app.post('/api/posts/:id/comments', async (req, res) => {
+  const { userId, content, parentId, audioUrl, audioDurationSec, transcript, invokeAi } = req.body as {
+    userId: string;
+    content?: string;
+    parentId?: string | null;
+    audioUrl?: string | null;
+    audioDurationSec?: number;
+    transcript?: string | null;
+    invokeAi?: boolean;
+  };
+  if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف ردًا.' });
+
   const id = `pc_${uuid().slice(0, 8)}`;
-  db.prepare('INSERT INTO post_comments (id, post_id, user_id, parent_id, content, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(id, req.params.id, userId, parentId || null, content.trim(), 'الآن');
+  db.prepare(`
+    INSERT INTO post_comments (id, post_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, req.params.id, userId, parentId || null, (content || '').trim(),
+    audioUrl || null, Number(audioDurationSec || 5), transcript || (audioUrl ? 'نص الرسالة الصوتية' : null), 'الآن'
+  );
   db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
+
+  // Summon LM AI directly inside community comments when invoked or tagged with @LM AI
+  const shouldCallAi = Boolean(invokeAi) || (content && /@(lm\s*ai|ai)/i.test(content));
+  if (shouldCallAi && content?.trim()) {
+    const postRow = db.prepare('SELECT content FROM posts WHERE id = ?').get(req.params.id) as { content?: string } | undefined;
+    const cleanQuestion = content.replace(/@(lm\s*ai|ai)/gi, '').trim() || 'اشرح هذا المنشور باختصار';
+    const aiOut = await runLmAi({
+      userId,
+      prompt: cleanQuestion,
+      source: 'social',
+      explicitUserConsent: true,
+      sharedContext: postRow?.content || undefined,
+    });
+    const aiId = `pc_${uuid().slice(0, 8)}`;
+    db.prepare(`
+      INSERT INTO post_comments (id, post_id, user_id, parent_id, content, created_at)
+      VALUES (?, ?, 'lm_ai', ?, ?, 'الآن')
+    `).run(aiId, req.params.id, id, aiOut.reply);
+    db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
+  }
+
   res.json({ ok: true, id });
 });
 
@@ -418,7 +529,7 @@ app.get('/api/videos', (req, res) => {
       title: r.title,
       description: r.description,
       tags: r.tags,
-      audioTitle: r.audio_title || 'الصوت الأصلي — LM Studio',
+      audioTitle: r.audio_title || 'الصوت الأصلي',
       videoUrl: r.video_url,
       posterUrl: r.poster_url,
       scenePreset: r.scene_preset,
@@ -453,14 +564,17 @@ app.post('/api/videos', (req, res) => {
 });
 
 app.post('/api/videos/:id/like', (req, res) => {
-  const { userId } = req.body as { userId: string };
+  const { userId, forceLike } = req.body as { userId: string; forceLike?: boolean };
   const exists = db.prepare('SELECT 1 FROM video_likes WHERE video_id = ? AND user_id = ?').get(req.params.id, userId);
-  if (exists) {
+  if (exists && !forceLike) {
     db.prepare('DELETE FROM video_likes WHERE video_id = ? AND user_id = ?').run(req.params.id, userId);
     db.prepare('UPDATE short_videos SET likes_count = MAX(0, likes_count - 1) WHERE id = ?').run(req.params.id);
     res.json({ ok: true, liked: false });
-  } else {
+  } else if (!exists) {
     db.prepare('INSERT INTO video_likes (video_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
+    db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
+    res.json({ ok: true, liked: true });
+  } else {
     db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
     res.json({ ok: true, liked: true });
   }
@@ -522,14 +636,14 @@ app.post('/api/videos/:id/comments', (req, res) => {
     audioDurationSec?: number;
     transcript?: string | null;
   };
-  if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف تعليقًا نصيًا أو صوتيًا.' });
+  if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف تعليقًا.' });
   const id = `vc_${uuid().slice(0, 8)}`;
   db.prepare(`
     INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, req.params.id, userId, parentId || null, (content || '').trim(),
-    audioUrl || null, Number(audioDurationSec || 5), transcript || (audioUrl ? 'رد صوتي مسجّل' : null), 'الآن'
+    audioUrl || null, Number(audioDurationSec || 5), transcript || (audioUrl ? 'نص الرسالة الصوتية' : null), 'الآن'
   );
   db.prepare('UPDATE short_videos SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
   res.json({ ok: true, id });
@@ -554,7 +668,7 @@ app.post('/api/video-comments/:commentId/like', (req, res) => {
 });
 
 // ============================================================
-// MONOCHROME ENCRYPTED MESSAGING + TELEGRAM REACTIONS
+// MONOCHROME MESSAGING
 // ============================================================
 app.get('/api/conversations', (_req, res) => {
   const convs = db.prepare('SELECT * FROM conversations ORDER BY is_pinned DESC, created_at DESC').all() as Array<Record<string, unknown>>;
@@ -593,7 +707,7 @@ app.post('/api/conversations', (req, res) => {
   db.prepare(`
     INSERT INTO conversations (id, type, folder, title, description, avatar_color, is_encrypted, member_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, type || 'group', folder, title.trim(), description || 'مساحة جديدة على LM', '#27272A', type === 'community' ? 0 : 1, type === 'community' ? 120 : 5);
+  `).run(id, type || 'group', folder, title.trim(), description || 'مساحة جديدة', '#27272A', 1, type === 'community' ? 120 : 5);
   res.json({ ok: true, id });
 });
 
@@ -667,7 +781,7 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null,
-    transcript || (msgType === 'audio' ? 'رسالة صوتية مسجّلة.' : null),
+    transcript || (msgType === 'audio' ? 'نص الرسالة الصوتية' : null),
     isSpoiler ? 1 : 0,
     replyToId || null, replySender || null, replyText || null, nowStr
   );
@@ -678,7 +792,7 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   if (invokeAi) {
     const aiResult = await runLmAi({
       userId: senderId,
-      prompt: content.replace(/@LM\s*AI/gi, '').trim() || 'لخص المحتوى المشارك.',
+      prompt: content.replace(/@LM\s*AI/gi, '').trim() || 'لخص المحتوى.',
       source: 'chat',
       explicitUserConsent: Boolean(sharedSnippet),
       sharedContext: sharedSnippet,
@@ -800,51 +914,6 @@ app.post('/api/ai/chat', async (req, res) => {
   res.json(result);
 });
 
-app.get('/api/ai/security-logs', (_req, res) => {
-  const logs = db.prepare('SELECT * FROM ai_security_logs ORDER BY created_at DESC LIMIT 30').all();
-  res.json({ ok: true, logs });
-});
-
-// ============================================================
-// FINANCE SANDBOX & TRADINGVIEW DATA
-// ============================================================
-app.get('/api/finance/ledger/:userId', (req, res) => {
-  const entries = db.prepare('SELECT * FROM ledger_entries WHERE user_id = ? OR credit_account LIKE ? ORDER BY created_at DESC LIMIT 30')
-    .all(req.params.userId, `%${req.params.userId}%`);
-  res.json({ ok: true, entries, mode: 'SANDBOX_DESIGN_ONLY' });
-});
-
-app.get('/api/finance/markets', (_req, res) => {
-  const makeSeries = (startPrice: number, drift: number, vol: number, days = 90) => {
-    const out = [];
-    let price = startPrice;
-    const baseDate = new Date('2026-08-25T00:00:00Z');
-    for (let i = 0; i < days; i++) {
-      const d = new Date(baseDate.getTime() + i * 86400000);
-      const seed = Math.sin(i * 1.37 + startPrice) * 0.5 + Math.cos(i * 0.63) * 0.5;
-      const open = Number(price.toFixed(2));
-      const change = price * (drift + seed * vol);
-      const close = Number(Math.max(1, open + change).toFixed(2));
-      const high = Number((Math.max(open, close) * (1 + Math.abs(seed) * vol * 0.6)).toFixed(2));
-      const low = Number((Math.min(open, close) * (1 - Math.abs(seed) * vol * 0.5)).toFixed(2));
-      price = close;
-      out.push({ time: d.toISOString().slice(0, 10), open, high, low, close });
-    }
-    return out;
-  };
-  res.json({
-    ok: true,
-    assets: [
-      { symbol: 'EGX30', nameAr: 'مؤشر البورصة المصرية EGX30', nameEn: 'Egypt EGX30 Index', category: 'stocks', currency: 'EGP', series: makeSeries(30450, 0.0018, 0.014) },
-      { symbol: 'COMI.CA', nameAr: 'البنك التجاري الدولي CIB', nameEn: 'CIB Egypt', category: 'stocks', currency: 'EGP', series: makeSeries(81.5, 0.0014, 0.018) },
-      { symbol: 'AAPL', nameAr: 'آبل Apple Inc.', nameEn: 'Apple Inc.', category: 'stocks', currency: 'USD', series: makeSeries(226.4, 0.0015, 0.015) },
-      { symbol: 'NVDA', nameAr: 'إنفيديا NVIDIA', nameEn: 'NVIDIA Corp.', category: 'stocks', currency: 'USD', series: makeSeries(138.2, 0.0024, 0.026) },
-      { symbol: 'BTC', nameAr: 'بيتكوين Bitcoin', nameEn: 'Bitcoin', category: 'crypto', currency: 'USD', series: makeSeries(89400, 0.0021, 0.032) },
-      { symbol: 'ETH', nameAr: 'إيثيريوم Ethereum', nameEn: 'Ethereum', category: 'crypto', currency: 'USD', series: makeSeries(3240, 0.0016, 0.035) },
-    ],
-  });
-});
-
 // ============================================================
 // API HUB
 // ============================================================
@@ -912,15 +981,26 @@ app.post('/api/providers/test', async (req, res) => {
       if (!cfg.geminiApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح Gemini API أولًا.' });
       const ai = new GoogleGenAI({ apiKey: cfg.geminiApiKey });
       const out = await ai.interactions.create({ model: 'gemini-3.5-flash-lite', input: 'Reply OK' });
-      return res.json({ ok: true, latencyMs: Date.now() - start, detail: `Gemini متصل: ${(out.output_text || 'OK').slice(0, 40)}` });
+      return res.json({ ok: true, latencyMs: Date.now() - start, detail: `Gemini متصل (${(out.output_text || 'OK').slice(0, 20)})` });
+    }
+    if (target === 'openai') {
+      if (!cfg.openaiApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح OpenAI API أولًا.' });
+      const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${cfg.openaiApiKey}` }, signal: AbortSignal.timeout(3500) });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'OpenAI متصل بنجاح' : `HTTP ${r.status}` });
+    }
+    if (target === 'openrouter') {
+      if (!cfg.openrouterApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح OpenRouter API أولًا.' });
+      const r = await fetch('https://openrouter.ai/api/v1/models', { headers: { Authorization: `Bearer ${cfg.openrouterApiKey}` }, signal: AbortSignal.timeout(3500) });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'OpenRouter متصل بنجاح' : `HTTP ${r.status}` });
+    }
+    if (target === 'groq') {
+      if (!cfg.groqApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح Groq API أولًا.' });
+      const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${cfg.groqApiKey}` }, signal: AbortSignal.timeout(3500) });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Groq متصل بنجاح' : `HTTP ${r.status}` });
     }
     if (target === 'meilisearch' && cfg.meilisearchUrl) {
       const r = await fetch(`${cfg.meilisearchUrl.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(3000) });
       return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Meilisearch متصل' : `HTTP ${r.status}` });
-    }
-    if (target === 'blnk' && cfg.blnkUrl) {
-      const r = await fetch(`${cfg.blnkUrl.replace(/\/$/, '')}/`, { signal: AbortSignal.timeout(3000) });
-      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Blnk متصل' : `HTTP ${r.status}` });
     }
     if (target === 'matrix' && cfg.matrixUrl) {
       const r = await fetch(`${cfg.matrixUrl.replace(/\/$/, '')}/_matrix/client/versions`, { signal: AbortSignal.timeout(3000) });
@@ -942,5 +1022,5 @@ if (fs.existsSync(distDir)) {
 
 const PORT = Number(process.env.PORT || 4000);
 server.listen(PORT, () => {
-  console.log(`\n  ✦ LM Super App v5 running at http://localhost:${PORT}\n`);
+  console.log(`\n  ✦ LM Core v6 running at http://localhost:${PORT}\n`);
 });
