@@ -771,7 +771,7 @@ export function AiView({ user, lang }: AiViewProps) {
           onClick={e => e.stopPropagation()}
           className="pointer-events-none absolute bottom-4 inset-x-3.5 md:inset-x-6 z-20 flex justify-center"
         >
-          <div className="pointer-events-auto w-full max-w-[720px] space-y-2">
+          <div className="pointer-events-auto w-full max-w-[780px] space-y-2">
             {attachedFile && (
               <div className="w-fit px-3 py-1 rounded-full bg-[#15151C] border border-white/[0.12] flex items-center gap-2 text-xs text-white">
                 <FileText className="w-3.5 h-3.5 text-[#A1A1AA]" />
@@ -784,7 +784,7 @@ export function AiView({ user, lang }: AiViewProps) {
 
             <input ref={fileInputRef} type="file" onChange={handleAttach} className="hidden" />
 
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-2.5">
               <SplitComposerOrb onAttach={() => fileInputRef.current?.click()} showNavOption />
 
               <div className="flex-1 min-w-0">
@@ -797,7 +797,7 @@ export function AiView({ user, lang }: AiViewProps) {
                   }}
                   onFocus={() => setComposerFocused(true)}
                   onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
-                  placeholder={lang === 'ar' ? `اسأل ${activeCompany.name}` : `Ask ${activeCompany.name}`}
+                  placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Message...'}
                   disabled={!prompt.trim() || loading}
                 />
               </div>

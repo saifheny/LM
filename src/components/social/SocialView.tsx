@@ -6,7 +6,6 @@ import {
   ArrowBigDown,
   MessageCircle,
   Repeat2,
-  Sparkles,
   Image as ImageIcon,
   BarChart2,
   X,
@@ -19,6 +18,9 @@ import {
   Download,
   Bookmark,
   Share2,
+  Maximize2,
+  Minimize2,
+  Plus,
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination } from 'swiper/modules';
@@ -27,7 +29,7 @@ import 'swiper/css/pagination';
 
 import { Lang, PostCommentItem, PostPoll, SocialPost, StoryItem, UserProfile } from '../../types';
 import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
-import { ChromeArrowButton } from '../shared/HardwareUI';
+import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { NavAiIcon } from '../shared/Icons2026Pro';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
@@ -49,24 +51,25 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [activeStory, setActiveStory] = useState<StoryItem | null>(null);
 
-  // Full-Screen Interactive Lightbox State (Single-Tap on Photo!)
+  // Full-Screen Interactive Lightbox State
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; caption: string; author: string } | null>(null);
   const [lightboxZoomed, setLightboxZoomed] = useState(false);
 
-  // Single-Tap vs Double-Tap timer map per post
   const tapTimersRef = useRef<Record<string, number>>({});
   const lastTapMsRef = useRef<Record<string, number>>({});
 
-  // Composer state (clean Instagram/X inline on #000000)
+  // Post Composer State (Supports up to 4 images + Full-Page Expand Mode!)
   const [draft, setDraft] = useState('');
-  const [uploadedMedia, setUploadedMedia] = useState<string | null>(null);
+  const [composerActive, setComposerActive] = useState(false);
+  const [composerExpanded, setComposerExpanded] = useState(false);
+  const [uploadedMediaUrls, setUploadedMediaUrls] = useState<string[]>([]);
   const [showPollBuilder, setShowPollBuilder] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOpts, setPollOpts] = useState(['', '']);
   const [publishing, setPublishing] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Comments + Voice Replies + @LM AI inside Comments
+  // Comments + In-Composer Voice Replies + AI Summon
   const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
   const [commentsByPost, setCommentsByPost] = useState<Record<string, PostCommentItem[]>>({});
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
@@ -91,9 +94,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   }, [loadFeed]);
 
   useEffect(() => {
-    if (lastWsEvent?.event === 'social:new_post') {
-      loadFeed();
-    }
+    if (lastWsEvent?.event === 'social:new_post') loadFeed();
   }, [lastWsEvent, loadFeed]);
 
   useEffect(() => {
@@ -102,6 +103,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
         setLightbox(null);
         setLightboxZoomed(false);
         setActiveStory(null);
+        setComposerExpanded(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -109,16 +111,29 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   }, []);
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const up = await apiUploadFile(f);
-    setUploadedMedia(up.url);
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const remainingSlots = Math.max(0, 4 - uploadedMediaUrls.length);
+    const slice = files.slice(0, remainingSlots);
+    const urls: string[] = [];
+    for (const f of slice) {
+      const up = await apiUploadFile(f);
+      urls.push(up.url);
+    }
+    if (urls.length > 0) {
+      setUploadedMediaUrls(prev => [...prev, ...urls].slice(0, 4));
+      setComposerActive(true);
+    }
     e.target.value = '';
+  }
+
+  function removeUploadedImg(idx: number) {
+    setUploadedMediaUrls(prev => prev.filter((_, i) => i !== idx));
   }
 
   async function submitPost(e: React.FormEvent) {
     e.preventDefault();
-    if (!draft.trim() && !uploadedMedia) return;
+    if (!draft.trim() && uploadedMediaUrls.length === 0) return;
     setPublishing(true);
     try {
       const validPoll =
@@ -129,14 +144,16 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
       await apiPost('/api/posts', {
         userId: user.id,
         content: draft.trim() || pollQuestion.trim(),
-        mediaUrl: uploadedMedia,
+        mediaUrls: uploadedMediaUrls,
         poll: validPoll,
       });
       setDraft('');
-      setUploadedMedia(null);
+      setUploadedMediaUrls([]);
       setShowPollBuilder(false);
       setPollQuestion('');
       setPollOpts(['', '']);
+      setComposerExpanded(false);
+      setComposerActive(false);
       await loadFeed();
     } finally {
       setPublishing(false);
@@ -145,7 +162,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
 
   async function handleVote(postId: string, direction: 1 | -1, forceUpvote = false) {
     const target = posts.find(p => p.id === postId);
-    if (forceUpvote && target?.myVote === 1) return; // already upvoted on double-tap
+    if (forceUpvote && target?.myVote === 1) return;
 
     setPosts(prev =>
       prev.map(p => {
@@ -162,11 +179,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     setPosts(prev => prev.map(p => (p.id === postId ? { ...p, score: res.score, myVote: res.myVote } : p)));
   }
 
-  /**
-   * Smart Single-Tap vs Double-Tap handler on Post Photos:
-   * - Double-Tap (< 260ms): instantly upvotes/likes the post!
-   * - Single-Tap: opens the full-screen Lightbox viewer with zoom & carousel controls!
-   */
   function handleMediaTap(post: SocialPost, mediaIndex: number) {
     const now = Date.now();
     const prev = lastTapMsRef.current[post.id] || 0;
@@ -226,7 +238,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     try {
       await apiPost(`/api/posts/${postId}/comments`, {
         userId: user.id,
-        content: text,
+        content: text.replace(/^(\/ai|-ai|\/)\s*/i, '').trim() || text,
         parentId: parent?.id || null,
         invokeAi,
       });
@@ -252,7 +264,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
       parentId: parent?.id || null,
       audioUrl: up.url,
       audioDurationSec: durationSec,
-      transcript: 'رسالة صوتية مسجلة في التعليقات.',
+      transcript: 'رسالة صوتية.',
     });
     setReplyParentByPost(prev => ({ ...prev, [postId]: null }));
     const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
@@ -260,13 +272,15 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: res.comments.length } : p)));
   }
 
+  const showExpandIcon = composerActive || draft.length > 0 || uploadedMediaUrls.length > 0;
+
   return (
     <div className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]">
-      {/* Pure Instagram-Inspired Stream on Refined Carbon #0A0A0C (Zero Categories, Zero Filter Tabs, Zero Cards) */}
-      <div className="max-w-[600px] mx-auto min-h-screen border-x border-white/[0.07]">
-        {/* Stories Row */}
+      {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop!) */}
+      <div className="max-w-[620px] mx-auto min-h-screen px-2 sm:px-0">
+        {/* Stories Strip */}
         {stories.length > 0 && (
-          <div className="px-4 py-4 border-b border-white/[0.08] flex items-center gap-4 overflow-x-auto no-scrollbar">
+          <div className="px-4 py-4 border-b border-white/[0.07] flex items-center gap-4 overflow-x-auto no-scrollbar">
             {stories.map(st => (
               <button
                 key={st.id}
@@ -283,38 +297,72 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
           </div>
         )}
 
-        {/* Minimal Inline Post Composer */}
-        <form onSubmit={submitPost} className="px-4 py-3.5 border-b border-white/[0.08] flex gap-3">
+        {/* Hidden Multi-Image File Input (Up to 4 Photos!) */}
+        <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" />
+
+        {/* Inline Post Composer with Expand-to-Full-Page Trigger */}
+        <form onSubmit={submitPost} className="px-4 py-4 border-b border-white/[0.07] flex gap-3 relative">
           <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={38} />
           <div className="flex-1 min-w-0">
-            <textarea
-              rows={2}
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              placeholder={lang === 'ar' ? 'شارك لحظة أو فكرة...' : 'Share something...'}
-              className="w-full bg-transparent resize-none text-[15px] text-[#F5F5F7] placeholder:text-[#52525B] outline-none leading-relaxed"
-            />
+            {/* Top Row with Expand Icon when Typing / Active */}
+            <div className="flex items-start gap-2">
+              <textarea
+                rows={2}
+                value={draft}
+                onFocus={() => setComposerActive(true)}
+                onChange={e => {
+                  setDraft(e.target.value);
+                  setComposerActive(true);
+                }}
+                placeholder={lang === 'ar' ? 'شارك لحظة أو فكرة...' : 'Share something...'}
+                className="flex-1 bg-transparent resize-none text-[15px] text-[#F2F2F5] placeholder:text-[#63636C] outline-none leading-relaxed"
+              />
 
-            {uploadedMedia && (
-              <div className="relative mt-2 rounded-2xl overflow-hidden border border-white/[0.09]">
-                <img src={uploadedMedia} alt="" className="w-full max-h-[280px] object-cover" />
+              {showExpandIcon && (
                 <button
                   type="button"
-                  onClick={() => setUploadedMedia(null)}
-                  className="absolute top-2 end-2 w-7 h-7 rounded-full bg-black/80 border border-white/15 text-white flex items-center justify-center cursor-pointer"
+                  onClick={() => setComposerExpanded(true)}
+                  title="توسيع لصفحة كاملة"
+                  className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-[#C4C4CC] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <Maximize2 className="w-3.5 h-3.5" />
                 </button>
+              )}
+            </div>
+
+            {/* Inline Preview of Up to 4 Selected Photos */}
+            {uploadedMediaUrls.length > 0 && (
+              <div
+                className={`mt-2.5 grid gap-1.5 ${
+                  uploadedMediaUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2'
+                }`}
+              >
+                {uploadedMediaUrls.map((url, idx) => (
+                  <div key={idx} className="relative rounded-2xl overflow-hidden border border-white/[0.09] bg-[#131318]">
+                    <img
+                      src={url}
+                      alt=""
+                      className={`w-full object-cover block ${uploadedMediaUrls.length === 1 ? 'max-h-[280px]' : 'h-[150px]'}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeUploadedImg(idx)}
+                      className="absolute top-2 end-2 w-6 h-6 rounded-full bg-black/80 border border-white/15 text-white flex items-center justify-center cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
             {showPollBuilder && (
-              <div className="mt-2.5 pt-2.5 border-t border-white/[0.08] space-y-2">
+              <div className="mt-2.5 pt-2.5 border-t border-white/[0.07] space-y-2">
                 <input
                   value={pollQuestion}
                   onChange={e => setPollQuestion(e.target.value)}
                   placeholder="سؤال الاستطلاع..."
-                  className="w-full h-9 rounded-lg bg-[#09090B] border border-white/[0.09] px-3 text-xs text-white placeholder:text-[#52525B] outline-none"
+                  className="w-full h-9 rounded-xl bg-[#131318] border border-white/[0.09] px-3 text-xs text-white placeholder:text-[#585860] outline-none"
                 />
                 {pollOpts.map((opt, idx) => (
                   <input
@@ -326,7 +374,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                       setPollOpts(next);
                     }}
                     placeholder={`الخيار ${idx + 1}`}
-                    className="w-full h-8 rounded-lg bg-[#09090B] border border-white/[0.08] px-3 text-xs text-white placeholder:text-[#52525B] outline-none"
+                    className="w-full h-8 rounded-xl bg-[#131318] border border-white/[0.08] px-3 text-xs text-white placeholder:text-[#585860] outline-none"
                   />
                 ))}
                 {pollOpts.length < 4 && (
@@ -342,15 +390,19 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
             )}
 
             <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <input ref={fileRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
+                  disabled={uploadedMediaUrls.length >= 4}
                   onClick={() => fileRef.current?.click()}
-                  className="w-8 h-8 rounded-full hover:bg-white/[0.06] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
+                  title="إضافة صور (حتى 4)"
+                  className="w-8 h-8 rounded-full hover:bg-white/[0.06] text-[#8E8E93] hover:text-white disabled:opacity-35 flex items-center justify-center cursor-pointer"
                 >
                   <ImageIcon className="w-4 h-4" strokeWidth={1.8} />
                 </button>
+                {uploadedMediaUrls.length > 0 && (
+                  <span className="text-[11px] font-mono-num text-[#7A7A85]">{uploadedMediaUrls.length}/4</span>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowPollBuilder(v => !v)}
@@ -362,13 +414,17 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                 </button>
               </div>
 
-              <ChromeArrowButton type="submit" disabled={publishing || (!draft.trim() && !uploadedMedia)} size={36} />
+              <ChromeArrowButton
+                type="submit"
+                disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0)}
+                size={36}
+              />
             </div>
           </div>
         </form>
 
-        {/* Continuous Clean Feed */}
-        <div className="divide-y divide-white/[0.08]">
+        {/* Continuous Borderless Feed */}
+        <div className="divide-y divide-white/[0.07]">
           {posts.map(post => {
             const isThreadOpen = Boolean(openThreads[post.id]);
             const postComments = commentsByPost[post.id] || [];
@@ -376,9 +432,11 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
             const getReplies = (parentId: string) => postComments.filter(c => c.parentId === parentId);
             const totalPollVotes = post.poll ? post.poll.options.reduce((acc, o) => acc + o.votes, 0) : 0;
             const aiMode = Boolean(replyAiModeByPost[post.id]);
+            const commentText = replyDrafts[post.id] || '';
+            const hasCommentText = commentText.trim().length > 0;
 
             return (
-              <article key={post.id} className="px-4 py-4">
+              <article key={post.id} className="px-4 py-5">
                 <div className="flex gap-3">
                   <div className="flex flex-col items-center">
                     <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
@@ -386,26 +444,24 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    {/* Author Row */}
                     <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                      <span className="text-[14px] font-semibold text-[#F5F5F7] truncate">{post.displayName}</span>
+                      <span className="text-[14px] font-semibold text-[#F2F2F5] truncate">{post.displayName}</span>
                       {post.verified && <VerifiedIcon />}
-                      <span className="text-xs text-[#71717A] font-mono-num">@{post.username}</span>
-                      <span className="text-[#52525B]">·</span>
-                      <span className="text-xs text-[#71717A]">{post.createdAt}</span>
+                      <span className="text-xs text-[#7A7A85] font-mono-num">@{post.username}</span>
+                      <span className="text-[#585860]">·</span>
+                      <span className="text-xs text-[#7A7A85]">{post.createdAt}</span>
                     </div>
 
-                    {/* Text Body (Double-Click to Upvote!) */}
                     {post.content && (
                       <p
                         onDoubleClick={() => handleVote(post.id, 1, true)}
-                        className="mt-1.5 text-[15px] text-[#F5F5F7] leading-[1.6] whitespace-pre-wrap select-text"
+                        className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
                       >
                         {post.content}
                       </p>
                     )}
 
-                    {/* Media: Single-Tap opens Lightbox Viewer | Double-Tap triggers Upvote + Clean Visual Pulse! */}
+                    {/* Media: Single-Tap opens Lightbox | Double-Tap triggers Upvote + Pulse */}
                     {post.mediaUrls.length > 0 && (
                       <div className="relative mt-3 rounded-2xl overflow-hidden border border-white/[0.08] bg-[#121216]">
                         {post.mediaUrls.length === 1 ? (
@@ -439,7 +495,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                       </div>
                     )}
 
-                    {/* Poll */}
                     {post.poll && (
                       <div className="mt-3 space-y-2">
                         <div className="text-[13.5px] font-medium text-[#E4E4E7]">{post.poll.question}</div>
@@ -466,14 +521,13 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                             </button>
                           );
                         })}
-                        <div className="text-[11px] text-[#71717A] font-mono-num">{formatCount(totalPollVotes)} صوت</div>
+                        <div className="text-[11px] text-[#7A7A85] font-mono-num">{formatCount(totalPollVotes)} صوت</div>
                       </div>
                     )}
 
-                    {/* Clean Action Bar */}
+                    {/* Action Row */}
                     <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
                       <div className="flex items-center gap-5">
-                        {/* Upvote / Downvote */}
                         <div className="inline-flex items-center rounded-full bg-[#131318] border border-white/[0.08]">
                           <button
                             type="button"
@@ -498,7 +552,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                           </button>
                         </div>
 
-                        {/* Comments Toggle */}
                         <button
                           type="button"
                           onClick={() => toggleThread(post.id)}
@@ -510,7 +563,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                           <span className="font-mono-num">{formatCount(post.commentsCount)}</span>
                         </button>
 
-                        {/* Repost */}
                         <button
                           type="button"
                           onClick={() => handleRepost(post.id)}
@@ -543,7 +595,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                       </div>
                     </div>
 
-                    {/* Threaded Comments with Voice Replies + In-Thread @LM AI! */}
+                    {/* Threaded Comments with In-Composer Voice Button (Exact Chat Morphing!) + AI Summon */}
                     {isThreadOpen && (
                       <div className="mt-3.5 pt-3 border-t border-white/[0.08] space-y-3.5">
                         {rootComments.map(c => {
@@ -554,13 +606,13 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                 <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={28} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 text-xs">
-                                    <span className="font-semibold text-[#F5F5F7]">{c.displayName}</span>
+                                    <span className="font-semibold text-[#F2F2F5]">{c.displayName}</span>
                                     {c.verified && <VerifiedIcon />}
-                                    <span className="text-[#71717A]">· {c.createdAt}</span>
+                                    <span className="text-[#7A7A85]">· {c.createdAt}</span>
                                   </div>
 
                                   {c.audioUrl ? (
-                                    <div className="mt-1.5 p-2.5 rounded-2xl bg-[#0D0D10] border border-white/[0.08] max-w-[300px]">
+                                    <div className="mt-1.5 p-2.5 rounded-2xl bg-[#15151B] border border-white/[0.08] max-w-[300px]">
                                       <SmartVoicePill url={c.audioUrl} transcript={c.transcript} compact />
                                     </div>
                                   ) : (
@@ -577,7 +629,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                         [post.id]: { id: c.id, name: c.displayName },
                                       }))
                                     }
-                                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#71717A] hover:text-white cursor-pointer"
+                                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
                                   >
                                     <CornerDownLeft className="w-3 h-3" />
                                     <span>رد</span>
@@ -585,7 +637,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                 </div>
                               </div>
 
-                              {/* Nested Replies (Including @LM AI responses!) */}
                               {replies.length > 0 && (
                                 <div className="ms-3.5 ps-3.5 border-s border-white/[0.12] space-y-2.5">
                                   {replies.map(rep => (
@@ -593,14 +644,14 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                       <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={24} />
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-1.5 text-[11.5px]">
-                                          <span className="font-semibold text-[#F5F5F7] flex items-center gap-1">
-                                            {rep.isAi && <Sparkles className="w-3 h-3" />}
+                                          <span className="font-semibold text-[#F2F2F5] flex items-center gap-1">
+                                            {rep.isAi && <NavAiIcon active className="w-3 h-3" />}
                                             {rep.displayName}
                                           </span>
-                                          <span className="text-[#71717A]">· {rep.createdAt}</span>
+                                          <span className="text-[#7A7A85]">· {rep.createdAt}</span>
                                         </div>
                                         {rep.audioUrl ? (
-                                          <div className="mt-1 p-2 rounded-2xl bg-[#0D0D10] border border-white/[0.08] max-w-[280px]">
+                                          <div className="mt-1 p-2 rounded-2xl bg-[#15151B] border border-white/[0.08] max-w-[280px]">
                                             <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} compact />
                                           </div>
                                         ) : (
@@ -617,7 +668,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                           );
                         })}
 
-                        {/* Comment Composer: Text + @LM AI Summon + Voice Reply */}
+                        {/* Unified Comment Composer: Exact Chat Behavior (Mic inside the action button when empty -> Chrome ↑ Send when typing!) */}
                         <div className="pt-1">
                           {replyParentByPost[post.id] && (
                             <div className="mb-1.5 flex items-center justify-between text-[11px] text-[#8E8E93] px-2">
@@ -638,40 +689,44 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                               onSend={(file, sec) => submitVoiceComment(post.id, file, sec)}
                             />
                           ) : (
-                            <form
+                            <ObsidianComposerPill
+                              value={commentText}
+                              onChange={v => setReplyDrafts(prev => ({ ...prev, [post.id]: v }))}
                               onSubmit={e => submitComment(post.id, e)}
-                              className="flex items-center gap-1.5 rounded-full bg-[#070709] border border-white/[0.1] ps-3.5 pe-1 py-1"
-                            >
-                              <input
-                                value={replyDrafts[post.id] || ''}
-                                onChange={e => setReplyDrafts(prev => ({ ...prev, [post.id]: e.target.value }))}
-                                placeholder={aiMode ? '@LM AI اسأله عن المنشور أو أي شيء...' : 'أضف تعليقًا أو اكتب @LM AI...'}
-                                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#52525B] outline-none min-w-0"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setReplyAiModeByPost(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
-                                title="استدعاء LM AI في التعليقات"
-                                className={`w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
-                                  aiMode ? 'bg-white text-black' : 'text-[#7A7A85] hover:text-white'
-                                }`}
-                              >
-                                <NavAiIcon active={aiMode} className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setRecordingPostId(post.id)}
-                                title="رد صوتي"
-                                className="w-7 h-7 rounded-full text-[#71717A] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
-                              >
-                                <Mic className="w-3.5 h-3.5" />
-                              </button>
-                              <ChromeArrowButton
-                                type="submit"
-                                disabled={submittingCommentPost === post.id || !(replyDrafts[post.id] || '').trim()}
-                                size={30}
-                              />
-                            </form>
+                              placeholder={aiMode ? 'اسأل الذكاء الاصطناعي...' : 'أضف تعليقًا...'}
+                              extraEnd={
+                                <button
+                                  type="button"
+                                  onClick={() => setReplyAiModeByPost(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
+                                  title="استدعاء الذكاء الاصطناعي"
+                                  className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+                                    aiMode ? 'bg-white text-black' : 'text-[#7A7A85] hover:text-white'
+                                  }`}
+                                >
+                                  <NavAiIcon active={aiMode} className="w-[17px] h-[17px]" />
+                                </button>
+                              }
+                              customAction={
+                                hasCommentText ? (
+                                  <ChromeArrowButton
+                                    type="submit"
+                                    disabled={submittingCommentPost === post.id}
+                                    size={36}
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRecordingPostId(post.id)}
+                                    title="رد صوتي"
+                                    className="chrome-rim-btn w-[36px] h-[36px] shrink-0 cursor-pointer"
+                                  >
+                                    <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
+                                      <Mic className="w-[16px] h-[16px]" strokeWidth={1.9} />
+                                    </span>
+                                  </button>
+                                )
+                              }
+                            />
                           )}
                         </div>
                       </div>
@@ -684,7 +739,142 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
         </div>
       </div>
 
-      {/* Full-Screen Interactive Lightbox Image Viewer (Single-Tap on Photo) */}
+      {/* FULL-PAGE EXPANDED COMPOSER (Keeps Typed Text + Bottom 1-4 Photos Shelf!) */}
+      {composerExpanded && (
+        <form
+          onSubmit={submitPost}
+          className="fixed inset-0 z-50 bg-[#0A0A0C] flex flex-col justify-between"
+        >
+          {/* Top Bar */}
+          <div className="px-5 py-4 border-b border-white/[0.07] flex items-center justify-between max-w-[780px] w-full mx-auto">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setComposerExpanded(false)}
+                title="تصغير"
+                className="w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-2">
+                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={32} />
+                <span className="text-sm font-semibold text-white">{user.displayName}</span>
+              </div>
+            </div>
+
+            <ChromeArrowButton
+              type="submit"
+              disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0)}
+              size={40}
+              title="نشر"
+            />
+          </div>
+
+          {/* Spacious Full-Height Writing Area */}
+          <div className="flex-1 overflow-y-auto px-5 py-6 max-w-[780px] w-full mx-auto">
+            <textarea
+              autoFocus
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              placeholder={lang === 'ar' ? 'اكتب فكرتك بحرية...' : 'Write freely...'}
+              className="w-full min-h-[260px] bg-transparent resize-none text-[18px] leading-[1.8] text-[#F2F2F5] placeholder:text-[#585860] outline-none"
+            />
+
+            {showPollBuilder && (
+              <div className="mt-4 pt-4 border-t border-white/[0.08] space-y-2.5 max-w-[520px]">
+                <input
+                  value={pollQuestion}
+                  onChange={e => setPollQuestion(e.target.value)}
+                  placeholder="سؤال الاستطلاع..."
+                  className="w-full h-10 rounded-xl bg-[#131318] border border-white/[0.1] px-3.5 text-sm text-white outline-none"
+                />
+                {pollOpts.map((opt, idx) => (
+                  <input
+                    key={idx}
+                    value={opt}
+                    onChange={e => {
+                      const next = [...pollOpts];
+                      next[idx] = e.target.value;
+                      setPollOpts(next);
+                    }}
+                    placeholder={`الخيار ${idx + 1}`}
+                    className="w-full h-9 rounded-xl bg-[#131318] border border-white/[0.08] px-3.5 text-xs text-white outline-none"
+                  />
+                ))}
+                {pollOpts.length < 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setPollOpts([...pollOpts, ''])}
+                    className="text-xs text-[#8E8E93] hover:text-white cursor-pointer"
+                  >
+                    + خيار إضافي
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Attached Media Tray (Up to 4 Images + Add More + Poll Toggle) */}
+          <div className="border-t border-white/[0.08] bg-[#0D0D11] px-5 py-4">
+            <div className="max-w-[780px] mx-auto space-y-3">
+              {uploadedMediaUrls.length > 0 && (
+                <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar">
+                  {uploadedMediaUrls.map((url, idx) => (
+                    <div key={idx} className="relative w-24 h-24 rounded-2xl overflow-hidden border border-white/[0.12] shrink-0">
+                      <img src={url} alt="" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeUploadedImg(idx)}
+                        className="absolute top-1 end-1 w-5 h-5 rounded-full bg-black/80 text-white flex items-center justify-center cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {uploadedMediaUrls.length < 4 && (
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      className="w-24 h-24 rounded-2xl border border-dashed border-white/[0.18] hover:border-white/40 text-[#8E8E93] hover:text-white flex flex-col items-center justify-center gap-1 shrink-0 cursor-pointer transition-colors"
+                    >
+                      <Plus className="w-5 h-5" />
+                      <span className="text-[10.5px] font-mono-num">{uploadedMediaUrls.length}/4</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={uploadedMediaUrls.length >= 4}
+                    onClick={() => fileRef.current?.click()}
+                    className="px-3.5 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-35 text-xs text-[#E4E4E7] flex items-center gap-2 cursor-pointer"
+                  >
+                    <ImageIcon className="w-4 h-4" />
+                    <span>صور ({uploadedMediaUrls.length}/4)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPollBuilder(v => !v)}
+                    className={`px-3.5 py-2 rounded-full text-xs flex items-center gap-2 cursor-pointer ${
+                      showPollBuilder ? 'bg-white text-black font-semibold' : 'bg-white/[0.06] hover:bg-white/[0.12] text-[#E4E4E7]'
+                    }`}
+                  >
+                    <BarChart2 className="w-4 h-4" />
+                    <span>استطلاع</span>
+                  </button>
+                </div>
+
+                <span className="text-[11px] font-mono-num text-[#7A7A85]">{draft.length} حرف</span>
+              </div>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {/* Full-Screen Interactive Lightbox Image Viewer */}
       {lightbox && (
         <div
           onClick={() => {
@@ -693,7 +883,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
           }}
           className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4"
         >
-          {/* Top Floating Lightbox Controls */}
           <div onClick={e => e.stopPropagation()} className="flex items-center justify-between max-w-5xl w-full mx-auto">
             <div className="text-xs font-medium text-white/80">
               {lightbox.author}
@@ -732,7 +921,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
             </div>
           </div>
 
-          {/* Center Zoomable Photo + Carousel Arrows */}
           <div className="flex-1 flex items-center justify-center relative overflow-hidden my-3">
             {lightbox.urls.length > 1 && lightbox.index > 0 && (
               <button
@@ -796,13 +984,6 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                 <UserAvatar initials={activeStory.avatarInitials} avatarUrl={activeStory.avatarUrl} size={34} />
                 <span className="text-xs font-semibold text-white">{activeStory.displayName}</span>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveStory(null)}
-                className="w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
             </div>
             {activeStory.caption && (
               <div className="absolute inset-x-0 bottom-0 p-5 bg-gradient-to-t from-black/90 to-transparent text-sm text-white">

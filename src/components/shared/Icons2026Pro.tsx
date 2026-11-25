@@ -55,7 +55,7 @@ export function NavCommunityIcon({ active, className = 'w-[22px] h-[22px]' }: Na
   );
 }
 
-/** Pulse ("نبض") Short Video 2026 Sculpted Icon */
+/** Pulse ("نبض") Short Video 2026 Sculpted Icon — Optically Dead-Center Play Glyph */
 export function NavPulseIcon({ active, className = 'w-[22px] h-[22px]' }: NavIconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className}>
@@ -71,7 +71,7 @@ export function NavPulseIcon({ active, className = 'w-[22px] h-[22px]' }: NavIco
         strokeWidth="1.75"
       />
       <path
-        d="M10.3 9.1C10.3 8.35 11.12 7.89 11.76 8.28L16.35 11.18C16.94 11.55 16.94 12.42 16.35 12.79L11.76 15.69C11.12 16.08 10.3 15.62 10.3 14.87V9.1Z"
+        d="M9.65 9.12C9.65 8.42 10.42 7.98 11.02 8.34L15.46 11.02C16.04 11.37 16.04 12.21 15.46 12.56L11.02 15.24C10.42 15.6 9.65 15.16 9.65 14.46V9.12Z"
         fill="currentColor"
       />
     </svg>

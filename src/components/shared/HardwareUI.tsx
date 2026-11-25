@@ -33,9 +33,9 @@ export function ChromeArrowButton({
 }
 
 /**
- * Centered & Auto-Expanding Multiline Composer Pill (ChatGPT / Gemini 2026 Precision):
- * - Single-line text & placeholder sit DEAD-CENTER vertically and cleanly aligned!
- * - Smoothly expands UPWARD line-by-line up to 148px as text wraps, then scrolls vertically.
+ * Spacious, Vertically-Centered, Start-Aligned Auto-Expanding Multiline Composer:
+ * - Placeholder & text sit vertically dead-center at the natural start edge (right in RTL, left in LTR) — NEVER cramped!
+ * - Smoothly grows UPWARD up to 148px when writing multiple lines, then scrolls vertically inside.
  */
 export function ObsidianComposerPill({
   value,
@@ -91,7 +91,7 @@ export function ObsidianComposerPill({
   return (
     <form
       onSubmit={onSubmit}
-      className={`w-full min-h-[48px] rounded-[25px] bg-[#14141A]/95 backdrop-blur-xl border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex gap-2 transition-all ${
+      className={`w-full min-h-[50px] rounded-[25px] bg-[#14141A]/95 backdrop-blur-xl border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex gap-2.5 transition-all ${
         multiline ? 'items-end' : 'items-center'
       }`}
     >
@@ -106,12 +106,12 @@ export function ObsidianComposerPill({
         onFocus={onFocus}
         onBlur={onBlur}
         placeholder={placeholder}
-        className={`flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] placeholder:text-[#686872] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] ${
-          !value ? 'text-center placeholder:text-center' : 'text-start'
-        } ${multiline ? 'py-1.5' : 'py-0'}`}
+        className={`flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] placeholder:text-[#6C6C76] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] text-start ${
+          multiline ? 'py-1.5' : 'py-0'
+        }`}
       />
 
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0">
         {onAttach && (
           <button
             type="button"

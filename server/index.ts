@@ -351,15 +351,25 @@ app.get('/api/posts', (req, res) => {
 });
 
 app.post('/api/posts', (req, res) => {
-  const { userId, content, mediaUrl, poll } = req.body as {
+  const { userId, content, mediaUrl, mediaUrls, poll } = req.body as {
     userId: string;
     content: string;
     mediaUrl?: string;
+    mediaUrls?: string[];
     poll?: { question: string; options: string[] } | null;
   };
-  if (!userId || (!content?.trim() && !mediaUrl)) return res.status(400).json({ ok: false, error: 'محتوى المنشور مطلوب.' });
+  const cleanMedia = Array.isArray(mediaUrls)
+    ? mediaUrls.filter(Boolean).slice(0, 4)
+    : mediaUrl
+    ? [mediaUrl]
+    : [];
+
+  if (!userId || (!content?.trim() && cleanMedia.length === 0)) {
+    return res.status(400).json({ ok: false, error: 'محتوى المنشور مطلوب.' });
+  }
   const id = `p_${uuid().slice(0, 8)}`;
-  const urlsJson = mediaUrl ? JSON.stringify([mediaUrl]) : '[]';
+  const urlsJson = JSON.stringify(cleanMedia);
+  const firstMedia = cleanMedia[0] || null;
 
   let pollJson: string | null = null;
   if (poll && poll.question?.trim() && Array.isArray(poll.options)) {
@@ -375,7 +385,7 @@ app.post('/api/posts', (req, res) => {
   db.prepare(`
     INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, poll_json, score, likes_count, created_at)
     VALUES (?, ?, 'عام', ?, ?, ?, ?, 1, 1, 'الآن')
-  `).run(id, userId, (content || '').trim(), mediaUrl || null, urlsJson, pollJson);
+  `).run(id, userId, (content || '').trim(), firstMedia, urlsJson, pollJson);
 
   db.prepare('INSERT OR REPLACE INTO post_votes (post_id, user_id, vote) VALUES (?, ?, 1)').run(id, userId);
   broadcast('social:new_post', { id });

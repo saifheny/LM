@@ -8,6 +8,8 @@ import {
   Plus,
   Paperclip,
   LayoutGrid,
+  PanelRightClose,
+  PanelLeftClose,
 } from 'lucide-react';
 import { Lang, NavTab, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
@@ -49,10 +51,11 @@ export const NAV_ITEMS: Array<{
 ];
 
 /**
- * Split-Action Orb beside Floating Composers:
- * Tapping smoothly separates UPWARD (just above bottom) into 2 ascending pills:
- *   1) إرفاق ملف (Attach)
- *   2) الشريط السفلي (Opens full-width bottom dock with ZERO X button — tap empty space to return!)
+ * Responsive Split-Action Orb beside Floating Composers:
+ * - On LAPTOP / DESKTOP (md+): Direct single Paperclip button (only if onAttach is provided; hidden if not needed!)
+ * - On MOBILE (< md): Tactile + Orb that splits upward smoothly into 2 ascending pills:
+ *     1) إرفاق ملف (Attach)
+ *     2) الشريط السفلي (Opens full-width pitch-black-edged Bottom Dock — NO X button!)
  */
 export function SplitComposerOrb({
   onAttach,
@@ -69,84 +72,98 @@ export function SplitComposerOrb({
   }, [composerFocused]);
 
   return (
-    <AnimatePresence initial={false}>
-      {!composerFocused && (
-        <motion.div
-          key="split-orb-wrap"
-          initial={{ opacity: 0, width: 0, scale: 0.82 }}
-          animate={{ opacity: 1, width: 'auto', scale: 1 }}
-          exit={{ opacity: 0, width: 0, scale: 0.82 }}
-          transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
-          className="relative shrink-0"
+    <>
+      {/* LAPTOP / DESKTOP: Direct Clean Paperclip Button ONLY (No + menu clutter!) */}
+      {onAttach && (
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            onAttach();
+          }}
+          title="إرفاق ملف"
+          className="hidden md:flex w-[48px] h-[48px] rounded-full bg-[#14141A]/95 backdrop-blur-xl border border-white/[0.11] text-[#A1A1AA] hover:text-white hover:border-white/25 items-center justify-center cursor-pointer shrink-0 transition-colors"
         >
-          <AnimatePresence>
-            {splitOpen && (
-              <motion.div
-                initial={{ opacity: 0, y: 16, scale: 0.8 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 12, scale: 0.8 }}
-                transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
-                onClick={e => e.stopPropagation()}
-                className="absolute bottom-[58px] start-0 z-40 flex flex-col gap-2 items-start"
-              >
-                {onAttach && (
-                  <motion.button
-                    type="button"
-                    initial={{ opacity: 0, y: 14, scale: 0.85 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ delay: 0.03, duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
-                    onClick={() => {
-                      setSplitOpen(false);
-                      onAttach();
-                    }}
-                    className="h-10 px-4 rounded-full bg-[#17171E]/95 backdrop-blur-2xl border border-white/[0.15] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-2xl transition-colors"
-                  >
-                    <Paperclip className="w-3.5 h-3.5" />
-                    <span>إرفاق ملف</span>
-                  </motion.button>
-                )}
-
-                {showNavOption && (
-                  <motion.button
-                    type="button"
-                    initial={{ opacity: 0, y: 20, scale: 0.85 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ delay: 0.07, duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
-                    onClick={() => {
-                      setSplitOpen(false);
-                      setBottomDockHidden(false);
-                      setMobileNavExpanded(true);
-                    }}
-                    className="md:hidden h-10 px-4 rounded-full bg-[#17171E]/95 backdrop-blur-2xl border border-white/[0.15] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-2xl transition-colors"
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>الشريط السفلي</span>
-                  </motion.button>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              if (!showNavOption && onAttach) {
-                onAttach();
-                return;
-              }
-              setSplitOpen(v => !v);
-            }}
-            aria-label="خيارات"
-            className={`w-[48px] h-[48px] rounded-full bg-[#14141A]/95 backdrop-blur-2xl border transition-all duration-200 flex items-center justify-center cursor-pointer active:scale-95 ${
-              splitOpen ? 'border-white/35 text-white bg-[#1E1E26]' : 'border-white/[0.12] text-[#D4D4D8] hover:text-white'
-            }`}
-          >
-            <Plus className={`w-5 h-5 transition-transform duration-200 ${splitOpen ? 'rotate-45' : ''}`} strokeWidth={1.9} />
-          </button>
-        </motion.div>
+          <Paperclip className="w-[19px] h-[19px]" strokeWidth={1.85} />
+        </button>
       )}
-    </AnimatePresence>
+
+      {/* MOBILE: Ascending 2-Choice Split Orb (Collapses smoothly when typing!) */}
+      <AnimatePresence initial={false}>
+        {!composerFocused && (
+          <motion.div
+            key="split-orb-mobile"
+            initial={{ opacity: 0, width: 0, scale: 0.82 }}
+            animate={{ opacity: 1, width: 'auto', scale: 1 }}
+            exit={{ opacity: 0, width: 0, scale: 0.82 }}
+            transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
+            className="md:hidden relative shrink-0"
+          >
+            <AnimatePresence>
+              {splitOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 16, scale: 0.8 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 12, scale: 0.8 }}
+                  transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
+                  onClick={e => e.stopPropagation()}
+                  className="absolute bottom-[58px] start-0 z-40 flex flex-col gap-2 items-start"
+                >
+                  {onAttach && (
+                    <motion.button
+                      type="button"
+                      initial={{ opacity: 0, y: 14, scale: 0.85 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ delay: 0.03, duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
+                      onClick={() => {
+                        setSplitOpen(false);
+                        onAttach();
+                      }}
+                      className="h-10 px-4 rounded-full bg-[#09090C]/96 backdrop-blur-2xl border border-white/[0.15] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-2xl transition-colors"
+                    >
+                      <Paperclip className="w-3.5 h-3.5" />
+                      <span>إرفاق ملف</span>
+                    </motion.button>
+                  )}
+
+                  {showNavOption && (
+                    <motion.button
+                      type="button"
+                      initial={{ opacity: 0, y: 20, scale: 0.85 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ delay: 0.07, duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
+                      onClick={() => {
+                        setSplitOpen(false);
+                        setBottomDockHidden(false);
+                        setMobileNavExpanded(true);
+                      }}
+                      className="h-10 px-4 rounded-full bg-[#09090C]/96 backdrop-blur-2xl border border-white/[0.15] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-2xl transition-colors"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>الشريط السفلي</span>
+                    </motion.button>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                setSplitOpen(v => !v);
+              }}
+              aria-label="خيارات"
+              className={`w-[48px] h-[48px] rounded-full bg-[#0B0B0E]/95 backdrop-blur-2xl border transition-all duration-200 flex items-center justify-center cursor-pointer active:scale-95 ${
+                splitOpen ? 'border-white/35 text-white bg-[#1A1A22]' : 'border-white/[0.13] text-[#D4D4D8] hover:text-white'
+              }`}
+            >
+              <Plus className={`w-5 h-5 transition-transform duration-200 ${splitOpen ? 'rotate-45' : ''}`} strokeWidth={1.9} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 
@@ -171,6 +188,9 @@ export function AppShell({
     setMobileNavExpanded,
     setBottomDockHidden,
   } = useLayout();
+
+  // ChatGPT / Gemini-style Collapsible Desktop Sidebar State!
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [accountOpen, setAccountOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -222,7 +242,6 @@ export function AppShell({
     return () => clearTimeout(t);
   }, [searchQ, searchOpen]);
 
-  // Balanced medium-threshold scroll detection for Center-Pinch hide/show
   function handleMainScroll(e: React.UIEvent<HTMLElement>) {
     const top = e.currentTarget.scrollTop;
     const delta = top - lastScrollTopRef.current;
@@ -244,20 +263,45 @@ export function AppShell({
 
   const showPulseCornerOrb = activeTab === 'videos' && bottomDockHidden && !composerFocused;
   const isFullHeightViewport = activeTab === 'videos' || activeTab === 'live' || activeTab === 'chat' || activeTab === 'ai';
+  const CollapseIcon = lang === 'ar' ? PanelRightClose : PanelLeftClose;
 
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="h-screen w-screen bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none">
-      {/* DESKTOP / LAPTOP SIDE RAIL with 2026 Custom Icons */}
-      <aside className="hidden md:flex flex-col justify-between w-[74px] lg:w-[216px] shrink-0 h-full bg-[#0A0A0C] border-e border-white/[0.07] py-5 px-3 z-30">
-        <div className="space-y-6">
-          <button
-            type="button"
-            onClick={() => onSelectTab('social')}
-            className="w-full px-2 flex items-center gap-3 cursor-pointer"
-          >
-            <LmBrandMark size={34} />
-            <span className="hidden lg:inline text-[17px] font-semibold tracking-tight text-white">LM</span>
-          </button>
+      {/* DESKTOP / LAPTOP COLLAPSIBLE SIDEBAR (Exact ChatGPT / Google Gemini Behavior!) */}
+      <aside
+        className={`hidden md:flex flex-col justify-between shrink-0 h-full bg-[#070709] border-e border-white/[0.07] py-4 px-2.5 z-30 transition-[width] duration-250 ease-out ${
+          sidebarCollapsed ? 'w-[68px]' : 'w-[220px]'
+        }`}
+      >
+        <div className="space-y-5">
+          {/* Top Brand + Collapse/Expand Toggle */}
+          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between px-1.5'}`}>
+            <button
+              type="button"
+              onClick={() => {
+                if (sidebarCollapsed) setSidebarCollapsed(false);
+                else onSelectTab('social');
+              }}
+              title={sidebarCollapsed ? 'توسيع القائمة' : 'LM'}
+              className="flex items-center gap-2.5 cursor-pointer group"
+            >
+              <LmBrandMark size={34} />
+              {!sidebarCollapsed && (
+                <span className="text-[16.5px] font-semibold tracking-tight text-white">LM</span>
+              )}
+            </button>
+
+            {!sidebarCollapsed && (
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                title="تصغير القائمة"
+                className="w-8 h-8 rounded-xl hover:bg-white/[0.07] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <CollapseIcon className="w-[18px] h-[18px]" strokeWidth={1.8} />
+              </button>
+            )}
+          </div>
 
           <nav className="space-y-1">
             {NAV_ITEMS.map(item => {
@@ -268,7 +312,10 @@ export function AppShell({
                   key={item.id}
                   type="button"
                   onClick={() => onSelectTab(item.id)}
-                  className={`w-full h-11 px-3 rounded-2xl flex items-center gap-3.5 text-[14.5px] transition-colors cursor-pointer ${
+                  title={lang === 'ar' ? item.ar : item.en}
+                  className={`w-full h-11 rounded-2xl flex items-center transition-colors cursor-pointer ${
+                    sidebarCollapsed ? 'justify-center px-0' : 'gap-3.5 px-3'
+                  } text-[14px] ${
                     active
                       ? 'bg-white/[0.11] text-white font-semibold'
                       : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
@@ -280,7 +327,7 @@ export function AppShell({
                       <span className="absolute -top-0.5 -end-0.5 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
                     )}
                   </span>
-                  <span className="hidden lg:inline truncate">{lang === 'ar' ? item.ar : item.en}</span>
+                  {!sidebarCollapsed && <span className="truncate">{lang === 'ar' ? item.ar : item.en}</span>}
                 </button>
               );
             })}
@@ -288,10 +335,13 @@ export function AppShell({
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="w-full h-11 px-3 rounded-2xl flex items-center gap-3.5 text-[14.5px] text-[#8E8E93] hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
+              title={lang === 'ar' ? 'بحث' : 'Search'}
+              className={`w-full h-11 rounded-2xl flex items-center text-[14px] text-[#8E8E93] hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer ${
+                sidebarCollapsed ? 'justify-center px-0' : 'gap-3.5 px-3'
+              }`}
             >
               <Search className="w-[20px] h-[20px] shrink-0" strokeWidth={1.75} />
-              <span className="hidden lg:inline truncate">{lang === 'ar' ? 'بحث' : 'Search'}</span>
+              {!sidebarCollapsed && <span className="truncate">{lang === 'ar' ? 'بحث' : 'Search'}</span>}
             </button>
           </nav>
         </div>
@@ -300,26 +350,33 @@ export function AppShell({
           <button
             type="button"
             onClick={() => onSelectTab('settings')}
-            className={`w-full h-10 px-3 rounded-2xl flex items-center gap-3.5 text-[13.5px] transition-colors cursor-pointer ${
+            title="API Hub"
+            className={`w-full h-10 rounded-2xl flex items-center text-[13.5px] transition-colors cursor-pointer ${
+              sidebarCollapsed ? 'justify-center px-0' : 'gap-3.5 px-3'
+            } ${
               activeTab === 'settings'
                 ? 'bg-white/[0.11] text-white font-semibold'
                 : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
             }`}
           >
             <SlidersHorizontal className="w-[18px] h-[18px] shrink-0" strokeWidth={1.8} />
-            <span className="hidden lg:inline truncate">API Hub</span>
+            {!sidebarCollapsed && <span className="truncate">API Hub</span>}
           </button>
 
           <button
             type="button"
             onClick={() => setAccountOpen(true)}
-            className="w-full p-2 rounded-2xl hover:bg-white/[0.05] flex items-center gap-2.5 cursor-pointer transition-colors text-start"
+            className={`w-full p-2 rounded-2xl hover:bg-white/[0.05] flex items-center cursor-pointer transition-colors text-start ${
+              sidebarCollapsed ? 'justify-center' : 'gap-2.5'
+            }`}
           >
             <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={34} online={wsOnline} />
-            <div className="hidden lg:block min-w-0 flex-1">
-              <div className="text-xs font-semibold text-white truncate">{user.displayName}</div>
-              <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{user.username}</div>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-white truncate">{user.displayName}</div>
+                <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{user.username}</div>
+              </div>
+            )}
           </button>
         </div>
       </aside>
@@ -335,7 +392,7 @@ export function AppShell({
         {children}
       </main>
 
-      {/* 2026 MOBILE BOTTOM DOCK: Top-Rounded Only + Medium-Paced Center-Pinch Implosion Animation! */}
+      {/* 2026 MOBILE BOTTOM DOCK: Pitch-Black Outer/Side Framing (#000000) + Top-Rounded Only + Center-Pinch Implosion! */}
       <AnimatePresence>
         {shouldRenderMobileBottomDock && (
           <motion.nav
@@ -366,7 +423,7 @@ export function AppShell({
             exit={{ scaleX: 0.16, scaleY: 0.35, y: 48, opacity: 0 }}
             transition={{ duration: 0.42, ease: [0.32, 0.72, 0, 1] }}
             onClick={e => e.stopPropagation()}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-b-none bg-[#121218]/94 backdrop-blur-2xl border-t border-white/[0.11] px-3 pt-2.5 pb-3 shadow-[0_-12px_36px_rgba(0,0,0,0.5)]"
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-b-none bg-black/96 backdrop-blur-2xl border-t border-x border-white/[0.12] px-3 pt-2.5 pb-3 shadow-[0_-14px_38px_rgba(0,0,0,0.85)]"
           >
             <div className="flex items-center justify-around gap-1">
               {NAV_ITEMS.map(item => {
@@ -416,7 +473,7 @@ export function AppShell({
         )}
       </AnimatePresence>
 
-      {/* PULSE ("نبض") CORNER MORPH ORB: When scrolling down on Pulse, Dock morphs into a sleek corner icon instead of vanishing! */}
+      {/* PULSE ("نبض") CORNER MORPH ORB */}
       <AnimatePresence>
         {showPulseCornerOrb && (
           <motion.button
@@ -431,14 +488,14 @@ export function AppShell({
               setBottomDockHidden(false);
             }}
             aria-label="إظهار الشريط السفلي"
-            className="md:hidden fixed bottom-4 start-4 z-40 w-11 h-11 rounded-full bg-[#14141A]/85 backdrop-blur-2xl border border-white/[0.16] text-white flex items-center justify-center shadow-2xl cursor-pointer active:scale-90"
+            className="md:hidden fixed bottom-4 start-4 z-40 w-11 h-11 rounded-full bg-black/90 backdrop-blur-2xl border border-white/[0.16] text-white flex items-center justify-center shadow-2xl cursor-pointer active:scale-90"
           >
             <LayoutGrid className="w-[19px] h-[19px]" strokeWidth={1.9} />
           </motion.button>
         )}
       </AnimatePresence>
 
-      {/* Account Switcher & Quick Settings Modal */}
+      {/* Account Switcher Modal */}
       {accountOpen && (
         <div
           onClick={() => setAccountOpen(false)}

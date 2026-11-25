@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Swiper, SwiperSlide } from 'swiper/react';
-import { Mousewheel, Keyboard } from 'swiper/modules';
+import { Keyboard } from 'swiper/modules';
 import type { Swiper as SwiperClass } from 'swiper';
 import 'swiper/css';
 import {
@@ -79,8 +79,27 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const prevSlideIdxRef = useRef(0);
+  const swiperRef = useRef<SwiperClass | null>(null);
+  const wheelLockUntilRef = useRef<number>(0);
 
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
+
+  /**
+   * 100% Deterministic Laptop Trackpad / Mousewheel Single-Video Stepper:
+   * Eliminates double-skipping caused by Windows Precision Touchpad momentum!
+   */
+  function handleSingleVideoWheel(e: React.WheelEvent<HTMLDivElement>) {
+    if (drawerVideo || shareVideo || uploadOpen) return;
+    if (Math.abs(e.deltaY) < 16) return;
+    const now = Date.now();
+    if (now < wheelLockUntilRef.current) return;
+    wheelLockUntilRef.current = now + 620;
+    if (e.deltaY > 0) {
+      swiperRef.current?.slideNext();
+    } else {
+      swiperRef.current?.slidePrev();
+    }
+  }
 
   // Comments Sheet (NO X button — tap outside to close!)
   const [drawerVideo, setDrawerVideo] = useState<ShortVideoItem | null>(null);
@@ -357,7 +376,10 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
   const progressPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
   return (
-    <div className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center">
+    <div
+      onWheel={handleSingleVideoWheel}
+      className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center"
+    >
       <div className="relative w-full h-full max-w-[500px] mx-auto bg-black overflow-hidden">
         {/* Centered Top Tabs: متابعون | أصدقاء | لك */}
         <div className="absolute top-4 inset-x-4 z-30 flex items-center justify-between pointer-events-none">
@@ -409,13 +431,16 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
           </div>
         )}
 
-        {/* Full-Screen Vertical Pulse Feed */}
+        {/* Full-Screen Vertical Pulse Feed (Strictly 1 Video Per Scroll Flick on Laptop & Touch!) */}
         <Swiper
           direction="vertical"
-          modules={[Mousewheel, Keyboard]}
-          mousewheel
+          modules={[Keyboard]}
           keyboard={{ enabled: true }}
+          speed={400}
           slidesPerView={1}
+          onSwiper={(sw: SwiperClass) => {
+            swiperRef.current = sw;
+          }}
           onSlideChange={(sw: SwiperClass) => {
             const nextIdx = sw.activeIndex;
             if (nextIdx > prevSlideIdxRef.current) {
@@ -562,38 +587,13 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                     </div>
                   </div>
 
-                  {/* Interactive Hairline TikTok Scrub Bar (Drag to Seek Start -> End Smoothly!) */}
+                  {/* Minimal 2px Passive Progress Hairline (Zero Seek Bar Clutter!) */}
                   {idx === activeIndex && (
-                    <div
-                      onClick={e => e.stopPropagation()}
-                      onPointerDown={e => e.stopPropagation()}
-                      className="group absolute bottom-[72px] md:bottom-2 inset-x-3 z-30 py-2 flex flex-col items-center"
-                    >
-                      {isScrubbing && (
-                        <div className="mb-2 px-3 py-1 rounded-full bg-black/80 border border-white/15 text-xs font-mono-num text-white">
-                          {fmtSec(currentTime)} <span className="text-white/50">/</span> {fmtSec(duration)}
-                        </div>
-                      )}
-                      <div className="relative w-full h-1 group-hover:h-1.5 transition-all rounded-full bg-white/20 flex items-center">
-                        <div
-                          style={{ width: `${progressPct}%` }}
-                          className="h-full rounded-full bg-white transition-[width] duration-75"
-                        />
-                        <input
-                          type="range"
-                          min={0}
-                          max={Math.max(1, duration)}
-                          step={0.05}
-                          value={Math.min(currentTime, duration)}
-                          onMouseDown={() => setIsScrubbing(true)}
-                          onTouchStart={() => setIsScrubbing(true)}
-                          onMouseUp={() => setIsScrubbing(false)}
-                          onTouchEnd={() => setIsScrubbing(false)}
-                          onChange={e => scrubTo(Number(e.target.value))}
-                          aria-label="شريط التمرير"
-                          className="absolute inset-0 w-full h-4 -top-1.5 opacity-0 cursor-pointer"
-                        />
-                      </div>
+                    <div className="pointer-events-none absolute bottom-0 inset-x-0 h-[2px] bg-white/15 z-20">
+                      <div
+                        style={{ width: `${progressPct}%` }}
+                        className="h-full bg-white/80 transition-[width] duration-150"
+                      />
                     </div>
                   )}
                 </div>

@@ -766,7 +766,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Hidden when mobile full bottom dock is expanded!) */}
         {!mobileNavExpanded && (
           <div className="pointer-events-none absolute bottom-3.5 inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center">
-            <div className="pointer-events-auto w-full max-w-[740px] space-y-2">
+            <div className="pointer-events-auto w-full max-w-[780px] space-y-2">
               {(replyTarget || sharedForAi) && (
                 <div className="px-3.5 py-1.5 rounded-full bg-[#131318]/95 backdrop-blur-xl border border-white/[0.1] flex items-center justify-between text-xs">
                   <span className="truncate text-[#D4D4D8]">
