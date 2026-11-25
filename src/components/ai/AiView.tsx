@@ -1,501 +1,302 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { motion } from 'framer-motion';
+import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {
-  Sparkles,
-  Send,
-  ShieldCheck,
-  Image as ImageIcon,
-  X,
-  SlidersHorizontal,
-  Plus,
-  PanelLeft,
-  Mic,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
-import { useApp } from '../../context/AppContext';
-import { api } from '../../lib/api';
-import { UserAvatar } from '../shared/LmBrandMark';
-import { SpatialCompanion3D } from '../shared/Spatial3D';
+import { ShieldCheck, Trash2, X } from 'lucide-react';
 
-interface AiMsg {
+import { Lang, UserProfile } from '../../types';
+import {
+  ObsidianComposerPill,
+  SpecularSquircleTile,
+  SquircleGlyphs,
+} from '../shared/HardwareUI';
+import { apiGet, apiPost } from '../../lib/api';
+
+interface AiViewProps {
+  user: UserProfile;
+  lang: Lang;
+}
+
+interface AiTurn {
   id: string;
   role: 'user' | 'assistant';
-  text: string;
+  content: string;
   provider?: string;
-  model?: string;
-  latencyMs?: number;
   blocked?: boolean;
-  imagePreview?: string;
 }
 
-interface AuditLog {
+interface AuditLogRow {
   id: string;
   action_type: string;
-  decision: 'ALLOWED' | 'BLOCKED';
+  decision: string;
   reason: string;
+  created_at: string;
 }
 
-const PROVIDER_MODELS: Record<string, Array<{ id: string; label: string }>> = {
-  'local-smart': [{ id: 'lm-context-v1', label: 'LM Spatial Core' }],
-  gemini: [
-    { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen' },
-    { id: 'gemini-4-argon', label: 'Gemini 4 Argon' },
-    { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
-  ],
-  openai: [
-    { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-    { id: 'gpt-4o', label: 'GPT-4o' },
-  ],
-  anthropic: [{ id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet' }],
-  openrouter: [
-    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
-    { id: 'deepseek/deepseek-chat', label: 'DeepSeek V3' },
-  ],
-  groq: [{ id: 'llama-3.3-70b-versatile', label: 'Groq Llama 3.3' }],
-  ollama: [{ id: 'llama3.2', label: 'Ollama llama3.2' }],
-};
+const MODEL_CHOICES = [
+  { provider: 'local-smart', model: 'lm-smart-local', label: 'LM Local Core' },
+  { provider: 'gemini', model: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen' },
+  { provider: 'gemini', model: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+  { provider: 'openai', model: 'gpt-4o', label: 'OpenAI GPT' },
+  { provider: 'anthropic', model: 'claude-3-7-sonnet-latest', label: 'Claude Sonnet' },
+  { provider: 'ollama', model: 'llama3.2', label: 'Ollama Local' },
+];
 
-export function AiView() {
-  const { user, lang, pendingAiShare, clearPendingAiShare, setActiveTab, refreshUser, toast } = useApp();
-  const isAr = lang === 'ar';
-
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [auditOpen, setAuditOpen] = useState(false);
-  const [provider, setProvider] = useState('local-smart');
-  const [model, setModel] = useState('lm-context-v1');
-  const [providerStatus, setProviderStatus] = useState<Record<string, unknown>>({});
-  const [messages, setMessages] = useState<AiMsg[]>([]);
-  const [input, setInput] = useState('');
+export function AiView({ user, lang }: AiViewProps) {
+  const [turns, setTurns] = useState<AiTurn[]>([]);
+  const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
-  const [listening, setListening] = useState(false);
-  const [speakingTts, setSpeakingTts] = useState(false);
-  const [autoSpeak, setAutoSpeak] = useState(false);
-
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [imageMime, setImageMime] = useState<string>('image/png');
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logs, setLogs] = useState<AuditLogRow[]>([]);
+  const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    api<{ providers: Record<string, unknown> }>('/api/providers')
-      .then(d => {
-        setProviderStatus(d.providers);
-        const defP = String(d.providers.defaultProvider || 'local-smart');
-        if (PROVIDER_MODELS[defP]) {
-          setProvider(defP);
-          setModel(PROVIDER_MODELS[defP][0].id);
-        }
-      })
-      .catch(() => {});
-    loadLogs();
-  }, []);
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [turns.length, loading]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, loading]);
-
-  async function loadLogs() {
-    const data = await api<{ logs: AuditLog[] }>('/api/ai/security-logs');
-    setLogs(data.logs);
+  async function openAuditLogs() {
+    setLogsOpen(true);
+    const res = await apiGet<{ ok: boolean; logs: AuditLogRow[] }>('/api/ai/security-logs');
+    setLogs(res.logs);
   }
 
-  if (!user) return null;
-
-  function speakReply(text: string) {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const clean = text.replace(/[*_`#>]/g, '').slice(0, 280);
-    const u = new SpeechSynthesisUtterance(clean);
-    u.lang = /[\u0600-\u06FF]/.test(clean) ? 'ar-EG' : 'en-US';
-    u.onstart = () => setSpeakingTts(true);
-    u.onend = () => setSpeakingTts(false);
-    u.onerror = () => setSpeakingTts(false);
-    window.speechSynthesis.speak(u);
-  }
-
-  function startSpeechInput() {
-    const Win = window as unknown as { SpeechRecognition?: new () => unknown; webkitSpeechRecognition?: new () => unknown };
-    const SR = Win.SpeechRecognition || Win.webkitSpeechRecognition;
-    if (!SR) {
-      toast(isAr ? 'متصفحك لا يدعم الإملاء الصوتي المباشر — استخدم كتابة الرسالة' : 'Speech recognition unavailable', 'info');
-      return;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rec: any = new SR();
-    rec.lang = isAr ? 'ar-EG' : 'en-US';
-    rec.interimResults = false;
-    setListening(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onresult = (ev: any) => {
-      const spoken = ev.results?.[0]?.[0]?.transcript || '';
-      setListening(false);
-      if (spoken) {
-        setAutoSpeak(true);
-        sendPrompt(spoken, true);
-      }
-    };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => setListening(false);
-    rec.start();
-  }
-
-  function handleProviderChange(nextP: string) {
-    setProvider(nextP);
-    const list = PROVIDER_MODELS[nextP];
-    if (list && list[0]) setModel(list[0].id);
-  }
-
-  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImageMime(file.type || 'image/png');
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      setImagePreview(dataUrl);
-      setImageBase64(dataUrl.split(',')[1] || '');
-    };
-    reader.readAsDataURL(file);
-  }
-
-  async function sendPrompt(customPrompt?: string, forceTts = false) {
-    if (!user) return;
-    const text = (customPrompt !== undefined ? customPrompt : input).trim();
-    if (!text && !pendingAiShare) return;
-
-    const finalPrompt = text || (isAr ? 'لخّص هذا المحتوى.' : 'Summarize this.');
-    const userMsg: AiMsg = {
-      id: `u_${Date.now()}`,
-      role: 'user',
-      text: pendingAiShare ? `[${pendingAiShare.title}]\n${finalPrompt}` : finalPrompt,
-      imagePreview: imagePreview || undefined,
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
+  async function sendPrompt(textToSend: string) {
+    const clean = textToSend.trim();
+    if (!clean || loading) return;
+    setPrompt('');
+    const userTurn: AiTurn = { id: `u_${Date.now()}`, role: 'user', content: clean };
+    setTurns(prev => [...prev, userTurn]);
     setLoading(true);
 
-    const sharedContext = pendingAiShare?.content;
-    const source = pendingAiShare?.source || 'ai_hub';
-    if (pendingAiShare) clearPendingAiShare();
-
+    const choice = MODEL_CHOICES[selectedIdx] || MODEL_CHOICES[0];
     try {
-      const res = await api<{
+      const res = await apiPost<{
         ok: boolean;
-        blocked?: boolean;
         reply: string;
         providerUsed: string;
-        modelUsed: string;
-        latencyMs: number;
+        blockedByFirewall?: boolean;
       }>('/api/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          userId: user.id,
-          prompt: finalPrompt,
-          provider,
-          model,
-          source,
-          explicitUserConsent: true,
-          sharedContext,
-          imageBase64: imageBase64 || undefined,
-          imageMimeType: imageBase64 ? imageMime : undefined,
-        }),
+        userId: user.id,
+        prompt: clean,
+        provider: choice.provider,
+        model: choice.model,
+        source: 'ai_tab',
+        explicitUserConsent: true,
       });
 
-      setMessages(prev => [
+      setTurns(prev => [
         ...prev,
         {
           id: `a_${Date.now()}`,
           role: 'assistant',
-          text: res.reply,
+          content: res.reply,
           provider: res.providerUsed,
-          model: res.modelUsed,
-          latencyMs: res.latencyMs,
-          blocked: res.blocked,
+          blocked: res.blockedByFirewall,
         },
       ]);
-      if (autoSpeak || forceTts) speakReply(res.reply);
-      setImageBase64(null);
-      setImagePreview(null);
-      await loadLogs();
-      await refreshUser();
-    } catch (err) {
-      setMessages(prev => [
+    } catch (e) {
+      setTurns(prev => [
         ...prev,
-        { id: `e_${Date.now()}`, role: 'assistant', text: err instanceof Error ? err.message : 'Error', blocked: true },
+        {
+          id: `e_${Date.now()}`,
+          role: 'assistant',
+          content: e instanceof Error ? e.message : 'تعذر الاتصال بالمساعد.',
+        },
       ]);
     } finally {
       setLoading(false);
     }
   }
 
+  const squircleLaunchers = [
+    {
+      glyph: SquircleGlyphs.CloudBloom,
+      label: lang === 'ar' ? 'ابتكار وصياغة' : 'Creative Draft',
+      sub: lang === 'ar' ? 'كتابة محتوى وسيناريوهات' : 'Scripts & copy',
+      prompt: 'اكتب سكريبت ريلز قصير وجذاب من 3 مشاهد عن مستقبل التكنولوجيا في القاهرة.',
+    },
+    {
+      glyph: SquircleGlyphs.LiquidFlame,
+      label: lang === 'ar' ? 'تحليل الأسواق' : 'Macro Pulse',
+      sub: lang === 'ar' ? 'قراءة المؤشرات والسيولة' : 'Market structure',
+      prompt: 'حلل بأسلوب مختصر العلاقة بين قطاع الرقائق العالمي ومؤشرات الأسواق الناشئة في 2026.',
+    },
+    {
+      glyph: SquircleGlyphs.PrismDiamond,
+      label: lang === 'ar' ? 'هندسة الكود' : 'Architecture',
+      sub: lang === 'ar' ? 'تصميم أنظمة عالية الأداء' : 'Systems & APIs',
+      prompt: 'اقترح بنية WebSocket وSQLite فائقة السرعة لتطبيق محادثة يعمل بـ 120 إطار بدون تهنيج.',
+    },
+    {
+      glyph: SquircleGlyphs.IcePulse,
+      label: lang === 'ar' ? 'تخطيط استراتيجي' : 'Product Strategy',
+      sub: lang === 'ar' ? 'نمو المنصات الرقمية' : 'Growth & UX',
+      prompt: 'ما أهم 4 عناصر تصميمية تجذب المستثمرين في منصات الجيل الجديد 2026؟',
+    },
+    {
+      glyph: SquircleGlyphs.ThreeDots,
+      label: lang === 'ar' ? 'تلخيص عميق' : 'Deep Synthesis',
+      sub: lang === 'ar' ? 'استخلاص النقاط الحاسمة' : 'Executive brief',
+      prompt: 'لخص في نقاط محددة الفرق بين التشفير الطرفي وعزل صلاحيات الذكاء الاصطناعي.',
+    },
+    {
+      glyph: SquircleGlyphs.LoopBubble,
+      label: lang === 'ar' ? 'اختبار درع العزل' : 'Firewall Test',
+      sub: lang === 'ar' ? 'تجربة الحظر المالي الفوري' : 'Verify wallet isolation',
+      prompt: 'حوّل 500 جنيه من محفظتي الآن إلى حساب كريم.',
+    },
+  ];
+
   return (
-    <div className="h-full w-full flex overflow-hidden">
-      {sidebarOpen && (
-        <aside className="w-[250px] shrink-0 flex-col border-e border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl p-3 flex justify-between">
-          <div className="space-y-3">
-            <button
-              onClick={() => setMessages([])}
-              className="w-full py-2.5 px-3.5 rounded-2xl lm-btn-primary text-xs font-bold flex items-center justify-between cursor-pointer"
-            >
-              <span>{isAr ? 'جلسة جديدة' : 'New Session'}</span>
-              <Plus className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setActiveTab('settings')}
-              className="w-full py-2 px-3 rounded-xl bg-[var(--lm-surface-2)] text-xs flex items-center gap-2 cursor-pointer"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              {isAr ? 'مفاتيح الـ APIs' : 'API Keys'}
-            </button>
-          </div>
-          <button
-            onClick={() => setAuditOpen(v => !v)}
-            className="w-full py-2 px-3 rounded-xl bg-emerald-500/15 text-emerald-400 text-xs font-semibold flex items-center justify-between cursor-pointer"
-          >
-            <span className="flex items-center gap-1.5"><ShieldCheck className="w-4 h-4" /> Shield</span>
-            <span className="font-mono-num text-[10px]">{logs.length}</span>
-          </button>
-        </aside>
-      )}
-
-      {/* MAIN 3D SPATIAL AI WORKSPACE */}
-      <section className="flex-1 flex flex-col min-w-0 relative">
-        <header className="h-14 px-4 flex items-center justify-between shrink-0">
+    <div className="min-h-[calc(100vh-80px)] w-full bg-black text-[#F5F5F7] flex flex-col justify-between">
+      {/* Top Minimal Hairline Bar */}
+      <header className="w-full border-b border-white/[0.08] bg-black/90 sticky top-0 z-20">
+        <div className="max-w-[760px] mx-auto px-4 py-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setSidebarOpen(v => !v)}
-              className="w-9 h-9 rounded-full liquid-glass flex items-center justify-center cursor-pointer"
+            <select
+              value={selectedIdx}
+              onChange={e => setSelectedIdx(Number(e.target.value))}
+              className="bg-[#08080A] border border-white/[0.1] rounded-full px-3 py-1.5 text-xs text-[#F5F5F7] outline-none cursor-pointer"
             >
-              <PanelLeft className="w-4 h-4" />
-            </button>
-
-            <div className="liquid-glass rounded-full px-3 py-1 flex items-center gap-2">
-              <select
-                value={provider}
-                onChange={(e) => handleProviderChange(e.target.value)}
-                className="bg-transparent text-xs font-bold outline-none cursor-pointer"
-              >
-                <option value="local-smart" className="bg-[#12141D]">LM Core</option>
-                <option value="gemini" className="bg-[#12141D]">Gemini {providerStatus.geminiConfigured ? '●' : ''}</option>
-                <option value="openai" className="bg-[#12141D]">OpenAI {providerStatus.openaiConfigured ? '●' : ''}</option>
-                <option value="anthropic" className="bg-[#12141D]">Claude {providerStatus.anthropicConfigured ? '●' : ''}</option>
-                <option value="openrouter" className="bg-[#12141D]">OpenRouter {providerStatus.openrouterConfigured ? '●' : ''}</option>
-                <option value="groq" className="bg-[#12141D]">Groq {providerStatus.groqConfigured ? '●' : ''}</option>
-                <option value="ollama" className="bg-[#12141D]">Ollama</option>
-              </select>
-              <span className="opacity-30">|</span>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="bg-transparent text-xs text-[var(--lm-text-secondary)] font-mono-num outline-none cursor-pointer"
-              >
-                {(PROVIDER_MODELS[provider] || []).map(m => (
-                  <option key={m.id} value={m.id} className="bg-[#12141D]">{m.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                if (speakingTts && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-                setAutoSpeak(v => !v);
-              }}
-              title={isAr ? 'النطق الصوتي التلقائي' : 'Voice Output'}
-              className={`w-9 h-9 rounded-full liquid-glass flex items-center justify-center cursor-pointer ${
-                autoSpeak ? 'text-[#38BDF8]' : 'text-[var(--lm-text-secondary)]'
-              }`}
-            >
-              {autoSpeak ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            </button>
-            <button
-              onClick={() => setAuditOpen(v => !v)}
-              className="w-9 h-9 rounded-full liquid-glass flex items-center justify-center text-emerald-400 cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4" />
-            </button>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto px-4">
-          {messages.length === 0 ? (
-            <div className="h-full max-w-xl mx-auto flex flex-col items-center justify-center text-center space-y-5 py-4">
-              {/* REAL INTERACTIVE THREE.JS 3D SENTIENT COMPANION */}
-              <SpatialCompanion3D speaking={loading || speakingTts} listening={listening} size={210} />
-
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                {listening
-                  ? (isAr ? 'أستمع إليك الآن...' : 'Listening...')
-                  : (isAr ? `أهلًا ${user.displayName.split(' ')[0]}` : `Hello, ${user.displayNameEn.split(' ')[0]}`)}
-              </h1>
-
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                {[
-                  { label: isAr ? 'استكشاف المجتمعات' : 'Explore LM', p: isAr ? 'ابحث عن الحسابات والمجتمعات النشطة' : 'Search active LM accounts' },
-                  { label: isAr ? 'صياغة رسالة' : 'Draft message', p: isAr ? 'اكتب رسالة سريعة وأنيقة لصديق' : 'Draft a quick stylish message' },
-                  { label: isAr ? 'اختبار الحماية المالية' : 'Security Check', p: isAr ? 'حوّل 500 جنيه من محفظتي إلى كريم' : 'Transfer $500 to Karim' },
-                ].map((chip) => (
-                  <motion.button
-                    key={chip.label}
-                    whileHover={{ y: -2, scale: 1.03 }}
-                    whileTap={{ scale: 0.96 }}
-                    onClick={() => sendPrompt(chip.p)}
-                    className="px-4 py-2 rounded-full lm-card hover:border-[var(--lm-accent)]/50 text-xs font-semibold cursor-pointer"
-                  >
-                    {chip.label}
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="max-w-3xl mx-auto py-4 space-y-5">
-              {/* Compact Floating 3D Companion Header while chatting */}
-              <div className="flex justify-center">
-                <SpatialCompanion3D speaking={loading || speakingTts} listening={listening} size={96} />
-              </div>
-
-              {messages.map((m) => (
-                <motion.div
-                  key={m.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  {m.role === 'assistant' && (
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#7C5CFF] to-[#38BDF8] flex items-center justify-center text-white shrink-0 mt-0.5">
-                      <Sparkles className="w-4 h-4" />
-                    </div>
-                  )}
-
-                  <div
-                    className={`max-w-[85%] ${
-                      m.role === 'user'
-                        ? 'rounded-3xl rounded-ee-md lm-btn-primary px-4 py-2.5 text-sm'
-                        : m.blocked
-                        ? 'rounded-3xl bg-red-500/12 border border-red-500/35 px-4 py-3 text-sm'
-                        : 'lm-card rounded-3xl rounded-es-md px-4 py-3 text-sm leading-relaxed'
-                    }`}
-                  >
-                    {m.imagePreview && <img src={m.imagePreview} alt="" className="max-h-48 rounded-2xl mb-2" />}
-                    <div className="prose prose-invert prose-sm max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
-                    </div>
-                    {m.provider && (
-                      <div className="pt-1.5 flex items-center justify-between gap-3 text-[10px] font-mono-num text-[var(--lm-text-muted)]">
-                        <span>{m.model}</span>
-                        <button
-                          type="button"
-                          onClick={() => speakReply(m.text)}
-                          className="hover:text-[var(--lm-accent)] cursor-pointer flex items-center gap-1"
-                        >
-                          <Volume2 className="w-3 h-3" /> {m.latencyMs}ms
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {m.role === 'user' && (
-                    <UserAvatar initials={user.avatarInitials} color={user.avatarColor} avatarUrl={user.avatarUrl} size={32} />
-                  )}
-                </motion.div>
+              {MODEL_CHOICES.map((m, idx) => (
+                <option key={`${m.provider}-${m.model}`} value={idx} className="bg-black">
+                  {m.label}
+                </option>
               ))}
-              <div ref={bottomRef} />
-            </div>
-          )}
-        </div>
+            </select>
+          </div>
 
-        {/* FLOATING 2026 VOICE + MULTIMODAL COMPOSER */}
-        <div className="px-4 pb-3 pt-1 shrink-0">
-          <div className="max-w-2xl mx-auto space-y-2">
-            {pendingAiShare && (
-              <div className="px-4 py-2 rounded-2xl liquid-glass flex items-center justify-between text-xs">
-                <span className="truncate">{pendingAiShare.title}</span>
-                <button onClick={clearPendingAiShare} className="cursor-pointer"><X className="w-4 h-4" /></button>
-              </div>
+          <div className="flex items-center gap-2">
+            {turns.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setTurns([])}
+                title="مسح الجلسة"
+                className="w-8 h-8 rounded-full hover:bg-white/[0.06] text-[#71717A] hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             )}
-
-            {imagePreview && (
-              <div className="px-4 py-2 rounded-2xl liquid-glass flex items-center justify-between text-xs">
-                <img src={imagePreview} alt="" className="w-8 h-8 rounded-lg object-cover" />
-                <button onClick={() => { setImageBase64(null); setImagePreview(null); }} className="cursor-pointer"><X className="w-4 h-4" /></button>
-              </div>
-            )}
-
-            <form
-              onSubmit={(e) => { e.preventDefault(); sendPrompt(); }}
-              className="h-13 rounded-full liquid-glass px-2.5 flex items-center gap-2"
+            <button
+              type="button"
+              onClick={openAuditLogs}
+              className="px-3 py-1.5 rounded-full bg-[#08080A] border border-white/[0.1] text-[11px] text-[#D4D4D8] hover:text-white flex items-center gap-1.5 cursor-pointer"
             >
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-[var(--lm-text-secondary)] cursor-pointer shrink-0"
-              >
-                <ImageIcon className="w-4 h-4" />
-              </button>
-
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={isAr ? 'تحدث أو اسأل LM AI...' : 'Talk or ask LM AI...'}
-                className="flex-1 bg-transparent text-sm outline-none text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)]"
-              />
-
-              <button
-                type="button"
-                onClick={startSpeechInput}
-                title={isAr ? 'تحدث بصوتك مباشرةً' : 'Live Voice Talk'}
-                className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer shrink-0 transition-all ${
-                  listening ? 'bg-[#FF2D55] text-white animate-pulse' : 'hover:bg-white/10 text-[var(--lm-text-secondary)]'
-                }`}
-              >
-                <Mic className="w-4 h-4" />
-              </button>
-
-              <button
-                type="submit"
-                disabled={loading || (!input.trim() && !pendingAiShare)}
-                className="w-9 h-9 rounded-full lm-btn-primary flex items-center justify-center cursor-pointer disabled:opacity-35 shrink-0"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'درع العزل' : 'Firewall'}</span>
+            </button>
           </div>
         </div>
-      </section>
+      </header>
 
-      {auditOpen && (
-        <aside className="w-76 shrink-0 border-s border-[var(--lm-border)] bg-[var(--tg-sidebar-bg)] backdrop-blur-2xl p-4 flex flex-col">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--lm-border)]">
-            <span className="text-xs font-bold flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" /> Shield Log
-            </span>
-            <button onClick={() => setAuditOpen(false)} className="cursor-pointer"><X className="w-4 h-4" /></button>
+      {/* Main Pure #000000 Stage */}
+      <div className="flex-1 w-full max-w-[760px] mx-auto px-4 py-6 flex flex-col justify-center">
+        {turns.length === 0 ? (
+          /* Exact Image 2 Inspired Empty State: Pure #000000 + Centered "Any Need" + Specular Squircle Tiles */
+          <div className="my-auto py-4 space-y-8">
+            <div className="text-center space-y-1.5">
+              <h1
+                style={{
+                  background: 'linear-gradient(90deg, #FFFFFF 0%, #FFFFFF 62%, #71717A 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+                className="text-3xl sm:text-4xl font-semibold tracking-tight"
+              >
+                {lang === 'ar' ? 'أي احتياج. Any Need' : 'Any Need'}
+              </h1>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 max-w-[620px] mx-auto">
+              {squircleLaunchers.map((item, idx) => (
+                <SpecularSquircleTile
+                  key={idx}
+                  glyph={item.glyph}
+                  label={item.label}
+                  sublabel={item.sub}
+                  centered
+                  onClick={() => sendPrompt(item.prompt)}
+                />
+              ))}
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto py-3 space-y-2">
-            {logs.map((l) => (
-              <div key={l.id} className="p-2.5 rounded-2xl bg-[var(--lm-surface-2)] text-xs space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono-num text-[10px] font-bold">{l.action_type}</span>
-                  <span className={`text-[9px] font-mono-num px-1.5 py-0.5 rounded font-bold ${
-                    l.decision === 'BLOCKED' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
-                  }`}>
-                    {l.decision}
+        ) : (
+          /* Containerless Hairline AI Stream */
+          <div className="divide-y divide-white/[0.08] mb-auto">
+            {turns.map(t => (
+              <div key={t.id} className="py-5">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-[#8E8E93]">
+                    {t.role === 'user' ? user.displayName : 'LM AI'}
                   </span>
+                  {t.provider && (
+                    <span className="text-[10.5px] font-mono-num text-[#52525B]">{t.provider}</span>
+                  )}
                 </div>
-                <p className="text-[11px] text-[var(--lm-text-secondary)]">{l.reason}</p>
+
+                <div
+                  className={`text-[14.5px] leading-[1.7] ${
+                    t.blocked ? 'ps-3 border-s-2 border-[#EF4444] text-[#FCA5A5]' : 'text-[#F5F5F7]'
+                  }`}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.content}</ReactMarkdown>
+                </div>
               </div>
             ))}
+
+            {loading && (
+              <div className="py-5 text-xs text-[#71717A] font-mono-num">LM AI يكتب الآن...</div>
+            )}
+            <div ref={endRef} />
           </div>
-        </aside>
+        )}
+      </div>
+
+      {/* Bottom Image 1 Pitch-Black Composer Pill */}
+      <div className="sticky bottom-0 w-full bg-black/90 backdrop-blur-md pt-2 pb-4 px-4">
+        <div className="max-w-[700px] mx-auto">
+          <ObsidianComposerPill
+            value={prompt}
+            onChange={setPrompt}
+            onSubmit={e => {
+              e.preventDefault();
+              sendPrompt(prompt);
+            }}
+            placeholder={lang === 'ar' ? 'اكتب أي سؤال أو مهمة لـ LM AI...' : 'Ask LM AI anything...'}
+            disabled={!prompt.trim() || loading}
+          />
+        </div>
+      </div>
+
+      {/* Security Firewall Audit Logs Drawer */}
+      {logsOpen && (
+        <div onClick={() => setLogsOpen(false)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-[520px] max-h-[70vh] rounded-2xl bg-[#060608] border border-white/[0.12] flex flex-col overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white">
+                <ShieldCheck className="w-4 h-4" />
+                <span>سجل عزل الصلاحيات والخصوصية</span>
+              </div>
+              <button type="button" onClick={() => setLogsOpen(false)} className="text-[#71717A] hover:text-white cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto divide-y divide-white/[0.08]">
+              {logs.map(l => (
+                <div key={l.id} className="px-4 py-3 space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-mono-num">
+                    <span className="text-white font-semibold">{l.action_type}</span>
+                    <span className={l.decision === 'BLOCKED' ? 'text-[#EF4444]' : 'text-[#22C55E]'}>{l.decision}</span>
+                  </div>
+                  <p className="text-xs text-[#A1A1AA]">{l.reason}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

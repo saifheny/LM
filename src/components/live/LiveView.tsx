@@ -1,60 +1,63 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import confetti from 'canvas-confetti';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Users,
-  Crown,
-  Gift,
-  Shield,
-  Send,
-  Sparkles,
-  Trash2,
-  Power,
-  Video,
-  VideoOff,
+  Eye,
   Heart,
   Volume2,
   VolumeX,
+  Gift,
+  Pin,
+  Camera,
+  CameraOff,
+  Share2,
+  X,
 } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
-import { api } from '../../lib/api';
-import { LiveRoomItem, LiveRoomState } from '../../types';
-import { RankBadge, UserAvatar, VipBadge } from '../shared/LmBrandMark';
-import { AnimatedEmoji, triggerInteractiveFx } from '../shared/InteractiveEmojiEngine';
+import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
+import { UserAvatar } from '../shared/LmBrandMark';
+import { ObsidianComposerPill } from '../shared/HardwareUI';
+import { apiGet, apiPost } from '../../lib/api';
 
-const GIFTS = [
-  { name: 'لهب بلازما', valueEgp: 50, emojiId: 'fire' },
-  { name: 'كريستال ماسي', valueEgp: 150, emojiId: 'gem' },
-  { name: 'تاج إمبراطوري', valueEgp: 500, emojiId: 'crown' },
-  { name: 'إطلاق صاروخي', valueEgp: 1000, emojiId: 'rocket' },
+interface LiveViewProps {
+  user: UserProfile;
+  lang: Lang;
+  lastWsEvent: { event: string; payload: unknown; ts: number } | null;
+}
+
+const LIVE_GIFTS = [
+  { id: 'rose', icon: '🌹', name: 'وردة', price: 25 },
+  { id: 'bolt', icon: '⚡', name: 'برق', price: 100 },
+  { id: 'fire', icon: '🔥', name: 'شعلة', price: 250 },
+  { id: 'rocket', icon: '🚀', name: 'انطلاق', price: 1000 },
 ];
 
-export function LiveView() {
-  const { user, lang, toast, wsListeners } = useApp();
-  const isAr = lang === 'ar';
-
+export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string>('live_1');
   const [roomState, setRoomState] = useState<LiveRoomState | null>(null);
   const [commentText, setCommentText] = useState('');
-  const [nowMs, setNowMs] = useState(Date.now());
+  const [pinMode, setPinMode] = useState(false);
   const [muted, setMuted] = useState(true);
-  const [hostToolsOpen, setHostToolsOpen] = useState(false);
-  const [floatingHearts, setFloatingHearts] = useState<number[]>([]);
-  const [giftBanner, setGiftBanner] = useState<{ sender: string; giftName: string; giftValueEgp: number } | null>(null);
+  const [giftTrayOpen, setGiftTrayOpen] = useState(false);
+  const [floatingHearts, setFloatingHearts] = useState<Array<{ id: number; offset: number }>>([]);
+  const [giftBanner, setGiftBanner] = useState<{ sender: string; giftName: string } | null>(null);
+  const [statusMsg, setStatusMsg] = useState('');
 
-  // Local camera preview ("Go Live")
-  const [webcamActive, setWebcamActive] = useState(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  // Optional creator webcam live mode
+  const [cameraLive, setCameraLive] = useState(false);
+  const camVideoRef = useRef<HTMLVideoElement | null>(null);
+  const camStreamRef = useRef<MediaStream | null>(null);
+  const commentsEndRef = useRef<HTMLDivElement | null>(null);
 
   const loadRooms = useCallback(async () => {
-    const data = await api<{ rooms: LiveRoomItem[] }>('/api/live/rooms');
-    setRooms(data.rooms);
-  }, []);
+    const res = await apiGet<{ ok: boolean; rooms: LiveRoomItem[] }>('/api/live/rooms');
+    setRooms(res.rooms);
+    if (res.rooms.length > 0 && !res.rooms.some(r => r.id === activeRoomId)) {
+      setActiveRoomId(res.rooms[0].id);
+    }
+  }, [activeRoomId]);
 
-  const loadRoomState = useCallback(async (roomId: string) => {
-    const data = await api<{ state: LiveRoomState }>(`/api/live/rooms/${roomId}/state`);
-    setRoomState(data.state);
+  const loadState = useCallback(async (id: string) => {
+    const res = await apiGet<{ ok: boolean; state: LiveRoomState }>(`/api/live/rooms/${id}/state`);
+    setRoomState(res.state);
   }, []);
 
   useEffect(() => {
@@ -62,420 +65,322 @@ export function LiveView() {
   }, [loadRooms]);
 
   useEffect(() => {
-    if (activeRoomId) loadRoomState(activeRoomId);
-  }, [activeRoomId, loadRoomState]);
+    if (activeRoomId) loadState(activeRoomId);
+  }, [activeRoomId, loadState]);
 
   useEffect(() => {
-    const handler = (event: string, payload: unknown) => {
-      if (event === 'live:state') {
-        const st = payload as LiveRoomState;
-        if (st.roomId === activeRoomId) setRoomState(st);
-      } else if (event === 'live:gift') {
-        const g = payload as { roomId: string; sender: string; giftName: string; giftValueEgp: number };
-        if (g.roomId === activeRoomId) {
-          setGiftBanner(g);
-          confetti({ particleCount: 45, spread: 60, origin: { y: 0.75 } });
-          setTimeout(() => setGiftBanner(null), 4000);
-        }
+    if (!lastWsEvent) return;
+    if (lastWsEvent.event === 'live:state') {
+      const st = lastWsEvent.payload as LiveRoomState;
+      if (st.roomId === activeRoomId) setRoomState(st);
+    }
+    if (lastWsEvent.event === 'live:gift') {
+      const g = lastWsEvent.payload as { roomId: string; sender: string; giftName: string };
+      if (g.roomId === activeRoomId) {
+        setGiftBanner({ sender: g.sender, giftName: g.giftName });
+        setTimeout(() => setGiftBanner(null), 3000);
       }
-    };
-    const listeners = wsListeners.current;
-    listeners.add(handler);
-    return () => {
-      listeners.delete(handler);
-    };
-  }, [activeRoomId, wsListeners]);
+    }
+  }, [lastWsEvent, activeRoomId]);
 
   useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 100);
-    return () => clearInterval(id);
-  }, []);
+    commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [roomState?.recentMessages.length]);
 
   useEffect(() => {
     return () => {
-      streamRef.current?.getTracks().forEach(t => t.stop());
+      camStreamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
 
-  if (!user) return null;
-
-  const activeRoom = rooms.find(r => r.id === activeRoomId) || rooms[0];
-  const canHighlight = user.vipTier === 1 || user.vipTier === 2 || user.vipTier === 3;
-  const userHighlightSec = user.vipTier === 1 ? 15 : user.vipTier === 2 ? 10 : user.vipTier === 3 ? 5 : 0;
-
-  async function toggleWebcam() {
-    if (webcamActive) {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-      setWebcamActive(false);
+  async function toggleCameraBroadcast() {
+    if (cameraLive) {
+      camStreamRef.current?.getTracks().forEach(t => t.stop());
+      camStreamRef.current = null;
+      setCameraLive(false);
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      streamRef.current = stream;
-      setWebcamActive(true);
+      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      camStreamRef.current = s;
+      setCameraLive(true);
       setTimeout(() => {
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      }, 50);
+        if (camVideoRef.current) camVideoRef.current.srcObject = s;
+      }, 60);
     } catch {
-      toast(isAr ? 'يرجى السماح بصلاحية الكاميرا من المتصفح' : 'Camera permission needed', 'warning');
+      setStatusMsg('الكاميرا غير متاحة على هذا الجهاز');
+      setTimeout(() => setStatusMsg(''), 2500);
     }
-  }
-
-  async function sendNormal() {
-    if (!user || !commentText.trim()) return;
-    try {
-      await api(`/api/live/rooms/${activeRoomId}/comment`, {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, text: commentText }),
-      });
-      setCommentText('');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Error', 'error');
-    }
-  }
-
-  async function sendHighlight() {
-    if (!user || !commentText.trim()) return;
-    try {
-      await api(`/api/live/rooms/${activeRoomId}/highlight`, {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, text: commentText }),
-      });
-      setCommentText('');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Error', 'warning');
-    }
-  }
-
-  async function runPrioritySimulation() {
-    const res = await api<{ state: LiveRoomState }>(`/api/live/rooms/${activeRoomId}/simulate-burst`, { method: 'POST' });
-    setRoomState(res.state);
-    toast(isAr ? '⚡ تم إطلاق 3 تعليقات VIP متزامنة (شاهد تصدّر VIP 1 لمدة 15ث)' : 'VIP 1/2/3 Burst launched', 'info');
-  }
-
-  async function sendGift(giftName: string, giftValueEgp: number) {
-    if (!user) return;
-    await api(`/api/live/rooms/${activeRoomId}/gift`, {
-      method: 'POST',
-      body: JSON.stringify({ userId: user.id, giftName, giftValueEgp }),
-    });
-  }
-
-  async function moderate(action: 'delete_active' | 'toggle_highlights' | 'set_cooldown', cooldownSec?: number) {
-    const res = await api<{ state: LiveRoomState }>(`/api/live/rooms/${activeRoomId}/moderate`, {
-      method: 'POST',
-      body: JSON.stringify({ action, cooldownSec }),
-    });
-    setRoomState(res.state);
   }
 
   function spawnHeart() {
     const id = Date.now() + Math.random();
-    setFloatingHearts(prev => [...prev.slice(-10), id]);
-    setTimeout(() => setFloatingHearts(prev => prev.filter(x => x !== id)), 1800);
+    const offset = Math.round((Math.random() - 0.5) * 44);
+    setFloatingHearts(prev => [...prev.slice(-10), { id, offset }]);
+    setTimeout(() => {
+      setFloatingHearts(prev => prev.filter(h => h.id !== id));
+    }, 1300);
   }
 
-  const activeH = roomState?.activeHighlight || null;
-  const remainingMs = activeH?.expiresAt ? Math.max(0, activeH.expiresAt - nowMs) : 0;
-  const remainingSec = (remainingMs / 1000).toFixed(1);
-  const progressPct = activeH ? Math.min(100, Math.max(0, (remainingMs / (activeH.durationSec * 1000)) * 100)) : 0;
+  async function handleSendComment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!commentText.trim() || !activeRoomId) return;
+    const text = commentText.trim();
+    setCommentText('');
+    try {
+      if (pinMode) {
+        await apiPost(`/api/live/rooms/${activeRoomId}/highlight`, { userId: user.id, text });
+        setPinMode(false);
+      } else {
+        await apiPost(`/api/live/rooms/${activeRoomId}/comment`, { userId: user.id, text });
+      }
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'تعذر الإرسال');
+      setTimeout(() => setStatusMsg(''), 2500);
+    }
+  }
+
+  async function sendGift(icon: string, name: string, price: number) {
+    await apiPost(`/api/live/rooms/${activeRoomId}/gift`, {
+      userId: user.id,
+      giftName: `${icon} ${name}`,
+      giftValueEgp: price,
+    });
+    setGiftTrayOpen(false);
+    spawnHeart();
+  }
+
+  const activeRoom = rooms.find(r => r.id === activeRoomId) || rooms[0];
 
   return (
-    <div className="h-full w-full bg-black text-white flex flex-col lg:flex-row overflow-hidden">
-      {/* ============================================================
-          TIKTOK LIVE FULL-BLEED VIDEO STAGE
-         ============================================================ */}
-      <div className="relative flex-1 min-h-[48vh] lg:h-full bg-black overflow-hidden flex items-center justify-center">
-        {webcamActive ? (
-          <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-        ) : (
+    <div className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center">
+      {/* Full-Screen TikTok Live Stage (Zero Side Containers / Zero Cards!) */}
+      <div className="relative w-full h-full max-w-[540px] mx-auto bg-black overflow-hidden">
+        {cameraLive ? (
           <video
-            key={activeRoom?.videoUrl || 'live'}
-            src={activeRoom?.videoUrl || '/uploads/seed/reel1.mp4'}
+            ref={camVideoRef}
             autoPlay
-            loop
-            muted={muted}
             playsInline
+            muted
             className="w-full h-full object-cover"
           />
+        ) : activeRoom?.videoUrl ? (
+          <video
+            key={activeRoom.videoUrl}
+            src={activeRoom.videoUrl}
+            autoPlay
+            loop
+            playsInline
+            muted={muted}
+            onClick={spawnHeart}
+            className="w-full h-full object-cover cursor-pointer"
+          />
+        ) : (
+          <div className="w-full h-full bg-black" />
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/80 pointer-events-none" />
+        {/* Subtle Top & Bottom Vignettes Only for Text Legibility */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/75 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
 
-        {/* TOP FLOATING TIKTOK LIVE HOST PILL + ROOM SWITCHER */}
-        <div className="absolute top-4 inset-x-4 z-20 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 bg-black/50 backdrop-blur-md ps-1.5 pe-3 py-1 rounded-full border border-white/10">
-            <UserAvatar
-              initials={activeRoom?.hostInitials || 'LM'}
-              color={activeRoom?.hostColor || '#10B981'}
-              avatarUrl={activeRoom?.hostAvatarUrl}
-              size={36}
-              vipTier={activeRoom?.hostVip || 3}
-            />
-            <div>
-              <div className="text-xs font-bold leading-tight">{activeRoom?.hostName}</div>
-              <div className="text-[10px] text-white/70 font-mono-num">
-                🎁 {(roomState?.totalGiftsEgp || 0).toLocaleString('en-US')} EGP
+        {/* Top Floating TikTok Host & Stream Switcher Bar */}
+        <div className="absolute top-4 inset-x-4 z-20 flex items-center justify-between gap-2">
+          {/* Host Pill */}
+          {activeRoom && (
+            <div className="flex items-center gap-2 ps-1 pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12]">
+              <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={32} online />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-white truncate max-w-[120px]">{activeRoom.hostName}</div>
+                <div className="text-[10px] text-white/70 truncate max-w-[120px]">{activeRoom.title}</div>
               </div>
+              <span className="ms-1 px-2.5 py-1 rounded-full bg-[#EF4444] text-white text-[10px] font-bold tracking-wide">
+                LIVE
+              </span>
             </div>
-            <span className="ms-1 px-2.5 py-1 rounded-full bg-[#FE2C55] text-white text-[10px] font-bold">
-              LIVE
-            </span>
-          </div>
+          )}
 
-          <div className="flex items-center gap-2">
-            {rooms.map((r, idx) => (
-              <button
-                key={r.id}
-                onClick={() => setActiveRoomId(r.id)}
-                className={`px-3 py-1.5 rounded-full text-xs backdrop-blur-md border cursor-pointer ${
-                  r.id === activeRoomId
-                    ? 'bg-white text-black border-white font-bold'
-                    : 'bg-black/45 text-white/80 border-white/15'
-                }`}
-              >
-                {isAr ? `بث #${idx + 1}` : `Live #${idx + 1}`}
-              </button>
-            ))}
-
-            <span className="px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md text-xs font-mono-num flex items-center gap-1.5 border border-white/10">
-              <Users className="w-3.5 h-3.5" />
-              {(roomState?.viewersCount || 3840).toLocaleString('en-US')}
-            </span>
+          {/* Right Controls: Viewers, Mute, Webcam */}
+          <div className="flex items-center gap-1.5">
+            <div className="px-2.5 py-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] flex items-center gap-1.5 text-xs font-mono-num text-white">
+              <Eye className="w-3.5 h-3.5 text-white/80" />
+              <span>{(roomState?.viewersCount || activeRoom?.viewersCount || 0).toLocaleString('en-US')}</span>
+            </div>
 
             <button
+              type="button"
               onClick={() => setMuted(m => !m)}
-              className="w-9 h-9 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/10 cursor-pointer"
+              className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] text-white flex items-center justify-center cursor-pointer"
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
 
             <button
-              onClick={toggleWebcam}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
-                webcamActive ? 'bg-[#FE2C55] text-white' : 'bg-[#8774E1] text-white'
+              type="button"
+              onClick={toggleCameraBroadcast}
+              title="بث بالكاميرا"
+              className={`w-8 h-8 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer ${
+                cameraLive ? 'bg-white text-black border-white' : 'bg-black/55 border-white/[0.12] text-white'
               }`}
             >
-              {webcamActive ? <VideoOff className="w-3.5 h-3.5" /> : <Video className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">{webcamActive ? (isAr ? 'إنهاء الكاميرا' : 'Stop Cam') : (isAr ? 'بث بكاميرتك' : 'Go Live')}</span>
+              {cameraLive ? <CameraOff className="w-4 h-4" /> : <Camera className="w-4 h-4" />}
             </button>
           </div>
         </div>
 
-        {/* Floating Gift Celebration Banner */}
+        {/* Stream Switcher Pills (Switch Rooms Directly on Stage) */}
+        {rooms.length > 1 && (
+          <div className="absolute top-16 start-4 z-20 flex items-center gap-1.5">
+            {rooms.map(r => {
+              const active = r.id === activeRoomId;
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setActiveRoomId(r.id)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] backdrop-blur-md transition-colors cursor-pointer ${
+                    active
+                      ? 'bg-white text-black font-semibold'
+                      : 'bg-black/45 border border-white/[0.12] text-white/80 hover:text-white'
+                  }`}
+                >
+                  {r.hostName.split(' ')[0]}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Transient Gift Toast */}
         {giftBanner && (
-          <div className="absolute top-20 start-4 z-30 px-4 py-2.5 rounded-full bg-gradient-to-r from-[#D4AF37] to-amber-600 text-black font-bold text-xs shadow-2xl flex items-center gap-2 animate-bounce">
-            <Gift className="w-4 h-4" />
-            <span>{giftBanner.sender} • {giftBanner.giftName} ({giftBanner.giftValueEgp} ج.م)</span>
+          <div className="absolute top-28 start-4 z-30 px-3.5 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 flex items-center gap-2 text-xs text-white">
+            <span className="font-semibold">{giftBanner.sender}</span>
+            <span className="text-white/75">أرسل {giftBanner.giftName}</span>
           </div>
         )}
 
-        {/* Rising Floating 3D Animated Reactions */}
-        <div className="absolute bottom-24 end-6 pointer-events-none z-20">
-          {floatingHearts.map((id, idx) => {
-            const ids = ['bolt', 'fire', 'gem', 'crown', 'heartfire'];
-            return (
-              <div key={id} style={{ right: (idx % 3) * 18 }} className="absolute bottom-0 animate-float-heart">
-                <AnimatedEmoji id={ids[idx % ids.length]} size={42} />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Bottom Glassmorphic 3D Gifts & Interactive FX Bar over Stage */}
-        <div className="absolute bottom-4 inset-x-4 z-20 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 bg-black/55 backdrop-blur-2xl p-1.5 rounded-full border border-white/15 overflow-x-auto">
-            {GIFTS.map((g) => (
-              <button
-                key={g.name}
-                onClick={(e) => {
-                  triggerInteractiveFx(g.emojiId, e.clientX, e.clientY);
-                  sendGift(g.name, g.valueEgp);
-                }}
-                className="px-3 py-1.5 rounded-full hover:bg-white/15 flex items-center gap-1.5 text-xs transition-transform active:scale-95 cursor-pointer shrink-0"
-              >
-                <AnimatedEmoji id={g.emojiId} size={24} />
-                <span className="font-semibold hidden sm:inline">{g.name}</span>
-                <span className="font-mono-num text-[#F3D26B] text-[11px]">{g.valueEgp}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={runPrioritySimulation}
-              className="px-3.5 py-2 rounded-full bg-[#D4AF37] text-black text-xs font-bold flex items-center gap-1.5 shadow-lg cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{isAr ? 'محاكاة تزاحم VIP' : 'VIP Burst'}</span>
-            </button>
-
-            <button
-              onClick={() => setHostToolsOpen(v => !v)}
-              title={isAr ? 'أدوات المذيع' : 'Host Moderation'}
-              className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md border border-white/15 flex items-center justify-center cursor-pointer"
-            >
-              <Shield className="w-4 h-4 text-[#8774E1]" />
-            </button>
-
-            {/* 3D Interactive Lightning / Plasma Reaction Trigger instead of old static heart */}
-            <button
-              onClick={(e) => {
-                triggerInteractiveFx('bolt', e.clientX, e.clientY);
-                spawnHeart();
-              }}
-              title={isAr ? 'تفاعل صاعقة 3D مباشر' : '3D Bolt FX'}
-              className="w-11 h-11 rounded-full bg-black/60 backdrop-blur-xl border border-[#38BDF8]/50 flex items-center justify-center shadow-lg active:scale-125 transition-transform cursor-pointer"
-            >
-              <AnimatedEmoji id="bolt" size={28} />
-            </button>
-          </div>
-        </div>
-
-        {/* Host Moderation Popover */}
-        {hostToolsOpen && (
-          <div className="absolute bottom-18 end-4 z-30 w-72 rounded-3xl bg-[#18181B]/95 backdrop-blur-xl border border-white/15 p-4 space-y-2.5 shadow-2xl">
-            <div className="text-xs font-bold flex items-center justify-between">
-              <span>{isAr ? 'تحكم صاحب البث' : 'Host Controls'}</span>
-              <span className="text-[10px] text-white/50">75% Creator / 25% LM</span>
+        {/* Active Pinned Comment Pill (Above Overlay Stream) */}
+        {roomState?.activeHighlight && (
+          <div className="absolute bottom-[310px] start-4 end-16 z-20 px-3 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2.5">
+            <Pin className="w-3.5 h-3.5 text-white shrink-0" />
+            <div className="min-w-0 flex-1">
+              <span className="text-xs font-semibold text-white me-1.5">{roomState.activeHighlight.displayName}:</span>
+              <span className="text-xs text-white/90">{roomState.activeHighlight.text}</span>
             </div>
-            <button
-              onClick={() => moderate('delete_active')}
-              disabled={!activeH}
-              className="w-full py-2 px-3 rounded-xl bg-white/10 hover:bg-red-500/20 text-xs flex items-center gap-2 cursor-pointer disabled:opacity-40"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-red-400" />
-              {isAr ? 'حذف التعليق المميز الحالي' : 'Clear Active Highlight'}
-            </button>
-            <button
-              onClick={() => moderate('toggle_highlights')}
-              className="w-full py-2 px-3 rounded-xl bg-white/10 text-xs flex items-center gap-2 cursor-pointer"
-            >
-              <Power className="w-3.5 h-3.5 text-emerald-400" />
-              {roomState?.highlightsEnabled
-                ? (isAr ? 'إيقاف التعليقات المميزة مؤقتًا' : 'Pause VIP Highlights')
-                : (isAr ? 'تفعيل التعليقات المميزة' : 'Resume VIP Highlights')}
-            </button>
           </div>
         )}
-      </div>
 
-      {/* ============================================================
-          RIGHT LIVE CHAT + PINNED VIP SUPERCHAT STAGE (TikTok Live / Twitch)
-         ============================================================ */}
-      <aside className="w-full lg:w-[390px] h-[52vh] lg:h-full bg-[#121216] border-t lg:border-t-0 lg:border-s border-white/10 flex flex-col shrink-0">
-        {/* DEDICATED PINNED VIP HIGHLIGHTED COMMENT SLOT */}
-        <div className="p-3.5 border-b border-white/10 bg-[#18181E] space-y-2 shrink-0">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-bold flex items-center gap-1.5 text-[#F3D26B]">
-              <Crown className="w-3.5 h-3.5" />
-              {isAr ? 'التعليقات المميزة (VIP 1 > 2 > 3)' : 'VIP Pinned Stage'}
-            </span>
-            <span className="font-mono-num text-white/50">
-              {isAr ? `الطابور: ${roomState?.highlightQueue.length || 0}` : `Queue: ${roomState?.highlightQueue.length || 0}`}
-            </span>
-          </div>
-
-          {activeH ? (
-            <div
-              className={`rounded-2xl p-3 border relative overflow-hidden shadow-lg ${
-                activeH.vipTier === 1
-                  ? 'bg-gradient-to-r from-[#D4AF37]/25 to-amber-900/20 border-[#D4AF37]/60'
-                  : activeH.vipTier === 2
-                  ? 'bg-gradient-to-r from-[#3390EC]/25 to-blue-900/20 border-[#3390EC]/60'
-                  : 'bg-gradient-to-r from-[#10B981]/25 to-emerald-900/20 border-[#10B981]/60'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <UserAvatar initials={activeH.avatarInitials} color={activeH.avatarColor} size={28} vipTier={activeH.vipTier} />
-                  <span className="text-xs font-bold truncate">{activeH.displayName}</span>
-                  <VipBadge tier={activeH.vipTier} compact />
-                </div>
-                <span className="text-xs font-mono-num font-bold shrink-0">
-                  {remainingSec}s
-                </span>
-              </div>
-              <p className="text-xs mt-1.5 leading-relaxed text-white">{activeH.text}</p>
-              <div className="mt-2 h-1 rounded-full bg-black/40 overflow-hidden">
-                <div
-                  style={{
-                    width: `${progressPct}%`,
-                    backgroundColor: activeH.vipTier === 1 ? '#D4AF37' : activeH.vipTier === 2 ? '#3390EC' : '#10B981',
-                  }}
-                  className="h-full transition-all duration-100"
-                />
-              </div>
+        {/* Transparent TikTok Live Overlay Comments (Zero Container Box!) */}
+        <div className="absolute bottom-[132px] start-4 z-20 w-[76%] max-w-[360px] max-h-[170px] overflow-y-auto no-scrollbar live-comments-mask space-y-1.5 pointer-events-auto">
+          {(roomState?.recentMessages || []).slice(-25).map(msg => (
+            <div key={msg.id} className="flex items-start gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
+              <span className="font-semibold text-white/75 shrink-0">{msg.displayName}</span>
+              <span className={msg.isGift ? 'text-[#FBBF24] font-medium' : 'text-white'}>{msg.text}</span>
             </div>
-          ) : (
-            <div className="py-2.5 px-3 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-white/45 text-center">
-              {isAr ? 'المساحة متاحة • VIP 1 (15ث) • VIP 2 (10ث) • VIP 3 (5ث)' : 'VIP 1 (15s) • VIP 2 (10s) • VIP 3 (5s)'}
-            </div>
-          )}
-
-          {roomState && roomState.highlightQueue.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-0.5">
-              {roomState.highlightQueue.map((q, idx) => (
-                <span key={q.id} className="text-[10px] font-mono-num px-2 py-0.5 rounded-full bg-white/10 text-white/85">
-                  #{idx + 1} VIP {q.vipTier} ({q.durationSec}s)
-                </span>
-              ))}
-            </div>
-          )}
+          ))}
+          <div ref={commentsEndRef} />
         </div>
 
-        {/* LIVE COMMENTS STREAM */}
-        <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5">
-          {(roomState?.recentMessages || []).map((m) => (
+        {/* Floating Hearts Animation */}
+        <div className="pointer-events-none absolute bottom-36 end-6 z-30">
+          {floatingHearts.map(h => (
             <div
-              key={m.id}
-              className={`flex items-start gap-2.5 text-xs px-2.5 py-1.5 rounded-2xl ${
-                m.isGift ? 'bg-[#D4AF37]/15 border border-[#D4AF37]/30' : 'hover:bg-white/[0.04]'
-              }`}
+              key={h.id}
+              style={{ marginInlineEnd: `${h.offset}px` }}
+              className="animate-float-clean text-[#FF2D55]"
             >
-              <UserAvatar initials={m.avatarInitials} color={m.avatarColor} size={26} vipTier={m.vipTier} />
-              <div className="min-w-0 flex-1">
-                <span className="font-bold text-white/80 me-1.5">{m.displayName}</span>
-                <VipBadge tier={m.vipTier} compact />
-                <RankBadge rankId={m.rankId} lang={lang} />
-                <p className="text-white/95 mt-0.5 leading-relaxed">{m.text}</p>
-              </div>
+              <Heart className="w-6 h-6 fill-current" />
             </div>
           ))}
         </div>
 
-        {/* LIVE CHAT COMPOSER */}
-        <div className="p-3 border-t border-white/10 bg-[#18181E] space-y-2 shrink-0">
-          <div className="flex items-center gap-2">
-            <input
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && sendNormal()}
-              placeholder={isAr ? 'أضف تعليقًا في البث...' : 'Say something...'}
-              className="flex-1 rounded-full bg-white/10 px-4 py-2 text-xs text-white placeholder:text-white/40 outline-none"
-            />
+        {/* Right Floating TikTok Action Icons */}
+        <div className="absolute bottom-[136px] end-3.5 z-20 flex flex-col items-center gap-3">
+          <button
+            type="button"
+            onClick={spawnHeart}
+            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white hover:text-[#FF2D55] flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
+          >
+            <Heart className="w-5 h-5 fill-current" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setGiftTrayOpen(v => !v)}
+            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer active:scale-90 transition-transform"
+          >
+            <Gift className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPinMode(v => !v)}
+            title="تثبيت تعليق"
+            className={`w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition-colors ${
+              pinMode ? 'bg-white text-black border-white' : 'bg-black/55 border-white/[0.14] text-white'
+            }`}
+          >
+            <Pin className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => navigator.clipboard?.writeText(window.location.href)}
+            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Minimal Floating Gift Strip */}
+        {giftTrayOpen && (
+          <div className="absolute bottom-[132px] inset-x-4 z-30 p-2 rounded-2xl bg-[#070709]/95 backdrop-blur-md border border-white/[0.14] flex items-center justify-between gap-1.5">
+            {LIVE_GIFTS.map(g => (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => sendGift(g.icon, g.name, g.price)}
+                className="flex-1 py-2 rounded-xl hover:bg-white/[0.06] flex flex-col items-center gap-0.5 cursor-pointer"
+              >
+                <span className="text-lg">{g.icon}</span>
+                <span className="text-[11px] text-white font-medium">{g.name}</span>
+                <span className="text-[10px] font-mono-num text-[#8E8E93]">{g.price}</span>
+              </button>
+            ))}
             <button
-              onClick={sendNormal}
-              disabled={!commentText.trim()}
-              className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer disabled:opacity-40"
+              type="button"
+              onClick={() => setGiftTrayOpen(false)}
+              className="w-7 h-7 rounded-full text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
             >
-              <Send className="w-4 h-4" />
-            </button>
-            <button
-              onClick={sendHighlight}
-              disabled={!commentText.trim() || !canHighlight}
-              title={!canHighlight ? (isAr ? 'حصري لـ VIP 1 و2 و3' : 'VIP 1-3 Only') : ''}
-              className={`px-3.5 h-9 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer disabled:opacity-35 ${
-                canHighlight ? 'bg-[#D4AF37] text-black' : 'bg-white/10 text-white/45'
-              }`}
-            >
-              <Crown className="w-3.5 h-3.5" />
-              <span>{canHighlight ? `${userHighlightSec}s` : 'VIP'}</span>
+              <X className="w-4 h-4" />
             </button>
           </div>
+        )}
+
+        {statusMsg && (
+          <div className="absolute bottom-[132px] inset-x-8 z-30 py-1.5 px-3 rounded-full bg-black/85 border border-white/15 text-center text-xs text-white">
+            {statusMsg}
+          </div>
+        )}
+
+        {/* Bottom Image 1 Pitch-Black Composer Pill Above Nav Dock */}
+        <div className="absolute bottom-[68px] inset-x-3.5 z-20">
+          <ObsidianComposerPill
+            value={commentText}
+            onChange={setCommentText}
+            onSubmit={handleSendComment}
+            placeholder={
+              pinMode
+                ? lang === 'ar'
+                  ? 'اكتب تعليقًا لتثبيته أعلى البث...'
+                  : 'Pin a comment...'
+                : lang === 'ar'
+                ? 'أضف تعليقًا...'
+                : 'Add comment...'
+            }
+            disabled={!commentText.trim()}
+          />
         </div>
-      </aside>
+      </div>
     </div>
   );
 }

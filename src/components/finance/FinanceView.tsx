@@ -1,8 +1,21 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { createChart, ColorType, CandlestickSeriesPartialOptions } from 'lightweight-charts';
-import { TrendingUp, Coins, Wallet, Building2 } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
-import { api } from '../../lib/api';
+import React, { useEffect, useRef, useState } from 'react';
+import { createChart, ColorType } from 'lightweight-charts';
+import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Lang, UserProfile } from '../../types';
+import { apiGet } from '../../lib/api';
+
+interface FinanceViewProps {
+  user: UserProfile;
+  lang: Lang;
+}
+
+interface OhlcPoint {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
 
 interface MarketAsset {
   symbol: string;
@@ -10,7 +23,7 @@ interface MarketAsset {
   nameEn: string;
   category: 'stocks' | 'crypto';
   currency: string;
-  series: Array<{ time: string; open: number; high: number; low: number; close: number }>;
+  series: OhlcPoint[];
 }
 
 interface LedgerRow {
@@ -18,158 +31,217 @@ interface LedgerRow {
   debit_account: string;
   credit_account: string;
   amount_egp: number;
+  category: string;
   description: string;
+  created_at: string;
 }
 
-export function FinanceView() {
-  const { user, lang } = useApp();
-  const isAr = lang === 'ar';
-
+export function FinanceView({ user, lang }: FinanceViewProps) {
   const [assets, setAssets] = useState<MarketAsset[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState('EGX30');
+  const [chartStyle, setChartStyle] = useState<'candles' | 'area'>('candles');
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    api<{ assets: MarketAsset[] }>('/api/finance/markets').then(d => setAssets(d.assets)).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    api<{ entries: LedgerRow[] }>(`/api/finance/ledger/${user.id}`).then(d => setLedger(d.entries)).catch(() => {});
-  }, [user]);
+    apiGet<{ ok: boolean; assets: MarketAsset[] }>('/api/finance/markets')
+      .then(d => setAssets(d.assets))
+      .catch(() => {});
+    apiGet<{ ok: boolean; entries: LedgerRow[] }>(`/api/finance/ledger/${user.id}`)
+      .then(d => setLedger(d.entries))
+      .catch(() => {});
+  }, [user.id]);
 
   const activeAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
 
   useEffect(() => {
-    const container = chartContainerRef.current;
-    if (!container || !activeAsset) return;
+    const el = chartContainerRef.current;
+    if (!el || !activeAsset) return;
 
-    const isLight = user?.theme === 'alabaster';
-    const chart = createChart(container, {
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: 340,
       layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: isLight ? '#475569' : '#94A3B8',
-        fontFamily: 'JetBrains Mono, Inter, monospace',
+        background: { type: ColorType.Solid, color: '#000000' },
+        textColor: '#71717A',
+        fontFamily: 'JetBrains Mono, monospace',
       },
       grid: {
-        vertLines: { color: isLight ? 'rgba(15,23,42,0.05)' : 'rgba(255,255,255,0.04)' },
-        horzLines: { color: isLight ? 'rgba(15,23,42,0.05)' : 'rgba(255,255,255,0.04)' },
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.04)' },
       },
-      width: container.clientWidth,
-      height: 330,
-      rightPriceScale: { borderVisible: false },
-      timeScale: { borderVisible: false },
+      rightPriceScale: {
+        borderColor: 'rgba(255,255,255,0.08)',
+      },
+      timeScale: {
+        borderColor: 'rgba(255,255,255,0.08)',
+      },
     });
 
-    const candleOpts: CandlestickSeriesPartialOptions = {
-      upColor: '#10B981',
-      downColor: '#FF2D55',
-      borderVisible: false,
-      wickUpColor: '#10B981',
-      wickDownColor: '#FF2D55',
-    };
-    const series = chart.addCandlestickSeries(candleOpts);
-    series.setData(activeAsset.series);
+    if (chartStyle === 'candles') {
+      const series = chart.addCandlestickSeries({
+        upColor: '#F5F5F7',
+        downColor: '#52525B',
+        borderUpColor: '#F5F5F7',
+        borderDownColor: '#52525B',
+        wickUpColor: '#F5F5F7',
+        wickDownColor: '#52525B',
+      });
+      series.setData(activeAsset.series);
+    } else {
+      const series = chart.addAreaSeries({
+        lineColor: '#F5F5F7',
+        topColor: 'rgba(255,255,255,0.14)',
+        bottomColor: 'rgba(255,255,255,0.0)',
+        lineWidth: 2,
+      });
+      series.setData(activeAsset.series.map(p => ({ time: p.time, value: p.close })));
+    }
+
     chart.timeScale().fitContent();
 
     const onResize = () => {
-      if (container) chart.applyOptions({ width: container.clientWidth });
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
     };
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
       chart.remove();
     };
-  }, [activeAsset, user?.theme]);
+  }, [activeAsset, chartStyle]);
 
-  if (!user) return null;
-
-  const latest = activeAsset?.series[activeAsset.series.length - 1];
-  const prev = activeAsset?.series[activeAsset.series.length - 2];
-  const deltaPct = latest && prev ? (((latest.close - prev.close) / prev.close) * 100).toFixed(2) : '0.00';
+  const lastBar = activeAsset?.series[activeAsset.series.length - 1];
+  const firstBar = activeAsset?.series[0];
+  const pctChange =
+    lastBar && firstBar ? (((lastBar.close - firstBar.open) / firstBar.open) * 100).toFixed(2) : '0.00';
+  const isUp = Number(pctChange) >= 0;
 
   return (
-    <div className="h-full overflow-y-auto px-4 sm:px-6 py-5">
-      <div className="max-w-6xl mx-auto space-y-5">
-        {/* Sleek Glass Portfolio Capsules */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="lm-card rounded-3xl p-5 space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-[var(--lm-text-muted)]">
-              <span className="flex items-center gap-1.5"><Wallet className="w-4 h-4 text-[var(--lm-accent)]" /> {isAr ? 'المحفظة' : 'Wallet'}</span>
-              <span className="font-mono-num text-[10px] px-2 py-0.5 rounded-full bg-[var(--lm-surface-2)]">SANDBOX</span>
+    <div className="min-h-full w-full bg-black text-[#F5F5F7]">
+      {/* Pure Containerless Markets & Sandbox Ledger Column */}
+      <div className="max-w-[900px] mx-auto min-h-screen border-x border-white/[0.08]">
+        {/* Top Balance & Mode Hairline Row */}
+        <header className="px-5 py-5 border-b border-white/[0.08] flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-mono-num text-[#71717A] tracking-wider uppercase">
+              {lang === 'ar' ? 'الرصيد التجريبي • Sandbox' : 'Sandbox Balance'}
             </div>
-            <div className="text-2xl font-extrabold font-mono-num">
-              {user.demoBalanceEgp.toLocaleString('en-US')} <span className="text-xs font-normal text-[var(--lm-text-muted)]">EGP</span>
-            </div>
-          </div>
-
-          <div className="lm-card rounded-3xl p-5 space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-[var(--lm-text-muted)]">
-              <span className="flex items-center gap-1.5"><Coins className="w-4 h-4 text-[#F5C451]" /> {isAr ? 'عوائد الهدايا' : 'Creator Revenue'}</span>
-              <span className="font-mono-num text-[10px] text-emerald-400">75%</span>
-            </div>
-            <div className="text-2xl font-extrabold font-mono-num text-emerald-400">
-              {user.creatorEarningsEgp.toLocaleString('en-US')} <span className="text-xs font-normal text-[var(--lm-text-muted)]">EGP</span>
+            <div className="text-3xl font-mono-num font-semibold text-white mt-1">
+              {user.demoBalanceEgp.toLocaleString('en-US')} <span className="text-sm text-[#71717A]">EGP</span>
             </div>
           </div>
 
-          <div className="lm-card rounded-3xl p-5 space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-[var(--lm-text-muted)]">
-              <span className="flex items-center gap-1.5"><Building2 className="w-4 h-4 text-[#F5C451]" /> {isAr ? 'ملكية المؤسس' : 'Founder Equity'}</span>
-              <span className="font-mono-num text-[10px] text-[#F5C451]">PRIVATE</span>
+          <div className="text-end">
+            <div className="text-[11px] font-mono-num text-[#71717A]">
+              {lang === 'ar' ? 'عوائد المحتوى التجريبية' : 'Creator Sandbox Yield'}
             </div>
-            <div className="text-2xl font-extrabold font-mono-num">52%</div>
+            <div className="text-lg font-mono-num text-[#E4E4E7] mt-0.5">
+              +{user.creatorEarningsEgp.toLocaleString('en-US')} EGP
+            </div>
           </div>
+        </header>
+
+        {/* Horizontal Hairline Asset Ticker Strip (Zero Cards) */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 divide-x rtl:divide-x-reverse divide-white/[0.08] border-b border-white/[0.08]">
+          {assets.map(asset => {
+            const active = asset.symbol === selectedSymbol;
+            const last = asset.series[asset.series.length - 1];
+            const prev = asset.series[asset.series.length - 2] || last;
+            const chg = prev ? (((last.close - prev.close) / prev.close) * 100).toFixed(2) : '0.00';
+            const pos = Number(chg) >= 0;
+
+            return (
+              <button
+                key={asset.symbol}
+                type="button"
+                onClick={() => setSelectedSymbol(asset.symbol)}
+                className={`px-3.5 py-3 text-start transition-colors cursor-pointer ${
+                  active ? 'bg-white/[0.05]' : 'hover:bg-white/[0.02]'
+                }`}
+              >
+                <div className="text-xs font-mono-num font-semibold text-white">{asset.symbol}</div>
+                <div className="text-[11.5px] font-mono-num text-[#A1A1AA] mt-0.5">
+                  {last?.close.toLocaleString('en-US')}
+                </div>
+                <div className={`text-[10.5px] font-mono-num mt-0.5 flex items-center gap-0.5 ${pos ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                  {pos ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                  <span>{chg}%</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
 
-        {/* TRADINGVIEW PRO TERMINAL */}
-        <div className="lm-card rounded-3xl p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {assets.map((a) => (
+        {/* Active Instrument Header + Pure #000000 TradingView Chart */}
+        {activeAsset && (
+          <section className="border-b border-white/[0.08]">
+            <div className="px-5 py-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white">
+                  {lang === 'ar' ? activeAsset.nameAr : activeAsset.nameEn}
+                </div>
+                <div className="flex items-center gap-2.5 mt-1 font-mono-num">
+                  <span className="text-2xl font-semibold text-white">
+                    {lastBar?.close.toLocaleString('en-US')} {activeAsset.currency}
+                  </span>
+                  <span className={`text-xs ${isUp ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                    {isUp ? '+' : ''}
+                    {pctChange}% (90D)
+                  </span>
+                </div>
+              </div>
+
+              <div className="inline-flex rounded-full bg-[#09090B] border border-white/[0.09] p-0.5 text-xs">
                 <button
-                  key={a.symbol}
-                  onClick={() => setSelectedSymbol(a.symbol)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-mono-num font-bold transition-all cursor-pointer ${
-                    a.symbol === selectedSymbol
-                      ? 'lm-btn-primary'
-                      : 'bg-[var(--lm-surface-2)] text-[var(--lm-text-secondary)] hover:text-[var(--lm-text)]'
+                  type="button"
+                  onClick={() => setChartStyle('candles')}
+                  className={`px-3 py-1 rounded-full cursor-pointer ${
+                    chartStyle === 'candles' ? 'bg-white text-black font-semibold' : 'text-[#8E8E93]'
                   }`}
                 >
-                  {a.symbol}
+                  {lang === 'ar' ? 'شموع' : 'Candles'}
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setChartStyle('area')}
+                  className={`px-3 py-1 rounded-full cursor-pointer ${
+                    chartStyle === 'area' ? 'bg-white text-black font-semibold' : 'text-[#8E8E93]'
+                  }`}
+                >
+                  {lang === 'ar' ? 'خطي' : 'Line'}
+                </button>
+              </div>
             </div>
 
-            {latest && (
-              <div className="flex items-baseline gap-2.5 font-mono-num">
-                <span className="text-xl font-extrabold">{latest.close.toLocaleString('en-US')}</span>
-                <span className={`text-xs font-bold flex items-center gap-0.5 ${Number(deltaPct) >= 0 ? 'text-emerald-400' : 'text-[#FF2D55]'}`}>
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  {Number(deltaPct) >= 0 ? '+' : ''}{deltaPct}%
-                </span>
-              </div>
-            )}
+            <div ref={chartContainerRef} className="w-full px-2 pb-3" />
+          </section>
+        )}
+
+        {/* Double-Entry Sandbox Ledger Rows (Zero Containers) */}
+        <section>
+          <div className="px-5 py-3 border-b border-white/[0.08] flex items-center justify-between text-xs text-[#71717A]">
+            <span>{lang === 'ar' ? 'سجل القيود التجريبي (بدون عمليات بنكية حقيقية)' : 'Sandbox Ledger Entries'}</span>
+            <span className="font-mono-num">READ-ONLY SANDBOX</span>
           </div>
 
-          <div ref={chartContainerRef} className="w-full rounded-2xl bg-[var(--lm-surface-2)] p-2" />
-        </div>
-
-        {/* COMPACT LEDGER */}
-        <div className="lm-card rounded-3xl p-5 space-y-2.5">
-          <div className="text-xs font-bold text-[var(--lm-text-secondary)]">
-            {isAr ? 'سجل الحركات التجريبية' : 'Recent Activity'}
-          </div>
-          <div className="space-y-1.5">
-            {ledger.slice(0, 6).map((row) => (
-              <div key={row.id} className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-[var(--lm-surface-2)] text-xs">
-                <span className="font-medium">{row.description}</span>
-                <span className="font-mono-num font-bold text-emerald-400">{row.amount_egp.toLocaleString('en-US')} EGP</span>
+          <div className="divide-y divide-white/[0.08]">
+            {ledger.map(entry => (
+              <div key={entry.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[13.5px] text-[#F5F5F7] truncate">{entry.description}</div>
+                  <div className="text-[11px] font-mono-num text-[#71717A] mt-0.5 truncate">
+                    {entry.debit_account} → {entry.credit_account}
+                  </div>
+                </div>
+                <div className="text-sm font-mono-num font-semibold text-white shrink-0">
+                  {entry.amount_egp.toLocaleString('en-US')} EGP
+                </div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

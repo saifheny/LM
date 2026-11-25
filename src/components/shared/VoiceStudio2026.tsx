@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Mic, X, Send, FileText } from 'lucide-react';
+import { Play, Pause, Mic, X, FileText } from 'lucide-react';
+import { ChromeArrowButton } from './HardwareUI';
 
 /**
- * 2026 Smart Voice Pill with:
- * - Fluid WaveSurfer audio waveform
+ * Monochrome 2026 Smart Voice Pill:
+ * - Fluid WaveSurfer audio waveform (zero purple/neon gradients)
  * - 1x / 1.5x / 2x Playback Speed toggle
  * - Instant AI Voice-to-Text Transcript drawer ("أ ب")
  */
@@ -30,13 +31,13 @@ export function SmartVoicePill({
     if (!containerRef.current) return;
     const ws = WaveSurfer.create({
       container: containerRef.current,
-      waveColor: isMine ? 'rgba(255,255,255,0.42)' : 'rgba(139,92,246,0.45)',
-      progressColor: isMine ? '#FFFFFF' : '#A78BFA',
+      waveColor: 'rgba(255,255,255,0.24)',
+      progressColor: '#F5F5F7',
       cursorWidth: 0,
-      barWidth: 2.5,
+      barWidth: 2,
       barGap: 2,
       barRadius: 4,
-      height: compact ? 24 : 30,
+      height: compact ? 22 : 28,
       url,
     });
     wsRef.current = ws;
@@ -60,37 +61,41 @@ export function SmartVoicePill({
   }
 
   return (
-    <div className={`space-y-1.5 ${compact ? 'min-w-[195px]' : 'min-w-[235px] sm:min-w-[270px]'}`}>
+    <div className={`space-y-1.5 ${compact ? 'min-w-[190px]' : 'min-w-[230px] sm:min-w-[265px]'}`}>
       <div className="flex items-center gap-2.5">
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); wsRef.current?.playPause(); }}
-          className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90 shadow-md ${
-            isMine ? 'bg-white text-[#6355F8]' : 'bg-gradient-to-tr from-[#7C5CFF] to-[#38BDF8] text-white'
-          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            wsRef.current?.playPause();
+          }}
+          className="w-8 h-8 rounded-full bg-[#F5F5F7] text-black flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90"
         >
-          {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ms-0.5" />}
+          {playing ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ms-0.5" />}
         </button>
 
         <div className="flex-1 min-w-0">
           <div ref={containerRef} className="w-full" />
-          <div className="flex items-center justify-between text-[10px] font-mono-num opacity-80 mt-0.5">
+          <div className="flex items-center justify-between text-[10px] font-mono-num text-[#8E8E93] mt-0.5">
             <span>{duration}</span>
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={cycleSpeed}
-                className="px-1.5 py-0.2 rounded-md bg-black/25 hover:bg-black/40 font-bold cursor-pointer"
+                className="px-1.5 py-0.2 rounded bg-white/[0.08] hover:bg-white/[0.14] text-[#E4E4E7] font-semibold cursor-pointer"
               >
                 {speed}x
               </button>
               {transcript && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); setShowTranscript(v => !v); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowTranscript(v => !v);
+                  }}
                   title="تحويل الصوت لنص"
-                  className={`px-1.5 py-0.2 rounded-md flex items-center gap-0.5 cursor-pointer ${
-                    showTranscript ? 'bg-white text-black font-bold' : 'bg-black/25 hover:bg-black/40'
+                  className={`px-1.5 py-0.2 rounded flex items-center gap-0.5 cursor-pointer ${
+                    showTranscript ? 'bg-[#F5F5F7] text-black font-semibold' : 'bg-white/[0.08] hover:bg-white/[0.14] text-[#E4E4E7]'
                   }`}
                 >
                   <FileText className="w-2.5 h-2.5" />
@@ -103,7 +108,7 @@ export function SmartVoicePill({
       </div>
 
       {showTranscript && transcript && (
-        <div className="text-[11.5px] leading-relaxed px-2.5 py-1.5 rounded-xl bg-black/25 border border-white/10">
+        <div className="text-[11.5px] leading-relaxed text-[#D4D4D8] pt-1.5 border-t border-white/[0.08]">
           {transcript}
         </div>
       )}
@@ -112,13 +117,12 @@ export function SmartVoicePill({
 }
 
 /**
- * 2026 Live Frequency Spectrum Voice Recorder Bar
- * Renders 24 real-time microphone frequency bars while recording!
+ * Monochrome Live Frequency Spectrum Voice Recorder Bar
  */
 export function LiveVoiceRecorder({
   onCancel,
   onSend,
-  placeholderLabel = 'جارٍ التسجيل الصوتي...',
+  placeholderLabel = 'جارٍ التسجيل...',
 }: {
   onCancel: () => void;
   onSend: (audioFile: File, durationSec: number) => void;
@@ -178,10 +182,9 @@ export function LiveVoiceRecorder({
         tick();
       })
       .catch(() => {
-        // Simulated live cadence fallback if mic is unavailable on desktop PC
         const sim = () => {
           const t = Date.now() / 180;
-          setBars(Array.from({ length: 24 }, (_, i) => Math.round(22 + Math.abs(Math.sin(t + i * 0.45)) * 68)));
+          setBars(Array.from({ length: 24 }, (_, i) => Math.round(20 + Math.abs(Math.sin(t + i * 0.45)) * 65)));
           raf = requestAnimationFrame(sim);
         };
         sim();
@@ -198,7 +201,7 @@ export function LiveVoiceRecorder({
   const secStr = (elapsedMs / 1000).toFixed(1);
 
   return (
-    <div className="w-full h-12 rounded-full liquid-glass px-3 flex items-center gap-3 text-white">
+    <div className="w-full min-h-[52px] rounded-full bg-[#070708] border border-white/[0.1] ps-2.5 pe-1.5 py-1.5 flex items-center gap-3 text-[#F5F5F7]">
       <button
         type="button"
         onClick={() => {
@@ -206,47 +209,42 @@ export function LiveVoiceRecorder({
           if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
           onCancel();
         }}
-        className="w-8 h-8 rounded-full bg-white/10 hover:bg-red-500/30 text-red-400 flex items-center justify-center cursor-pointer shrink-0"
+        className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#A1A1AA] flex items-center justify-center cursor-pointer shrink-0"
       >
         <X className="w-4 h-4" />
       </button>
 
-      <div className="flex items-center gap-1.5 text-xs font-mono-num text-[#FF2D55] shrink-0">
-        <Mic className="w-3.5 h-3.5 animate-pulse" />
+      <div className="flex items-center gap-1.5 text-xs font-mono-num text-[#EF4444] shrink-0">
+        <Mic className="w-3.5 h-3.5" />
         <span>{secStr}s</span>
       </div>
 
-      {/* Live 24-Bar Audio Spectrum */}
-      <div className="flex-1 flex items-center justify-center gap-[3px] h-7 overflow-hidden">
+      <div className="flex-1 flex items-center justify-center gap-[3px] h-6 overflow-hidden">
         {bars.map((h, i) => (
           <span
             key={i}
             style={{ height: `${h}%` }}
-            className="w-1 rounded-full bg-gradient-to-t from-[#7C5CFF] to-[#38BDF8] transition-all duration-75"
+            className="w-[2.5px] rounded-full bg-[#E4E4E7] transition-all duration-75"
           />
         ))}
       </div>
 
-      <span className="hidden sm:inline text-[11px] text-white/60 truncate">{placeholderLabel}</span>
+      <span className="hidden sm:inline text-[11px] text-[#71717A] truncate">{placeholderLabel}</span>
 
-      <button
-        type="button"
+      <ChromeArrowButton
+        size={40}
         onClick={async () => {
           sendFlagRef.current = true;
           if (recorderRef.current && recorderRef.current.state !== 'inactive') {
             recorderRef.current.stop();
           } else {
-            // Fallback if PC has no physical mic attached: send seeded clean voice note so demo never fails!
             const res = await fetch('/uploads/seed/voice_note_1.wav');
             const blob = await res.blob();
             const f = new File([blob], `voice-${Date.now()}.wav`, { type: 'audio/wav' });
             onSend(f, Math.max(2, Math.round(elapsedMs / 1000)));
           }
         }}
-        className="w-9 h-9 rounded-full bg-gradient-to-tr from-[#7C5CFF] to-[#38BDF8] text-white flex items-center justify-center shadow-lg cursor-pointer shrink-0"
-      >
-        <Send className="w-4 h-4" />
-      </button>
+      />
     </div>
   );
 }

@@ -1,40 +1,15 @@
-export type VipTier = 0 | 5 | 4 | 3 | 2 | 1;
-
-export type RankId =
-  | 'soldier'
-  | 'pfc'
-  | 'sergeant'
-  | 'colonel'
-  | 'general'
-  | 'prince'
-  | 'king'
-  | 'president'
-  | 'emperor';
-
 export type CountryCode = 'EG' | 'SA' | 'AE' | 'US' | 'EU';
 
-export type ThemeId = 'obsidian' | 'alabaster' | 'royal-gold' | 'emerald-reserve' | 'imperial-onyx';
-
-export type AiTierId = 'free' | 'ai_20' | 'ai_50' | 'ai_100' | 'ai_200';
-
 export type NavTab =
-  | 'chat'
-  | 'videos'
   | 'social'
+  | 'videos'
   | 'live'
+  | 'chat'
   | 'ai'
-  | 'vip'
   | 'finance'
   | 'settings';
 
 export type Lang = 'ar' | 'en';
-
-export interface AdRemovalFlags {
-  videos: boolean;
-  largeGroups: boolean;
-  ai: boolean;
-  investment: boolean;
-}
 
 export interface UserProfile {
   id: string;
@@ -46,21 +21,7 @@ export interface UserProfile {
   avatarInitials: string;
   avatarUrl: string | null;
   verified: boolean;
-  vipTier: VipTier;
-  prioritySupport: boolean;
-  rankId: RankId;
-  supremeTitle: 'king' | 'president' | 'emperor' | null;
-  aiTier: AiTierId;
-  aiUsedToday: number;
-  adRemoval: AdRemovalFlags;
-  customAppName: string;
-  customAppIcon: string;
-  theme: ThemeId;
   country: CountryCode;
-  travelExceptionActive: boolean;
-  travelExceptionNote: string | null;
-  monthsAbroad: number;
-  targetCountry: CountryCode | null;
   demoBalanceEgp: number;
   creatorEarningsEgp: number;
   followersCount: number;
@@ -76,10 +37,21 @@ export interface StoryItem {
   avatarColor: string;
   avatarInitials: string;
   avatarUrl: string | null;
-  vipTier: VipTier;
   mediaUrl: string;
   caption: string;
   createdAt: string;
+}
+
+export interface PostPollOption {
+  id: string;
+  text: string;
+  votes: number;
+}
+
+export interface PostPoll {
+  question: string;
+  options: PostPollOption[];
+  votedOptionId?: string | null;
 }
 
 export interface SocialPost {
@@ -91,22 +63,33 @@ export interface SocialPost {
   avatarInitials: string;
   avatarUrl: string | null;
   verified: boolean;
-  vipTier: VipTier;
-  rankId: RankId;
-  supremeTitle: string | null;
+  topic: string;
   content: string;
   mediaUrl: string | null;
   mediaUrls: string[];
   location: string;
-  mediaStyle: string | null;
-  mediaCaption: string | null;
-  isSponsored: boolean;
-  sponsorBudgetEgp: number;
-  sponsorAudience: string | null;
+  poll: PostPoll | null;
+  score: number;
+  myVote: -1 | 0 | 1;
   likesCount: number;
   commentsCount: number;
   sharesCount: number;
   likedByMe: boolean;
+  createdAt: string;
+}
+
+export interface PostCommentItem {
+  id: string;
+  postId: string;
+  userId: string;
+  parentId: string | null;
+  displayName: string;
+  username: string;
+  avatarColor: string;
+  avatarInitials: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  content: string;
   createdAt: string;
 }
 
@@ -119,8 +102,6 @@ export interface ShortVideoItem {
   avatarInitials: string;
   avatarUrl: string | null;
   verified: boolean;
-  vipTier: VipTier;
-  rankId: RankId;
   title: string;
   description: string;
   tags: string;
@@ -129,8 +110,6 @@ export interface ShortVideoItem {
   posterUrl: string | null;
   scenePreset: string;
   durationSec: number;
-  isSponsored: boolean;
-  sponsorBudgetEgp: number;
   likesCount: number;
   commentsCount: number;
   savesCount: number;
@@ -153,7 +132,6 @@ export interface ConversationItem {
   pinnedMessage: string | null;
   isPinned: boolean;
   unreadCount: number;
-  isLargeGroup: boolean;
   isEncrypted: boolean;
   memberCount: number;
   lastMessage: string;
@@ -169,15 +147,11 @@ export interface ChatMessageItem {
   avatarColor: string;
   avatarInitials: string;
   avatarUrl: string | null;
-  vipTier: VipTier;
   content: string;
-  msgType: 'text' | 'image' | 'audio' | 'video_note' | 'interactive_emoji' | 'ink_sketch' | 'game_dice' | 'file' | 'ai_reply';
+  msgType: 'text' | 'image' | 'audio' | 'video_note' | 'file' | 'ai_reply';
   mediaUrl: string | null;
   transcript: string | null;
-  sendEffect: string | null;
   isSpoiler: boolean;
-  kineticStyle: 'neon' | 'wave' | 'typewriter' | null;
-  meta: Record<string, unknown> | null;
   replyToId: string | null;
   replySender: string | null;
   replyText: string | null;
@@ -196,7 +170,6 @@ export interface VideoCommentItem {
   avatarColor: string;
   avatarInitials: string;
   avatarUrl: string | null;
-  vipTier: VipTier;
   content: string;
   audioUrl: string | null;
   audioDurationSec: number;
@@ -212,12 +185,10 @@ export interface HighlightComment {
   userId: string;
   displayName: string;
   username: string;
-  vipTier: 1 | 2 | 3;
-  rankId: RankId;
   avatarColor: string;
   avatarInitials: string;
   text: string;
-  durationSec: 15 | 10 | 5;
+  durationSec: number;
   createdAt: number;
   startedAt?: number;
   expiresAt?: number;
@@ -229,8 +200,6 @@ export interface LiveChatMessage {
   userId: string;
   displayName: string;
   username: string;
-  vipTier: VipTier;
-  rankId: RankId;
   avatarColor: string;
   avatarInitials: string;
   text: string;
@@ -248,7 +217,6 @@ export interface LiveRoomItem {
   hostColor: string;
   hostInitials: string;
   hostAvatarUrl: string | null;
-  hostVip: VipTier;
   title: string;
   category: string;
   videoUrl: string | null;
@@ -257,7 +225,6 @@ export interface LiveRoomItem {
   totalGiftsEgp: number;
   highlightsEnabled: boolean;
   cooldownSec: number;
-  platformCutPct: number;
 }
 
 export interface LiveRoomState {
@@ -272,18 +239,6 @@ export interface LiveRoomState {
   totalGiftsEgp: number;
   viewersCount: number;
 }
-
-export const RANK_META: Record<RankId, { ar: string; en: string; color: string; supreme?: boolean }> = {
-  soldier: { ar: 'جندي', en: 'Soldier', color: '#71717A' },
-  pfc: { ar: 'جندي أول', en: 'PFC', color: '#94A3B8' },
-  sergeant: { ar: 'رقيب', en: 'Sergeant', color: '#38BDF8' },
-  colonel: { ar: 'عقيد', en: 'Colonel', color: '#818CF8' },
-  general: { ar: 'جنرال', en: 'General', color: '#10B981' },
-  prince: { ar: 'أمير', en: 'Prince', color: '#F59E0B' },
-  king: { ar: 'الملك', en: 'The King', color: '#EAB308', supreme: true },
-  president: { ar: 'الرئيس', en: 'The President', color: '#E2E8F0', supreme: true },
-  emperor: { ar: 'الإمبراطور', en: 'The Emperor', color: '#D4AF37', supreme: true },
-};
 
 export const COUNTRY_META: Record<CountryCode, { ar: string; en: string; currency: string; symbol: string; flag: string }> = {
   EG: { ar: 'مصر', en: 'Egypt', currency: 'EGP', symbol: 'ج.م', flag: '🇪🇬' },
