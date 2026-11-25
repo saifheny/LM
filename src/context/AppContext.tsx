@@ -43,7 +43,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [lang, setLangState] = useState<Lang>(() => (localStorage.getItem('lm_lang') as Lang) || 'ar');
-  const [activeTab, setActiveTab] = useState<NavTab>('social');
+  const [activeTab, setActiveTab] = useState<NavTab>('chat');
   const [wsConnected, setWsConnected] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [pendingAiShare, setPendingAiShare] = useState<PendingAiShare | null>(null);

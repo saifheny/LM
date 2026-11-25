@@ -18,10 +18,10 @@ export type ThemeId = 'obsidian' | 'alabaster' | 'royal-gold' | 'emerald-reserve
 export type AiTierId = 'free' | 'ai_20' | 'ai_50' | 'ai_100' | 'ai_200';
 
 export type NavTab =
-  | 'social'
-  | 'videos'
-  | 'live'
   | 'chat'
+  | 'videos'
+  | 'social'
+  | 'live'
   | 'ai'
   | 'vip'
   | 'finance'
@@ -68,6 +68,20 @@ export interface UserProfile {
   createdAt: string;
 }
 
+export interface StoryItem {
+  id: string;
+  userId: string;
+  displayName: string;
+  username: string;
+  avatarColor: string;
+  avatarInitials: string;
+  avatarUrl: string | null;
+  vipTier: VipTier;
+  mediaUrl: string;
+  caption: string;
+  createdAt: string;
+}
+
 export interface SocialPost {
   id: string;
   userId: string;
@@ -75,12 +89,15 @@ export interface SocialPost {
   username: string;
   avatarColor: string;
   avatarInitials: string;
+  avatarUrl: string | null;
   verified: boolean;
   vipTier: VipTier;
   rankId: RankId;
   supremeTitle: string | null;
   content: string;
   mediaUrl: string | null;
+  mediaUrls: string[];
+  location: string;
   mediaStyle: string | null;
   mediaCaption: string | null;
   isSponsored: boolean;
@@ -100,13 +117,16 @@ export interface ShortVideoItem {
   username: string;
   avatarColor: string;
   avatarInitials: string;
+  avatarUrl: string | null;
   verified: boolean;
   vipTier: VipTier;
   rankId: RankId;
   title: string;
   description: string;
   tags: string;
+  audioTitle: string;
   videoUrl: string | null;
+  posterUrl: string | null;
   scenePreset: string;
   durationSec: number;
   isSponsored: boolean;
@@ -114,6 +134,7 @@ export interface ShortVideoItem {
   likesCount: number;
   commentsCount: number;
   savesCount: number;
+  sharesCount: number;
   viewsCount: number;
   likedByMe: boolean;
   savedByMe: boolean;
@@ -123,9 +144,15 @@ export interface ShortVideoItem {
 export interface ConversationItem {
   id: string;
   type: 'dm' | 'group' | 'community';
+  folder: 'personal' | 'groups' | 'channels';
   title: string;
   description: string;
   avatarColor: string;
+  avatarUrl: string | null;
+  onlineText: string;
+  pinnedMessage: string | null;
+  isPinned: boolean;
+  unreadCount: number;
   isLargeGroup: boolean;
   isEncrypted: boolean;
   memberCount: number;
@@ -141,10 +168,15 @@ export interface ChatMessageItem {
   username: string;
   avatarColor: string;
   avatarInitials: string;
+  avatarUrl: string | null;
   vipTier: VipTier;
   content: string;
   msgType: 'text' | 'image' | 'audio' | 'file' | 'ai_reply';
   mediaUrl: string | null;
+  replyToId: string | null;
+  replySender: string | null;
+  replyText: string | null;
+  reactions: Record<string, string[]>;
   aiConsentRef: string | null;
   createdAt: string;
 }
@@ -190,9 +222,11 @@ export interface LiveRoomItem {
   hostUsername: string;
   hostColor: string;
   hostInitials: string;
+  hostAvatarUrl: string | null;
   hostVip: VipTier;
   title: string;
   category: string;
+  videoUrl: string | null;
   scenePreset: string;
   viewersCount: number;
   totalGiftsEgp: number;

@@ -1,21 +1,26 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { Swiper, SwiperSlide } from 'swiper/react';
+import { Pagination } from 'swiper/modules';
+import 'swiper/css';
+import 'swiper/css/pagination';
 import {
   Heart,
   MessageCircle,
-  Share2,
+  Send,
+  Bookmark,
   Image as ImageIcon,
   Megaphone,
-  Cpu,
-  Send,
-  Radio,
-  ShieldAlert,
-  Crown,
+  Sparkles,
+  Plus,
   X,
+  MapPin,
+  MoreHorizontal,
+  Radio,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api, uploadFile } from '../../lib/api';
-import { SocialPost } from '../../types';
-import { EditorialMediaCard, RankBadge, UserAvatar, VerifiedIcon, VipBadge } from '../shared/LmBrandMark';
+import { SocialPost, StoryItem } from '../../types';
+import { RankBadge, UserAvatar, VerifiedIcon, VipBadge } from '../shared/LmBrandMark';
 
 interface CommentRow {
   id: string;
@@ -23,21 +28,27 @@ interface CommentRow {
   username: string;
   avatar_color: string;
   avatar_initials: string;
+  avatar_url: string | null;
   vip_tier: number;
   content: string;
-  created_at: string;
 }
 
 export function SocialView() {
   const { user, allUsers, lang, toast, sendToAi, setActiveTab } = useApp();
   const isAr = lang === 'ar';
 
+  const [stories, setStories] = useState<StoryItem[]>([]);
+  const [activeStoryIndex, setActiveStoryIndex] = useState<number | null>(null);
   const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [savedIds, setSavedIds] = useState<Record<string, boolean>>({});
+  const [burstPostId, setBurstPostId] = useState<string | null>(null);
+
+  // Composer Modal / Bar
+  const [composerOpen, setComposerOpen] = useState(false);
   const [content, setContent] = useState('');
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [isSponsored, setIsSponsored] = useState(false);
   const [sponsorBudget, setSponsorBudget] = useState(500);
-  const [posting, setPosting] = useState(false);
   const [uploading, setUploading] = useState(false);
 
   const [openCommentsPostId, setOpenCommentsPostId] = useState<string | null>(null);
@@ -47,19 +58,32 @@ export function SocialView() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const loadPosts = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     if (!user) return;
-    try {
-      const data = await api<{ posts: SocialPost[] }>(`/api/posts?userId=${user.id}`);
-      setPosts(data.posts);
-    } catch {
-      // ignore
-    }
+    const [pData, sData] = await Promise.all([
+      api<{ posts: SocialPost[] }>(`/api/posts?userId=${user.id}`),
+      api<{ stories: StoryItem[] }>('/api/stories'),
+    ]);
+    setPosts(pData.posts);
+    setStories(sData.stories);
   }, [user]);
 
   useEffect(() => {
-    loadPosts();
-  }, [loadPosts]);
+    loadAll();
+  }, [loadAll]);
+
+  // Auto-advance full-screen Story after 5s
+  useEffect(() => {
+    if (activeStoryIndex === null) return;
+    const id = setTimeout(() => {
+      if (activeStoryIndex + 1 < stories.length) {
+        setActiveStoryIndex(activeStoryIndex + 1);
+      } else {
+        setActiveStoryIndex(null);
+      }
+    }, 5000);
+    return () => clearTimeout(id);
+  }, [activeStoryIndex, stories.length]);
 
   if (!user) return null;
 
@@ -68,9 +92,8 @@ export function SocialView() {
     if (!file) return;
     setUploading(true);
     try {
-      const uploaded = await uploadFile(file);
-      setMediaUrl(uploaded.url);
-      toast(isAr ? 'تم رفع الصورة محليًا بنجاح' : 'Image uploaded locally', 'success');
+      const up = await uploadFile(file);
+      setMediaUrl(up.url);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Upload failed', 'error');
     } finally {
@@ -81,33 +104,31 @@ export function SocialView() {
   async function handlePublish(e: React.FormEvent) {
     e.preventDefault();
     if (!user || !content.trim()) return;
-    setPosting(true);
-    try {
-      await api('/api/posts', {
-        method: 'POST',
-        body: JSON.stringify({
-          userId: user.id,
-          content,
-          mediaUrl,
-          isSponsored,
-          sponsorBudgetEgp: isSponsored ? sponsorBudget : 0,
-          sponsorAudience: isSponsored ? 'مصر والخليج • اهتمامات التقنية والأعمال' : undefined,
-        }),
-      });
-      setContent('');
-      setMediaUrl(null);
-      setIsSponsored(false);
-      await loadPosts();
-      toast(isAr ? 'تم نشر المنشور بنجاح' : 'Post published', 'success');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Error', 'error');
-    } finally {
-      setPosting(false);
-    }
+    await api('/api/posts', {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: user.id,
+        content,
+        mediaUrl,
+        isSponsored,
+        sponsorBudgetEgp: isSponsored ? sponsorBudget : 0,
+        sponsorAudience: isSponsored ? 'مصر والخليج' : undefined,
+      }),
+    });
+    setContent('');
+    setMediaUrl(null);
+    setIsSponsored(false);
+    setComposerOpen(false);
+    await loadAll();
+    toast(isAr ? 'تم نشر المنشور' : 'Posted', 'success');
   }
 
-  async function handleLike(postId: string) {
+  async function handleLike(postId: string, forceLike = false) {
     if (!user) return;
+    const target = posts.find(p => p.id === postId);
+    if (!target) return;
+    if (forceLike && target.likedByMe) return;
+
     setPosts(prev =>
       prev.map(p =>
         p.id === postId
@@ -115,10 +136,7 @@ export function SocialView() {
           : p
       )
     );
-    await api(`/api/posts/${postId}/like`, {
-      method: 'POST',
-      body: JSON.stringify({ userId: user.id }),
-    });
+    await api(`/api/posts/${postId}/like`, { method: 'POST', body: JSON.stringify({ userId: user.id }) });
   }
 
   async function toggleComments(postId: string) {
@@ -143,391 +161,385 @@ export function SocialView() {
     setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: p.commentsCount + 1 } : p)));
   }
 
-  async function promotePost(postId: string) {
-    await api(`/api/posts/${postId}/promote`, {
-      method: 'POST',
-      body: JSON.stringify({ budgetEgp: 750, audience: 'جمهور مخصص — السوق المصري' }),
-    });
-    await loadPosts();
-    toast(isAr ? 'تم ترويج المنشور كحملة ممولة واضحة للمستخدمين' : 'Post promoted as sponsored campaign', 'success');
-  }
-
-  const showPlatformAd = !user.adRemoval.videos && user.vipTier === 0;
+  const activeStory = activeStoryIndex !== null ? stories[activeStoryIndex] : null;
 
   return (
-    <div className="h-full overflow-y-auto px-4 sm:px-6 py-5">
-      <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* MAIN FEED COLUMN */}
-        <div className="lg:col-span-8 space-y-4">
-          {/* Composer */}
-          <form onSubmit={handlePublish} className="lm-card rounded-2xl p-4 space-y-3">
-            <div className="flex items-start gap-3">
-              <UserAvatar initials={user.avatarInitials} color={user.avatarColor} size={40} vipTier={user.vipTier} />
-              <div className="flex-1 min-w-0 space-y-2.5">
-                <textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  rows={3}
-                  placeholder={isAr ? 'شارك فكرة، خبر، أو محتوى جديد مع مجتمع LM...' : 'Share an update, idea, or story with LM...'}
-                  className="w-full bg-transparent text-sm text-[var(--lm-text)] placeholder:text-[var(--lm-text-muted)] resize-none outline-none leading-relaxed"
+    <div className="h-full overflow-y-auto bg-[var(--lm-bg)]">
+      <div className="max-w-[980px] mx-auto px-3 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* ============================================================
+            INSTAGRAM / PIXELFED CENTER PHOTO FEED (7 cols)
+           ============================================================ */}
+        <div className="lg:col-span-7 space-y-5 max-w-[540px] mx-auto w-full">
+          {/* INSTAGRAM STORIES TRAY */}
+          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar pb-1">
+            {/* Create Post / Story Trigger */}
+            <button
+              onClick={() => setComposerOpen(true)}
+              className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <div className="relative">
+                <UserAvatar
+                  initials={user.avatarInitials}
+                  color={user.avatarColor}
+                  avatarUrl={user.avatarUrl}
+                  size={62}
                 />
-                {mediaUrl && (
-                  <div className="relative rounded-xl overflow-hidden border border-[var(--lm-border)] max-h-60">
-                    <img src={mediaUrl} alt="Upload" className="w-full h-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => setMediaUrl(null)}
-                      className="absolute top-2 end-2 w-7 h-7 rounded-full bg-black/75 text-white flex items-center justify-center cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                <span className="absolute bottom-0 end-0 w-5 h-5 rounded-full bg-[#3390EC] text-white border-2 border-[var(--lm-bg)] flex items-center justify-center">
+                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                </span>
+              </div>
+              <span className="text-[11px] text-[var(--lm-text-secondary)]">{isAr ? 'نشر جديد' : 'Create'}</span>
+            </button>
+
+            {/* Active Creator Stories with Gradient Ring */}
+            {stories.map((st, idx) => (
+              <button
+                key={st.id}
+                onClick={() => setActiveStoryIndex(idx)}
+                className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
+              >
+                <div className="story-ring rounded-full transition-transform group-hover:scale-105">
+                  <div className="p-0.5 rounded-full bg-[var(--lm-bg)]">
+                    <UserAvatar
+                      initials={st.avatarInitials}
+                      color={st.avatarColor}
+                      avatarUrl={st.avatarUrl}
+                      size={58}
+                    />
                   </div>
-                )}
-                {isSponsored && (
-                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="text-amber-300 font-medium flex items-center gap-1.5">
-                      <Megaphone className="w-3.5 h-3.5" />
-                      {isAr ? 'حملة ترويج ممولة (تظهر بعلامة "محتوى ممول" واضحة)' : 'Paid Promotion (Clearly labeled Sponsored)'}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--lm-text-muted)]">{isAr ? 'الميزانية:' : 'Budget:'}</span>
-                      <select
-                        value={sponsorBudget}
-                        onChange={(e) => setSponsorBudget(Number(e.target.value))}
-                        className="lm-input rounded-lg px-2 py-1 text-xs font-mono-num"
-                      >
-                        <option value={250}>250 EGP</option>
-                        <option value={500}>500 EGP</option>
-                        <option value={1500}>1,500 EGP</option>
-                        <option value={5000}>5,000 EGP</option>
-                      </select>
+                </div>
+                <span className="text-[11px] font-medium truncate max-w-[68px]">{st.displayName.split(' ')[0]}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Quick Inline Share Pill */}
+          <button
+            onClick={() => setComposerOpen(true)}
+            className="w-full rounded-2xl bg-[var(--lm-surface)] border border-[var(--lm-border)] px-4 py-3 flex items-center justify-between text-xs text-[var(--lm-text-muted)] hover:border-[var(--lm-border-strong)] cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <UserAvatar initials={user.avatarInitials} color={user.avatarColor} avatarUrl={user.avatarUrl} size={32} />
+              <span>{isAr ? 'شارك صورة أو لحظة جديدة...' : 'Share a photo or moment...'}</span>
+            </div>
+            <ImageIcon className="w-4 h-4 text-[#8774E1]" />
+          </button>
+
+          {/* INSTAGRAM-STYLE PHOTO CARDS */}
+          {posts.map((post) => (
+            <article key={post.id} className="rounded-3xl bg-[var(--lm-surface)] border border-[var(--lm-border)] overflow-hidden">
+              {/* Header */}
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="story-ring rounded-full p-[1.5px]">
+                    <div className="p-[1.5px] rounded-full bg-[var(--lm-surface)]">
+                      <UserAvatar
+                        initials={post.avatarInitials}
+                        color={post.avatarColor}
+                        avatarUrl={post.avatarUrl}
+                        size={36}
+                      />
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-[var(--lm-border)] flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="lm-btn-ghost px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <ImageIcon className="w-3.5 h-3.5" />
-                  {uploading ? (isAr ? 'جاري الرفع...' : 'Uploading...') : (isAr ? 'صورة' : 'Image')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsSponsored(v => !v)}
-                  className={`px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 border transition-colors cursor-pointer ${
-                    isSponsored
-                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
-                      : 'lm-btn-ghost'
-                  }`}
-                >
-                  <Megaphone className="w-3.5 h-3.5" />
-                  {isAr ? 'ترويج ممول' : 'Promote'}
-                </button>
-              </div>
-              <button
-                type="submit"
-                disabled={posting || !content.trim()}
-                className="lm-btn-primary px-4 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-45"
-              >
-                <Send className="w-3.5 h-3.5" />
-                {isAr ? 'نشر الآن' : 'Publish'}
-              </button>
-            </div>
-          </form>
-
-          {/* Platform Traditional Ad (Disappears when user removes ads or activates VIP 5+) */}
-          {showPlatformAd && (
-            <div className="rounded-2xl p-4 border border-[var(--lm-border-strong)] bg-[var(--lm-surface-2)] flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono-num uppercase px-2 py-0.5 rounded bg-[var(--lm-surface)] border border-[var(--lm-border)] text-[var(--lm-text-muted)]">
-                    {isAr ? 'إعلان منصة تقليدي' : 'Platform Ad'}
-                  </span>
-                  <span className="text-xs font-semibold">
-                    {isAr ? 'تصفّح LM بدون إعلانات المنصة التقليدية' : 'Browse LM without traditional platform ads'}
-                  </span>
-                </div>
-                <p className="text-xs text-[var(--lm-text-secondary)]">
-                  {isAr
-                    ? 'يمكنك إزالة إعلانات المنصة بالباقات المنفصلة أو عضوية VIP 5 (مع بقاء المحتوى الممول من المستخدمين بوضوح).'
-                    : 'Remove platform ads via modular add-ons or VIP 5 (user-promoted posts remain clearly tagged).'}
-                </p>
-              </div>
-              <button
-                onClick={() => setActiveTab('vip')}
-                className="lm-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-semibold cursor-pointer shrink-0"
-              >
-                {isAr ? 'إدارة الإعلانات وVIP' : 'Manage Ads & VIP'}
-              </button>
-            </div>
-          )}
-
-          {/* Posts List */}
-          {posts.map((post) => (
-            <article key={post.id} className="lm-card rounded-2xl p-4 sm:p-5 space-y-3.5">
-              {/* Post Header */}
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <UserAvatar initials={post.avatarInitials} color={post.avatarColor} size={40} vipTier={post.vipTier} />
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-semibold truncate">{post.displayName}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[13.5px] font-bold truncate">{post.displayName}</span>
                       {post.verified && <VerifiedIcon />}
                       <VipBadge tier={post.vipTier} compact />
-                      <RankBadge rankId={post.rankId} lang={lang} />
                     </div>
-                    <div className="flex items-center gap-2 text-[11px] text-[var(--lm-text-muted)] mt-0.5">
-                      <span dir="ltr" className="font-mono-num inline-block">@{post.username}</span>
-                      {post.isSponsored && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/12 border border-amber-500/30 text-amber-400 font-medium text-[10px]">
-                          <Megaphone className="w-2.5 h-2.5" />
-                          {isAr ? 'محتوى ممول' : 'Sponsored'}
-                        </span>
+                    <div className="flex items-center gap-1.5 text-[11px] text-[var(--lm-text-muted)]">
+                      {post.isSponsored ? (
+                        <span className="text-amber-400 font-medium">{isAr ? 'ممول • Sponsored' : 'Sponsored'}</span>
+                      ) : (
+                        <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" /> {post.location}</span>
                       )}
                     </div>
                   </div>
                 </div>
-
-                {/* Explicit Share to LM AI */}
-                <button
-                  onClick={() =>
-                    sendToAi({
-                      title: `${isAr ? 'منشور' : 'Post'} @${post.username}`,
-                      content: post.content,
-                      source: 'post_summary',
-                    })
-                  }
-                  title={isAr ? 'تلخيص المنشور عبر LM AI بإذنك' : 'Summarize with LM AI'}
-                  className="lm-btn-ghost px-2.5 py-1.5 rounded-lg text-[11px] flex items-center gap-1.5 shrink-0 cursor-pointer"
-                >
-                  <Cpu className="w-3.5 h-3.5 text-[var(--lm-accent)]" />
-                  <span className="hidden sm:inline">{isAr ? 'تلخيص AI' : 'AI Summary'}</span>
-                </button>
+                <MoreHorizontal className="w-4 h-4 text-[var(--lm-text-muted)]" />
               </div>
 
-              {/* Post Body */}
-              <p className="text-sm leading-relaxed whitespace-pre-line text-[var(--lm-text)]">
-                {post.content}
-              </p>
+              {/* Edge-to-Edge High-Resolution Photo / Swiper Carousel */}
+              {post.mediaUrls && post.mediaUrls.length > 0 && (
+                <div
+                  onDoubleClick={() => {
+                    setBurstPostId(post.id);
+                    setTimeout(() => setBurstPostId(null), 900);
+                    handleLike(post.id, true);
+                  }}
+                  className="relative bg-black select-none cursor-pointer"
+                >
+                  {post.mediaUrls.length > 1 ? (
+                    <Swiper modules={[Pagination]} pagination={{ clickable: true }} className="w-full aspect-[4/4]">
+                      {post.mediaUrls.map((url, idx) => (
+                        <SwiperSlide key={idx}>
+                          <img src={url} alt="" className="w-full h-full object-cover" />
+                        </SwiperSlide>
+                      ))}
+                    </Swiper>
+                  ) : (
+                    <img src={post.mediaUrls[0]} alt="" className="w-full aspect-[4/4] object-cover" />
+                  )}
 
-              {/* Post Media */}
-              {post.mediaUrl ? (
-                <div className="rounded-xl overflow-hidden border border-[var(--lm-border)] max-h-[380px]">
-                  <img src={post.mediaUrl} alt="Post attachment" className="w-full h-full object-cover" />
-                </div>
-              ) : post.mediaStyle ? (
-                <EditorialMediaCard styleKey={post.mediaStyle} caption={post.mediaCaption} />
-              ) : null}
-
-              {post.isSponsored && post.sponsorAudience && (
-                <div className="text-[11px] text-[var(--lm-text-muted)] flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--lm-surface-2)] border border-[var(--lm-border)]">
-                  <span>{isAr ? `الجمهور المستهدف: ${post.sponsorAudience}` : `Target: ${post.sponsorAudience}`}</span>
-                  <span className="font-mono-num">{post.sponsorBudgetEgp.toLocaleString('en-US')} EGP</span>
+                  {burstPostId === post.id && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                      <Heart className="w-24 h-24 text-[#FE2C55] fill-[#FE2C55] animate-ping" />
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Actions */}
-              <div className="pt-2.5 border-t border-[var(--lm-border)] flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1 sm:gap-2">
-                  <button
-                    onClick={() => handleLike(post.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-mono-num flex items-center gap-1.5 transition-colors cursor-pointer ${
-                      post.likedByMe
-                        ? 'bg-red-500/12 text-red-400 border border-red-500/30'
-                        : 'text-[var(--lm-text-secondary)] hover:bg-[var(--lm-surface-hover)] border border-transparent'
-                    }`}
-                  >
-                    <Heart className={`w-3.5 h-3.5 ${post.likedByMe ? 'fill-current' : ''}`} />
-                    {post.likesCount.toLocaleString('en-US')}
-                  </button>
-
-                  <button
-                    onClick={() => toggleComments(post.id)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-mono-num text-[var(--lm-text-secondary)] hover:bg-[var(--lm-surface-hover)] flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    {post.commentsCount}
-                  </button>
-
-                  <button
-                    onClick={() => toast(isAr ? 'تم نسخ رابط المنشور' : 'Post link copied', 'info')}
-                    className="px-3 py-1.5 rounded-lg text-xs font-mono-num text-[var(--lm-text-secondary)] hover:bg-[var(--lm-surface-hover)] flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    {post.sharesCount}
-                  </button>
-                </div>
-
-                {!post.isSponsored && post.userId === user.id && (
-                  <button
-                    onClick={() => promotePost(post.id)}
-                    className="text-[11px] font-medium text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <Megaphone className="w-3 h-3" />
-                    {isAr ? 'ترويج المنشور' : 'Boost Post'}
-                  </button>
-                )}
-              </div>
-
-              {/* Comments Drawer */}
-              {openCommentsPostId === post.id && (
-                <div className="pt-3 border-t border-[var(--lm-border)] space-y-3">
-                  <div className="space-y-2 max-h-56 overflow-y-auto">
-                    {(commentsMap[post.id] || []).length === 0 ? (
-                      <div className="text-xs text-[var(--lm-text-muted)] text-center py-2">
-                        {isAr ? 'كن أول من يعلق على هذا المنشور.' : 'Be the first to comment.'}
-                      </div>
-                    ) : (
-                      (commentsMap[post.id] || []).map((c) => (
-                        <div key={c.id} className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[var(--lm-surface-2)]">
-                          <UserAvatar initials={c.avatar_initials} color={c.avatar_color} size={28} vipTier={c.vip_tier as 0 | 1 | 2 | 3 | 4 | 5} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-semibold">{c.display_name}</span>
-                              <VipBadge tier={c.vip_tier as 0 | 1 | 2 | 3 | 4 | 5} compact />
-                            </div>
-                            <p className="text-xs text-[var(--lm-text-secondary)] mt-0.5">{c.content}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
+              {/* Instagram Action Icons Row */}
+              <div className="px-4 pt-3 pb-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <button onClick={() => handleLike(post.id)} className="cursor-pointer transition-transform active:scale-125">
+                      <Heart className={`w-6 h-6 ${post.likedByMe ? 'text-[#FE2C55] fill-[#FE2C55]' : ''}`} />
+                    </button>
+                    <button onClick={() => toggleComments(post.id)} className="cursor-pointer">
+                      <MessageCircle className="w-6 h-6" />
+                    </button>
+                    <button onClick={() => toast(isAr ? 'تم نسخ الرابط' : 'Link copied', 'info')} className="cursor-pointer">
+                      <Send className="w-5 h-5" />
+                    </button>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={commentDraft}
-                      onChange={(e) => setCommentDraft(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && submitComment(post.id)}
-                      placeholder={isAr ? 'أضف تعليقًا...' : 'Write a comment...'}
-                      className="lm-input flex-1 rounded-xl px-3 py-2 text-xs"
-                    />
+
+                  <div className="flex items-center gap-3">
                     <button
-                      onClick={() => submitComment(post.id)}
-                      className="lm-btn-primary px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer"
+                      onClick={() =>
+                        sendToAi({
+                          title: `@${post.username}`,
+                          content: post.content,
+                          source: 'post_summary',
+                        })
+                      }
+                      title={isAr ? 'تلخيص عبر LM AI' : 'AI Summary'}
+                      className="px-2.5 py-1 rounded-full bg-[var(--lm-surface-2)] text-[11px] font-medium flex items-center gap-1 cursor-pointer hover:bg-[var(--lm-surface-hover)]"
                     >
-                      {isAr ? 'إرسال' : 'Send'}
+                      <Sparkles className="w-3 h-3 text-[#8774E1]" />
+                      <span>AI</span>
+                    </button>
+                    <button
+                      onClick={() => setSavedIds(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
+                      className="cursor-pointer"
+                    >
+                      <Bookmark className={`w-6 h-6 ${savedIds[post.id] ? 'fill-current' : ''}`} />
                     </button>
                   </div>
                 </div>
-              )}
+
+                {/* Likes Count */}
+                <div className="text-[13px] font-bold font-mono-num">
+                  {post.likesCount.toLocaleString('en-US')} {isAr ? 'تسجيل إعجاب' : 'likes'}
+                </div>
+
+                {/* Caption */}
+                <div className="text-[13.5px] leading-relaxed">
+                  <span dir="ltr" className="font-bold me-2">@{post.username}</span>
+                  <span className="whitespace-pre-line">{post.content}</span>
+                </div>
+
+                {/* View Comments Trigger */}
+                <button
+                  onClick={() => toggleComments(post.id)}
+                  className="text-xs text-[var(--lm-text-muted)] hover:text-[var(--lm-text-secondary)] cursor-pointer"
+                >
+                  {isAr ? `عرض كل التعليقات (${post.commentsCount})` : `View all ${post.commentsCount} comments`}
+                </button>
+
+                {openCommentsPostId === post.id && (
+                  <div className="pt-2 space-y-2.5 border-t border-[var(--lm-border)]">
+                    {(commentsMap[post.id] || []).map((c) => (
+                      <div key={c.id} className="flex items-start gap-2.5 text-xs">
+                        <UserAvatar initials={c.avatar_initials} color={c.avatar_color} avatarUrl={c.avatar_url} size={26} />
+                        <div>
+                          <span className="font-bold me-1.5">{c.display_name}</span>
+                          <span className="text-[var(--lm-text-secondary)]">{c.content}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        value={commentDraft}
+                        onChange={(e) => setCommentDraft(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && submitComment(post.id)}
+                        placeholder={isAr ? 'إضافة تعليق...' : 'Add a comment...'}
+                        className="flex-1 bg-transparent text-xs outline-none border-b border-[var(--lm-border)] py-1.5"
+                      />
+                      <button
+                        onClick={() => submitComment(post.id)}
+                        className="text-xs font-bold text-[#3390EC] cursor-pointer"
+                      >
+                        {isAr ? 'نشر' : 'Post'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </article>
           ))}
         </div>
 
-        {/* RIGHT DISCOVERY SIDEBAR */}
-        <aside className="lg:col-span-4 space-y-4">
-          {/* Active Profile Card */}
-          <div className="lm-card rounded-2xl p-4 space-y-3">
+        {/* ============================================================
+            INSTAGRAM RIGHT CREATOR & LIVE COLUMN (5 cols on desktop)
+           ============================================================ */}
+        <aside className="hidden lg:block lg:col-span-5 space-y-5 sticky top-5">
+          {/* User Row */}
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <UserAvatar initials={user.avatarInitials} color={user.avatarColor} size={46} vipTier={user.vipTier} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-bold truncate">{isAr ? user.displayName : user.displayNameEn}</span>
-                  {user.verified && <VerifiedIcon />}
-                </div>
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <UserAvatar initials={user.avatarInitials} color={user.avatarColor} avatarUrl={user.avatarUrl} size={48} vipTier={user.vipTier} />
+              <div>
+                <div className="text-sm font-bold flex items-center gap-1.5">
+                  <span>{isAr ? user.displayName : user.displayNameEn}</span>
                   <VipBadge tier={user.vipTier} compact />
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span dir="ltr" className="text-xs text-[var(--lm-text-muted)]">@{user.username}</span>
                   <RankBadge rankId={user.rankId} lang={lang} />
                 </div>
               </div>
             </div>
-            <p className="text-xs text-[var(--lm-text-secondary)] leading-relaxed">{user.bio}</p>
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--lm-border)] text-center">
-              <div className="p-2 rounded-xl bg-[var(--lm-surface-2)]">
-                <div className="text-sm font-bold font-mono-num">{user.followersCount.toLocaleString('en-US')}</div>
-                <div className="text-[10px] text-[var(--lm-text-muted)]">{isAr ? 'متابع' : 'Followers'}</div>
-              </div>
-              <div className="p-2 rounded-xl bg-[var(--lm-surface-2)]">
-                <div className="text-sm font-bold font-mono-num">{user.followingCount.toLocaleString('en-US')}</div>
-                <div className="text-[10px] text-[var(--lm-text-muted)]">{isAr ? 'يتابع' : 'Following'}</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Live Broadcast Quick-Enter */}
-          <div className="lm-card rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                <Radio className="w-4 h-4 text-red-500" />
-                {isAr ? 'بث مباشر الآن' : 'Live Now'}
-              </span>
-              <span className="text-[10px] font-mono-num px-2 py-0.5 rounded bg-red-500/15 text-red-400">LIVE</span>
-            </div>
-            <p className="text-xs text-[var(--lm-text-secondary)] leading-relaxed">
-              {isAr
-                ? 'ليلة القاهرة التقنية — جرّب نظام أولوية التعليقات المميزة (VIP 1 / 2 / 3) والهدايا الافتراضية الآن.'
-                : 'Cairo Tech Night — Experience live VIP 1/2/3 highlighted comment queue & virtual gifts.'}
-            </p>
-            <button
-              onClick={() => setActiveTab('live')}
-              className="lm-btn-primary w-full py-2 rounded-xl text-xs font-semibold cursor-pointer"
-            >
-              {isAr ? 'دخول البث المباشر' : 'Enter Live Room'}
+            <button onClick={() => setActiveTab('vip')} className="text-xs font-bold text-[#8774E1] cursor-pointer">
+              VIP
             </button>
           </div>
 
-          {/* Suggested Creators */}
-          <div className="lm-card rounded-2xl p-4 space-y-3">
-            <h3 className="text-xs font-semibold text-[var(--lm-text-secondary)]">
-              {isAr ? 'صناع محتوى وحسابات مقترحة' : 'Suggested Creators'}
-            </h3>
-            <div className="space-y-2.5">
-              {allUsers
-                .filter(u => u.id !== user.id)
-                .map((u) => {
-                  const following = Boolean(followedIds[u.id]);
-                  return (
-                    <div key={u.id} className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <UserAvatar initials={u.avatarInitials} color={u.avatarColor} size={32} vipTier={u.vipTier} />
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold truncate flex items-center gap-1">
-                            {isAr ? u.displayName : u.displayNameEn}
-                            <VipBadge tier={u.vipTier} compact />
-                          </div>
-                          <div dir="ltr" className="text-[10px] text-[var(--lm-text-muted)] font-mono-num inline-block">@{u.username}</div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setFollowedIds(prev => ({ ...prev, [u.id]: !prev[u.id] }));
-                          toast(
-                            following
-                              ? (isAr ? `تم إلغاء متابعة ${u.displayName}` : `Unfollowed ${u.displayNameEn}`)
-                              : (isAr ? `أصبحت تتابع ${u.displayName}` : `Following ${u.displayNameEn}`),
-                            'info'
-                          );
-                        }}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-medium shrink-0 cursor-pointer ${
-                          following ? 'lm-btn-ghost' : 'lm-btn-primary'
-                        }`}
-                      >
-                        {following ? (isAr ? 'متابَع' : 'Following') : (isAr ? 'متابعة' : 'Follow')}
-                      </button>
-                    </div>
-                  );
-                })}
+          {/* Live Room Highlight Banner */}
+          <div
+            onClick={() => setActiveTab('live')}
+            className="relative rounded-3xl overflow-hidden cursor-pointer group border border-white/10"
+          >
+            <img src="/uploads/seed/post_studio.jpg" alt="" className="w-full h-36 object-cover group-hover:scale-105 transition-transform duration-300" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent p-4 flex flex-col justify-between">
+              <span className="self-start px-2.5 py-0.5 rounded-full bg-[#FE2C55] text-white text-[10px] font-bold flex items-center gap-1">
+                <Radio className="w-3 h-3" /> LIVE • 3.8K
+              </span>
+              <div className="text-white">
+                <div className="text-xs font-bold">{isAr ? 'ليلة القاهرة التقنية — مريم الشريف' : 'Cairo Tech Live'}</div>
+                <div className="text-[11px] text-white/75">{isAr ? 'انضم لتجربة تعليقات VIP المميزة والهدايا' : 'Join Live'}</div>
+              </div>
             </div>
           </div>
 
-          {/* Privacy Guarantee Footer */}
-          <div className="lm-card-subtle rounded-2xl p-3.5 flex items-start gap-2.5 text-[11px] text-[var(--lm-text-muted)]">
-            <ShieldAlert className="w-4 h-4 text-[var(--lm-accent)] shrink-0 mt-0.5" />
-            <span>
-              {isAr
-                ? 'LM AI لا يتدخل في تصفحك إلا عند طلبك المباشر مثل زر "تلخيص AI".'
-                : 'LM AI only acts on explicit actions like "AI Summary".'}
-            </span>
+          {/* Suggested Creators */}
+          <div className="space-y-3">
+            <div className="text-xs font-bold text-[var(--lm-text-muted)]">
+              {isAr ? 'مقترحون لك' : 'Suggested for you'}
+            </div>
+            {allUsers
+              .filter(u => u.id !== user.id)
+              .map((u) => {
+                const following = Boolean(followedIds[u.id]);
+                return (
+                  <div key={u.id} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <UserAvatar initials={u.avatarInitials} color={u.avatarColor} avatarUrl={u.avatarUrl} size={36} vipTier={u.vipTier} />
+                      <div>
+                        <div className="text-xs font-bold flex items-center gap-1">
+                          {isAr ? u.displayName : u.displayNameEn}
+                          {u.verified && <VerifiedIcon />}
+                        </div>
+                        <div dir="ltr" className="text-[11px] text-[var(--lm-text-muted)]">@{u.username}</div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setFollowedIds(p => ({ ...p, [u.id]: !p[u.id] }))}
+                      className={`text-xs font-bold cursor-pointer ${
+                        following ? 'text-[var(--lm-text-muted)]' : 'text-[#3390EC]'
+                      }`}
+                    >
+                      {following ? (isAr ? 'متابَع' : 'Following') : (isAr ? 'متابعة' : 'Follow')}
+                    </button>
+                  </div>
+                );
+              })}
           </div>
         </aside>
       </div>
+
+      {/* FULL-SCREEN INSTAGRAM STORY VIEWER */}
+      {activeStory && activeStoryIndex !== null && (
+        <div
+          onClick={() => setActiveStoryIndex(null)}
+          className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              if (activeStoryIndex + 1 < stories.length) setActiveStoryIndex(activeStoryIndex + 1);
+              else setActiveStoryIndex(null);
+            }}
+            className="relative w-full h-full sm:w-[390px] sm:h-[86vh] sm:rounded-3xl overflow-hidden bg-black cursor-pointer"
+          >
+            <img src={activeStory.mediaUrl} alt="" className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/75" />
+
+            {/* Segmented Story Progress Bars */}
+            <div className="absolute top-3 inset-x-3 flex gap-1.5">
+              {stories.map((s, idx) => (
+                <div key={s.id} className="flex-1 h-0.5 rounded-full bg-white/30 overflow-hidden">
+                  <div className={`h-full bg-white ${idx <= activeStoryIndex ? 'w-full' : 'w-0'}`} />
+                </div>
+              ))}
+            </div>
+
+            <div className="absolute top-7 inset-x-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2.5">
+                <UserAvatar initials={activeStory.avatarInitials} color={activeStory.avatarColor} avatarUrl={activeStory.avatarUrl} size={34} />
+                <span className="text-xs font-bold">{activeStory.displayName}</span>
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); setActiveStoryIndex(null); }} className="p-1 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="absolute bottom-6 inset-x-5 text-white">
+              <p className="text-sm font-medium drop-shadow-md">{activeStory.caption}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE POST MODAL */}
+      {composerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setComposerOpen(false)}>
+          <form onSubmit={handlePublish} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-3xl bg-[#1C1D24] text-white border border-white/10 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold">{isAr ? 'إنشاء منشور جديد' : 'New Post'}</h3>
+              <button type="button" onClick={() => setComposerOpen(false)} className="cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={3}
+              placeholder={isAr ? 'اكتب تعليقًا للمنشور...' : 'Write a caption...'}
+              className="w-full rounded-2xl bg-white/5 p-3 text-xs outline-none resize-none"
+              required
+            />
+            {mediaUrl && <img src={mediaUrl} alt="" className="max-h-48 w-full object-cover rounded-2xl" />}
+            <div className="flex items-center justify-between gap-2">
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-white/10 text-xs flex items-center gap-1.5 cursor-pointer">
+                <ImageIcon className="w-4 h-4" />
+                {uploading ? '...' : (isAr ? 'إضافة صورة' : 'Add Photo')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSponsored(v => !v)}
+                className={`px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer ${
+                  isSponsored ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10'
+                }`}
+              >
+                <Megaphone className="w-4 h-4" />
+                {isAr ? `ترويج (${sponsorBudget} ج.م)` : 'Promote'}
+              </button>
+            </div>
+            <button type="submit" className="w-full py-2.5 rounded-full bg-[#8774E1] text-white text-xs font-bold cursor-pointer">
+              {isAr ? 'مشاركة الآن' : 'Share'}
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

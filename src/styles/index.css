@@ -2,93 +2,128 @@
 
 :root,
 [data-theme="obsidian"] {
-  --lm-bg: #090A0D;
-  --lm-surface: #111318;
-  --lm-surface-2: #171A21;
-  --lm-surface-hover: #1D212B;
-  --lm-border: rgba(255, 255, 255, 0.08);
+  --lm-bg: #0F0F12;
+  --lm-surface: #18191E;
+  --lm-surface-2: #21232B;
+  --lm-surface-hover: #2A2D37;
+  --lm-border: rgba(255, 255, 255, 0.07);
   --lm-border-strong: rgba(255, 255, 255, 0.14);
-  --lm-text: #F4F6FA;
-  --lm-text-secondary: #9BA3B5;
-  --lm-text-muted: #656D80;
-  --lm-accent: #2F6BFF;
-  --lm-accent-soft: rgba(47, 107, 255, 0.14);
+  --lm-text: #F5F6F8;
+  --lm-text-secondary: #A2A8B4;
+  --lm-text-muted: #6E7482;
+  --lm-accent: #8774E1; /* Telegram Web A Dark Signature Accent */
+  --lm-accent-blue: #3390EC;
+  --lm-accent-soft: rgba(135, 116, 225, 0.16);
   --lm-accent-text: #FFFFFF;
   --lm-gold: #D4AF37;
-  --lm-emerald: #10B981;
-  --lm-danger: #EF4444;
+  --lm-emerald: #00C73E;
+  --lm-tiktok: #FE2C55;
+
+  /* Official Telegram Web A Dark Tokens (from Ajaxy/telegram-tt themes.json) */
+  --tg-sidebar-bg: #212121;
+  --tg-chat-bg: #0F0F0F;
+  --tg-bubble-in: #212121;
+  --tg-bubble-out: #766AC8;
+  --tg-hover: #2C2C2C;
+  --tg-reaction-bg: #2B2A35;
+  --tg-reaction-own: #675CAF;
 }
 
 [data-theme="alabaster"] {
-  --lm-bg: #F4F5F7;
+  --lm-bg: #F4F4F5;
   --lm-surface: #FFFFFF;
-  --lm-surface-2: #F0F2F5;
-  --lm-surface-hover: #E6E9EF;
-  --lm-border: rgba(15, 23, 42, 0.09);
-  --lm-border-strong: rgba(15, 23, 42, 0.16);
+  --lm-surface-2: #EFEFF3;
+  --lm-surface-hover: #E4E4E9;
+  --lm-border: rgba(0, 0, 0, 0.08);
+  --lm-border-strong: rgba(0, 0, 0, 0.15);
   --lm-text: #0F172A;
-  --lm-text-secondary: #475569;
-  --lm-text-muted: #64748B;
-  --lm-accent: #1D4ED8;
-  --lm-accent-soft: rgba(29, 78, 216, 0.1);
+  --lm-text-secondary: #525866;
+  --lm-text-muted: #707579;
+  --lm-accent: #3390EC;
+  --lm-accent-blue: #3390EC;
+  --lm-accent-soft: rgba(51, 144, 236, 0.12);
   --lm-accent-text: #FFFFFF;
   --lm-gold: #B4830B;
-  --lm-emerald: #059669;
-  --lm-danger: #DC2626;
+  --lm-emerald: #00A734;
+  --lm-tiktok: #FE2C55;
+
+  /* Official Telegram Web A Light Tokens */
+  --tg-sidebar-bg: #FFFFFF;
+  --tg-chat-bg: #99BA92;
+  --tg-bubble-in: #FFFFFF;
+  --tg-bubble-out: #EEFFDE;
+  --tg-hover: #F4F4F5;
+  --tg-reaction-bg: #EBF3FD;
+  --tg-reaction-own: #C6EAB2;
 }
 
 [data-theme="royal-gold"] {
   --lm-bg: #0B0A08;
-  --lm-surface: #14120E;
-  --lm-surface-2: #1C1913;
-  --lm-surface-hover: #252119;
+  --lm-surface: #15130F;
+  --lm-surface-2: #1E1B15;
+  --lm-surface-hover: #29241B;
   --lm-border: rgba(212, 175, 55, 0.14);
   --lm-border-strong: rgba(212, 175, 55, 0.28);
   --lm-text: #FAF6EE;
   --lm-text-secondary: #B8AD96;
   --lm-text-muted: #7C7360;
   --lm-accent: #D4AF37;
-  --lm-accent-soft: rgba(212, 175, 55, 0.15);
+  --lm-accent-blue: #D4AF37;
+  --lm-accent-soft: rgba(212, 175, 55, 0.16);
   --lm-accent-text: #0B0A08;
-  --lm-gold: #E5C158;
-  --lm-emerald: #10B981;
-  --lm-danger: #EF4444;
+  --tg-sidebar-bg: #14120E;
+  --tg-chat-bg: #0A0907;
+  --tg-bubble-in: #1B1812;
+  --tg-bubble-out: #6E581B;
+  --tg-hover: #242018;
+  --tg-reaction-bg: #252015;
+  --tg-reaction-own: #8A6F22;
 }
 
 [data-theme="emerald-reserve"] {
   --lm-bg: #070C0A;
-  --lm-surface: #0E1613;
-  --lm-surface-2: #14201B;
-  --lm-surface-hover: #1B2B24;
+  --lm-surface: #0F1714;
+  --lm-surface-2: #15211C;
+  --lm-surface-hover: #1D2E27;
   --lm-border: rgba(16, 185, 129, 0.14);
   --lm-border-strong: rgba(16, 185, 129, 0.28);
   --lm-text: #F0F9F5;
   --lm-text-secondary: #94B5A7;
   --lm-text-muted: #5C7C6F;
   --lm-accent: #10B981;
-  --lm-accent-soft: rgba(16, 185, 129, 0.14);
+  --lm-accent-blue: #10B981;
+  --lm-accent-soft: rgba(16, 185, 129, 0.15);
   --lm-accent-text: #052E1E;
-  --lm-gold: #D4AF37;
-  --lm-emerald: #34D399;
-  --lm-danger: #F87171;
+  --tg-sidebar-bg: #0E1613;
+  --tg-chat-bg: #060B09;
+  --tg-bubble-in: #14201B;
+  --tg-bubble-out: #0F5C43;
+  --tg-hover: #1A2923;
+  --tg-reaction-bg: #172620;
+  --tg-reaction-own: #147A58;
 }
 
 [data-theme="imperial-onyx"] {
-  --lm-bg: #050507;
-  --lm-surface: #0D0E12;
-  --lm-surface-2: #15171E;
-  --lm-surface-hover: #1D202A;
-  --lm-border: rgba(226, 232, 240, 0.11);
+  --lm-bg: #060608;
+  --lm-surface: #101116;
+  --lm-surface-2: #181A22;
+  --lm-surface-hover: #21242F;
+  --lm-border: rgba(226, 232, 240, 0.1);
   --lm-border-strong: rgba(212, 175, 55, 0.34);
   --lm-text: #F8FAFC;
   --lm-text-secondary: #A1AAB8;
   --lm-text-muted: #646D7E;
   --lm-accent: #E2E8F0;
+  --lm-accent-blue: #8774E1;
   --lm-accent-soft: rgba(226, 232, 240, 0.12);
   --lm-accent-text: #090A0D;
-  --lm-gold: #E6C35C;
-  --lm-emerald: #10B981;
-  --lm-danger: #EF4444;
+  --tg-sidebar-bg: #121318;
+  --tg-chat-bg: #07070A;
+  --tg-bubble-in: #191B22;
+  --tg-bubble-out: #4A447A;
+  --tg-hover: #20222B;
+  --tg-reaction-bg: #222430;
+  --tg-reaction-own: #5C5499;
 }
 
 * {
@@ -113,20 +148,34 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
-/* Custom ultra-thin scrollbars */
+/* Telegram Chat Subtle Geometric Doodle Wallpaper */
+.tg-wallpaper {
+  background-color: var(--tg-chat-bg);
+  background-image:
+    radial-gradient(circle at 18% 22%, rgba(135, 116, 225, 0.14), transparent 45%),
+    radial-gradient(circle at 82% 78%, rgba(51, 144, 236, 0.11), transparent 45%),
+    url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='0.032' stroke-width='1.4'%3E%3Ccircle cx='24' cy='24' r='7'/%3E%3Cpath d='M78 18l8 14H70z'/%3E%3Crect x='18' y='76' width='13' height='13' rx='3' transform='rotate(-12 18 76)'/%3E%3Cpath d='M82 78c6 0 11 5 11 11s-5 11-11 11-11-5-11-11'/%3E%3Ccircle cx='58' cy='56' r='3.5'/%3E%3Cpath d='M104 46l-7 7m0-7l7 7'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* Hide scrollbars where appropriate while keeping scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--lm-border-strong);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--lm-text-muted);
 }
 
 /* Surface helpers */
@@ -149,32 +198,64 @@ body,
   opacity: 0.92;
 }
 .lm-btn-primary:active {
-  transform: scale(0.985);
+  transform: scale(0.98);
 }
 
 .lm-btn-ghost {
   background-color: transparent;
   color: var(--lm-text-secondary);
   border: 1px solid var(--lm-border);
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .lm-btn-ghost:hover {
   background-color: var(--lm-surface-hover);
   color: var(--lm-text);
-  border-color: var(--lm-border-strong);
 }
 
 .lm-input {
   background-color: var(--lm-surface-2);
   border: 1px solid var(--lm-border);
   color: var(--lm-text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 .lm-input:focus {
   outline: none;
   border-color: var(--lm-accent);
-  box-shadow: 0 0 0 3px var(--lm-accent-soft);
 }
 .lm-input::placeholder {
   color: var(--lm-text-muted);
+}
+
+/* Story ring gradient (Instagram / Telegram Stories) */
+.story-ring {
+  background: linear-gradient(45deg, #F58529, #DD2A7B, #8134AF, #515BD4);
+  padding: 2.5px;
+}
+
+@keyframes floatUpHeart {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(0.75) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-190px) scale(1.35) rotate(-14deg);
+  }
+}
+
+.animate-float-heart {
+  animation: floatUpHeart 1.8s ease-out forwards;
+}
+
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-vinyl {
+  animation: spinSlow 5s linear infinite;
 }

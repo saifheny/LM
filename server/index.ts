@@ -30,10 +30,9 @@ initDatabase();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '20mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Multer local file storage (images, videos, voice notes)
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {
@@ -41,7 +40,7 @@ const storage = multer.diskStorage({
     cb(null, `${Date.now()}-${uuid().slice(0, 8)}${ext}`);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 80 * 1024 * 1024 } });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -70,11 +69,8 @@ function getUserOrNull(id: string) {
   return row ? mapUserRow(row) : null;
 }
 
-// ============================================================
-// HEALTH & FILE UPLOAD
-// ============================================================
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'LM Super App Local Core', version: '1.0.0', wsClients: wsClients.size });
+  res.json({ ok: true, service: 'LM Super App Local Core v2', wsClients: wsClients.size });
 });
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -101,9 +97,9 @@ app.post('/api/auth/login', (req, res) => {
   if (!username) return res.status(400).json({ ok: false, error: 'أدخل اسم المستخدم.' });
   const clean = username.trim().replace(/^@/, '').toLowerCase();
   const row = db.prepare('SELECT * FROM users WHERE LOWER(username) = ?').get(clean) as Record<string, unknown> | undefined;
-  if (!row) return res.status(404).json({ ok: false, error: 'الحساب غير موجود. يمكنك اختيار حساب تجريبي أو إنشاء حساب جديد.' });
+  if (!row) return res.status(404).json({ ok: false, error: 'الحساب غير موجود.' });
   if (password && String(row.password) !== password) {
-    return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة (كلمة المرور الافتراضية للحسابات التجريبية: 123456).' });
+    return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة (كلمة المرور التجريبية: 123456).' });
   }
   res.json({ ok: true, user: mapUserRow(row) });
 });
@@ -115,29 +111,23 @@ app.post('/api/auth/register', (req, res) => {
     password?: string;
     country?: CountryCode;
   };
-  if (!username || !displayName) {
-    return res.status(400).json({ ok: false, error: 'الاسم واسم المستخدم مطلوبان.' });
-  }
+  if (!username || !displayName) return res.status(400).json({ ok: false, error: 'الاسم واسم المستخدم مطلوبان.' });
   const cleanUser = username.trim().replace(/^@/, '').toLowerCase().replace(/[^a-z0-9_]/g, '');
-  if (cleanUser.length < 3) {
-    return res.status(400).json({ ok: false, error: 'اسم المستخدم يجب أن يحتوي على 3 أحرف إنجليزية أو أرقام على الأقل.' });
-  }
+  if (cleanUser.length < 3) return res.status(400).json({ ok: false, error: 'اسم المستخدم 3 أحرف على الأقل.' });
   const exists = db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(cleanUser);
-  if (exists) {
-    return res.status(409).json({ ok: false, error: 'اسم المستخدم مسجل بالفعل.' });
-  }
+  if (exists) return res.status(409).json({ ok: false, error: 'اسم المستخدم مسجل بالفعل.' });
+
   const id = `u_${uuid().slice(0, 8)}`;
-  const palette = ['#2F6BFF', '#10B981', '#D4AF37', '#F59E0B', '#E11D48', '#8B5CF6'];
+  const palette = ['#3390EC', '#10B981', '#D4AF37', '#F59E0B', '#E11D48', '#8774E1'];
   const color = palette[Math.floor(Math.random() * palette.length)];
   const initials = displayName.trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('') || 'LM';
 
   db.prepare(`
     INSERT INTO users (id, username, password, display_name, display_name_en, bio, avatar_color, avatar_initials, country, demo_balance_egp)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, cleanUser, password || '123456', displayName.trim(), displayName.trim(), 'عضو جديد في منظومة LM الرقمية.', color, initials, country || 'EG', 5000);
+  `).run(id, cleanUser, password || '123456', displayName.trim(), displayName.trim(), 'عضو جديد في منصة LM.', color, initials, country || 'EG', 5000);
 
-  const created = getUserOrNull(id);
-  res.json({ ok: true, user: created });
+  res.json({ ok: true, user: getUserOrNull(id) });
 });
 
 app.get('/api/users/:id', (req, res) => {
@@ -147,7 +137,7 @@ app.get('/api/users/:id', (req, res) => {
 });
 
 // ============================================================
-// GLOBAL SEARCH (Users, Posts, Short Videos, Groups)
+// SEARCH
 // ============================================================
 app.get('/api/search', (req, res) => {
   const q = String(req.query.q || '').trim();
@@ -157,14 +147,14 @@ app.get('/api/search', (req, res) => {
   ).all(like, like, like, like) as Array<Record<string, unknown>>).map(mapUserRow);
 
   const posts = db.prepare(`
-    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.vip_tier, u.rank_id
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
     FROM posts p JOIN users u ON p.user_id = u.id
     WHERE p.content LIKE ? OR u.display_name LIKE ?
     ORDER BY p.created_at DESC LIMIT 8
   `).all(like, like);
 
   const videos = db.prepare(`
-    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.vip_tier
+    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
     FROM short_videos v JOIN users u ON v.user_id = u.id
     WHERE v.title LIKE ? OR v.description LIKE ? OR v.tags LIKE ?
     ORDER BY v.views_count DESC LIMIT 8
@@ -178,12 +168,37 @@ app.get('/api/search', (req, res) => {
 });
 
 // ============================================================
-// SOCIAL FEED
+// STORIES & SOCIAL FEED (Instagram / Pixelfed Grade)
 // ============================================================
+app.get('/api/stories', (_req, res) => {
+  const rows = db.prepare(`
+    SELECT s.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
+    FROM stories s JOIN users u ON s.user_id = u.id
+    ORDER BY s.created_at DESC
+  `).all() as Array<Record<string, unknown>>;
+
+  res.json({
+    ok: true,
+    stories: rows.map(r => ({
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      vipTier: Number(r.vip_tier),
+      mediaUrl: r.media_url,
+      caption: r.caption,
+      createdAt: r.created_at,
+    })),
+  });
+});
+
 app.get('/api/posts', (req, res) => {
   const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
-    SELECT p.*, u.display_name, u.display_name_en, u.username, u.avatar_color, u.avatar_initials, u.verified, u.vip_tier, u.rank_id, u.supreme_title
+    SELECT p.*, u.display_name, u.display_name_en, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified, u.vip_tier, u.rank_id, u.supreme_title
     FROM posts p
     JOIN users u ON p.user_id = u.id
     ORDER BY p.created_at DESC
@@ -194,30 +209,42 @@ app.get('/api/posts', (req, res) => {
     : [];
   const likedSet = new Set(likedRows.map(r => r.post_id));
 
-  const posts = rows.map(r => ({
-    id: r.id,
-    userId: r.user_id,
-    displayName: r.display_name,
-    username: r.username,
-    avatarColor: r.avatar_color,
-    avatarInitials: r.avatar_initials,
-    verified: Boolean(r.verified),
-    vipTier: Number(r.vip_tier),
-    rankId: r.rank_id,
-    supremeTitle: r.supreme_title,
-    content: r.content,
-    mediaUrl: r.media_url,
-    mediaStyle: r.media_style,
-    mediaCaption: r.media_caption,
-    isSponsored: Boolean(r.is_sponsored),
-    sponsorBudgetEgp: Number(r.sponsor_budget_egp || 0),
-    sponsorAudience: r.sponsor_audience,
-    likesCount: Number(r.likes_count),
-    commentsCount: Number(r.comments_count),
-    sharesCount: Number(r.shares_count),
-    likedByMe: likedSet.has(String(r.id)),
-    createdAt: r.created_at,
-  }));
+  const posts = rows.map(r => {
+    let mediaUrls: string[] = [];
+    try {
+      mediaUrls = JSON.parse(String(r.media_urls_json || '[]'));
+    } catch {
+      mediaUrls = [];
+    }
+    if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    return {
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      verified: Boolean(r.verified),
+      vipTier: Number(r.vip_tier),
+      rankId: r.rank_id,
+      supremeTitle: r.supreme_title,
+      content: r.content,
+      mediaUrl: r.media_url,
+      mediaUrls,
+      location: r.location || 'القاهرة',
+      mediaStyle: r.media_style,
+      mediaCaption: r.media_caption,
+      isSponsored: Boolean(r.is_sponsored),
+      sponsorBudgetEgp: Number(r.sponsor_budget_egp || 0),
+      sponsorAudience: r.sponsor_audience,
+      likesCount: Number(r.likes_count),
+      commentsCount: Number(r.comments_count),
+      sharesCount: Number(r.shares_count),
+      likedByMe: likedSet.has(String(r.id)),
+      createdAt: r.created_at,
+    };
+  });
   res.json({ ok: true, posts });
 });
 
@@ -232,10 +259,11 @@ app.post('/api/posts', (req, res) => {
   };
   if (!userId || !content?.trim()) return res.status(400).json({ ok: false, error: 'محتوى المنشور مطلوب.' });
   const id = `p_${uuid().slice(0, 8)}`;
+  const urlsJson = mediaUrl ? JSON.stringify([mediaUrl]) : '[]';
   db.prepare(`
-    INSERT INTO posts (id, user_id, content, media_url, is_sponsored, sponsor_budget_egp, sponsor_audience)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, content.trim(), mediaUrl || null, isSponsored ? 1 : 0, sponsorBudgetEgp || 0, sponsorAudience || null);
+    INSERT INTO posts (id, user_id, content, media_url, media_urls_json, is_sponsored, sponsor_budget_egp, sponsor_audience)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, content.trim(), mediaUrl || null, urlsJson, isSponsored ? 1 : 0, sponsorBudgetEgp || 0, sponsorAudience || null);
   broadcast('social:new_post', { id });
   res.json({ ok: true, id });
 });
@@ -257,7 +285,7 @@ app.post('/api/posts/:id/like', (req, res) => {
 
 app.get('/api/posts/:id/comments', (req, res) => {
   const rows = db.prepare(`
-    SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.vip_tier, u.rank_id
+    SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
     FROM post_comments c JOIN users u ON c.user_id = u.id
     WHERE c.post_id = ? ORDER BY c.created_at ASC
   `).all(req.params.id);
@@ -281,12 +309,12 @@ app.post('/api/posts/:id/promote', (req, res) => {
 });
 
 // ============================================================
-// SHORT VIDEOS
+// SHORT VIDEOS (TikTok / Loops Open-Source Architecture)
 // ============================================================
 app.get('/api/videos', (req, res) => {
   const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
-    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.verified, u.vip_tier, u.rank_id
+    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified, u.vip_tier, u.rank_id
     FROM short_videos v JOIN users u ON v.user_id = u.id
     ORDER BY v.created_at DESC
   `).all() as Array<Record<string, unknown>>;
@@ -303,13 +331,16 @@ app.get('/api/videos', (req, res) => {
       username: r.username,
       avatarColor: r.avatar_color,
       avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
       verified: Boolean(r.verified),
       vipTier: Number(r.vip_tier),
       rankId: r.rank_id,
       title: r.title,
       description: r.description,
       tags: r.tags,
+      audioTitle: r.audio_title || 'الصوت الأصلي — LM Studio',
       videoUrl: r.video_url,
+      posterUrl: r.poster_url,
       scenePreset: r.scene_preset,
       durationSec: Number(r.duration_sec),
       isSponsored: Boolean(r.is_sponsored),
@@ -317,6 +348,7 @@ app.get('/api/videos', (req, res) => {
       likesCount: Number(r.likes_count),
       commentsCount: Number(r.comments_count),
       savesCount: Number(r.saves_count),
+      sharesCount: Number(r.shares_count || 0),
       viewsCount: Number(r.views_count),
       likedByMe: likes.has(String(r.id)),
       savedByMe: saves.has(String(r.id)),
@@ -326,22 +358,21 @@ app.get('/api/videos', (req, res) => {
 });
 
 app.post('/api/videos', (req, res) => {
-  const { userId, title, description, tags, videoUrl, scenePreset, isSponsored, sponsorBudgetEgp } = req.body as {
+  const { userId, title, description, tags, videoUrl, isSponsored, sponsorBudgetEgp } = req.body as {
     userId: string;
     title: string;
     description: string;
     tags?: string;
     videoUrl?: string;
-    scenePreset?: string;
     isSponsored?: boolean;
     sponsorBudgetEgp?: number;
   };
   if (!userId || !title?.trim()) return res.status(400).json({ ok: false, error: 'عنوان الفيديو مطلوب.' });
   const id = `v_${uuid().slice(0, 8)}`;
   db.prepare(`
-    INSERT INTO short_videos (id, user_id, title, description, tags, video_url, scene_preset, is_sponsored, sponsor_budget_egp)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, title.trim(), (description || '').trim(), tags || '#LM', videoUrl || null, scenePreset || 'cairo-skyline', isSponsored ? 1 : 0, sponsorBudgetEgp || 0);
+    INSERT INTO short_videos (id, user_id, title, description, tags, video_url, is_sponsored, sponsor_budget_egp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, title.trim(), (description || '').trim(), tags || '#LM', videoUrl || '/uploads/seed/reel1.mp4', isSponsored ? 1 : 0, sponsorBudgetEgp || 0);
   res.json({ ok: true, id });
 });
 
@@ -373,6 +404,24 @@ app.post('/api/videos/:id/save', (req, res) => {
   }
 });
 
+app.get('/api/videos/:id/comments', (req, res) => {
+  const rows = db.prepare(`
+    SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
+    FROM video_comments c JOIN users u ON c.user_id = u.id
+    WHERE c.video_id = ? ORDER BY c.created_at DESC
+  `).all(req.params.id);
+  res.json({ ok: true, comments: rows });
+});
+
+app.post('/api/videos/:id/comments', (req, res) => {
+  const { userId, content } = req.body as { userId: string; content: string };
+  if (!content?.trim()) return res.status(400).json({ ok: false, error: 'اكتب تعليقًا.' });
+  const id = `vc_${uuid().slice(0, 8)}`;
+  db.prepare('INSERT INTO video_comments (id, video_id, user_id, content) VALUES (?, ?, ?, ?)').run(id, req.params.id, userId, content.trim());
+  db.prepare('UPDATE short_videos SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
+  res.json({ ok: true, id });
+});
+
 app.post('/api/videos/:id/promote', (req, res) => {
   const { budgetEgp } = req.body as { budgetEgp?: number };
   db.prepare('UPDATE short_videos SET is_sponsored = 1, sponsor_budget_egp = ? WHERE id = ?').run(budgetEgp || 800, req.params.id);
@@ -380,23 +429,29 @@ app.post('/api/videos/:id/promote', (req, res) => {
 });
 
 // ============================================================
-// MESSAGING & GROUPS
+// TELEGRAM-GRADE MESSAGING (Folders, Replies, Reactions, Waveforms)
 // ============================================================
 app.get('/api/conversations', (_req, res) => {
-  const convs = db.prepare('SELECT * FROM conversations ORDER BY created_at DESC').all() as Array<Record<string, unknown>>;
+  const convs = db.prepare('SELECT * FROM conversations ORDER BY is_pinned DESC, created_at DESC').all() as Array<Record<string, unknown>>;
   const enriched = convs.map(c => {
-    const last = db.prepare('SELECT content, created_at, msg_type FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1').get(String(c.id)) as Record<string, unknown> | undefined;
+    const last = db.prepare('SELECT content, created_at, msg_type FROM messages WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1').get(String(c.id)) as Record<string, unknown> | undefined;
     return {
       id: c.id,
       type: c.type,
+      folder: c.folder || 'personal',
       title: c.title,
       description: c.description,
       avatarColor: c.avatar_color,
+      avatarUrl: c.avatar_url,
+      onlineText: c.online_text || 'متصل الآن',
+      pinnedMessage: c.pinned_message,
+      isPinned: Boolean(c.is_pinned),
+      unreadCount: Number(c.unread_count || 0),
       isLargeGroup: Boolean(c.is_large_group),
       isEncrypted: Boolean(c.is_encrypted),
       memberCount: Number(c.member_count),
       lastMessage: last ? String(last.content) : '',
-      lastMessageAt: last ? String(last.created_at) : String(c.created_at),
+      lastMessageAt: last ? String(last.created_at) : 'الآن',
     };
   });
   res.json({ ok: true, conversations: enriched });
@@ -411,63 +466,84 @@ app.post('/api/conversations', (req, res) => {
   };
   if (!title?.trim()) return res.status(400).json({ ok: false, error: 'اسم المحادثة مطلوب.' });
   const id = `c_${uuid().slice(0, 8)}`;
+  const folder = type === 'community' ? 'channels' : type === 'group' ? 'groups' : 'personal';
   db.prepare(`
-    INSERT INTO conversations (id, type, title, description, avatar_color, is_large_group, is_encrypted, member_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, type || 'group', title.trim(), description || 'مجموعة جديدة داخل LM', '#2F6BFF', isLargeGroup ? 1 : 0, type === 'community' ? 0 : 1, isLargeGroup ? 1500 : 5);
+    INSERT INTO conversations (id, type, folder, title, description, avatar_color, is_large_group, is_encrypted, member_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, type || 'group', folder, title.trim(), description || 'مجموعة جديدة على LM', '#8774E1', isLargeGroup ? 1 : 0, type === 'community' ? 0 : 1, isLargeGroup ? 1500 : 5);
   res.json({ ok: true, id });
 });
 
 app.get('/api/conversations/:id/messages', (req, res) => {
+  db.prepare('UPDATE conversations SET unread_count = 0 WHERE id = ?').run(req.params.id);
   const rows = db.prepare(`
-    SELECT m.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.vip_tier, u.rank_id
+    SELECT m.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.vip_tier
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
     WHERE m.conversation_id = ?
-    ORDER BY m.created_at ASC
+    ORDER BY m.rowid ASC
   `).all(req.params.id) as Array<Record<string, unknown>>;
 
   res.json({
     ok: true,
-    messages: rows.map(r => ({
-      id: r.id,
-      conversationId: r.conversation_id,
-      senderId: r.sender_id,
-      displayName: r.sender_id === 'lm_ai' ? 'LM AI' : (r.display_name || 'مستخدم'),
-      username: r.sender_id === 'lm_ai' ? 'lm_ai' : (r.username || 'user'),
-      avatarColor: r.sender_id === 'lm_ai' ? '#10B981' : (r.avatar_color || '#2F6BFF'),
-      avatarInitials: r.sender_id === 'lm_ai' ? 'AI' : (r.avatar_initials || 'LM'),
-      vipTier: Number(r.vip_tier || 0),
-      content: r.content,
-      msgType: r.msg_type,
-      mediaUrl: r.media_url,
-      aiConsentRef: r.ai_consent_ref,
-      createdAt: r.created_at,
-    })),
+    messages: rows.map(r => {
+      let reactions: Record<string, string[]> = {};
+      try {
+        reactions = JSON.parse(String(r.reactions_json || '{}'));
+      } catch {
+        reactions = {};
+      }
+      return {
+        id: r.id,
+        conversationId: r.conversation_id,
+        senderId: r.sender_id,
+        displayName: r.sender_id === 'lm_ai' ? 'LM AI' : (r.display_name || 'مستخدم'),
+        username: r.sender_id === 'lm_ai' ? 'lm_ai' : (r.username || 'user'),
+        avatarColor: r.sender_id === 'lm_ai' ? '#10B981' : (r.avatar_color || '#3390EC'),
+        avatarInitials: r.sender_id === 'lm_ai' ? 'AI' : (r.avatar_initials || 'LM'),
+        avatarUrl: r.sender_id === 'lm_ai' ? null : (r.avatar_url ? String(r.avatar_url) : null),
+        vipTier: Number(r.vip_tier || 0),
+        content: r.content,
+        msgType: r.msg_type,
+        mediaUrl: r.media_url,
+        replyToId: r.reply_to_id ? String(r.reply_to_id) : null,
+        replySender: r.reply_sender ? String(r.reply_sender) : null,
+        replyText: r.reply_text ? String(r.reply_text) : null,
+        reactions,
+        aiConsentRef: r.ai_consent_ref,
+        createdAt: r.created_at,
+      };
+    }),
   });
 });
 
 app.post('/api/conversations/:id/messages', async (req, res) => {
-  const { senderId, content, msgType, mediaUrl, invokeAi, sharedSnippet } = req.body as {
+  const { senderId, content, msgType, mediaUrl, replyToId, replySender, replyText, invokeAi, sharedSnippet } = req.body as {
     senderId: string;
     content: string;
     msgType?: string;
     mediaUrl?: string;
+    replyToId?: string;
+    replySender?: string;
+    replyText?: string;
     invokeAi?: boolean;
     sharedSnippet?: string;
   };
   if (!senderId || (!content?.trim() && !mediaUrl)) {
     return res.status(400).json({ ok: false, error: 'الرسالة فارغة.' });
   }
+  const nowStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
   const msgId = `m_${uuid().slice(0, 8)}`;
   db.prepare(`
-    INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, media_url)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null);
+    INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, media_url, reply_to_id, reply_sender, reply_text, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null,
+    replyToId || null, replySender || null, replyText || null, nowStr
+  );
 
   broadcast('chat:message', { conversationId: req.params.id, msgId });
 
-  // Explicit @LM AI invocation inside chat ONLY when user explicitly invokes + grants consent on a specific snippet!
   let aiReply = null;
   if (invokeAi) {
     const aiResult = await runLmAi({
@@ -479,9 +555,9 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
     });
     const aiMsgId = `m_${uuid().slice(0, 8)}`;
     db.prepare(`
-      INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, ai_consent_ref)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(aiMsgId, req.params.id, 'lm_ai', aiResult.reply, 'ai_reply', aiResult.securityAuditId);
+      INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, reply_to_id, reply_sender, reply_text, ai_consent_ref, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(aiMsgId, req.params.id, 'lm_ai', aiResult.reply, 'ai_reply', msgId, 'LM AI Shield', sharedSnippet ? sharedSnippet.slice(0, 50) : null, aiResult.securityAuditId, nowStr);
     broadcast('chat:message', { conversationId: req.params.id, msgId: aiMsgId });
     aiReply = aiResult;
   }
@@ -489,12 +565,37 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   res.json({ ok: true, id: msgId, aiReply });
 });
 
+app.post('/api/messages/:id/react', (req, res) => {
+  const { userId, emoji } = req.body as { userId: string; emoji: string };
+  const row = db.prepare('SELECT conversation_id, reactions_json FROM messages WHERE id = ?').get(req.params.id) as { conversation_id: string; reactions_json: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false });
+
+  let reactions: Record<string, string[]> = {};
+  try {
+    reactions = JSON.parse(row.reactions_json || '{}');
+  } catch {
+    reactions = {};
+  }
+  const current = reactions[emoji] || [];
+  if (current.includes(userId)) {
+    const next = current.filter(u => u !== userId);
+    if (next.length === 0) delete reactions[emoji];
+    else reactions[emoji] = next;
+  } else {
+    reactions[emoji] = [...current, userId];
+  }
+
+  db.prepare('UPDATE messages SET reactions_json = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
+  broadcast('chat:message', { conversationId: row.conversation_id, msgId: req.params.id });
+  res.json({ ok: true, reactions });
+});
+
 // ============================================================
 // LIVE STREAMING & VIP HIGHLIGHTED COMMENTS ENGINE
 // ============================================================
 app.get('/api/live/rooms', (_req, res) => {
   const rows = db.prepare(`
-    SELECT r.*, u.display_name as host_name, u.username as host_username, u.avatar_color as host_color, u.avatar_initials as host_initials, u.vip_tier as host_vip
+    SELECT r.*, u.display_name as host_name, u.username as host_username, u.avatar_color as host_color, u.avatar_initials as host_initials, u.avatar_url as host_avatar, u.vip_tier as host_vip
     FROM live_rooms r JOIN users u ON r.host_id = u.id
     WHERE r.is_active = 1
     ORDER BY r.viewers_count DESC
@@ -511,9 +612,11 @@ app.get('/api/live/rooms', (_req, res) => {
         hostUsername: r.host_username,
         hostColor: r.host_color,
         hostInitials: r.host_initials,
+        hostAvatarUrl: r.host_avatar,
         hostVip: Number(r.host_vip),
         title: r.title,
         category: r.category,
+        videoUrl: r.video_url,
         scenePreset: r.scene_preset,
         viewersCount: runtime.viewersCount,
         totalGiftsEgp: runtime.totalGiftsEgp,
@@ -523,18 +626,6 @@ app.get('/api/live/rooms', (_req, res) => {
       };
     }),
   });
-});
-
-app.post('/api/live/rooms', (req, res) => {
-  const { hostId, title, category } = req.body as { hostId: string; title: string; category?: string };
-  if (!hostId || !title?.trim()) return res.status(400).json({ ok: false, error: 'عنوان البث مطلوب.' });
-  const id = `live_${uuid().slice(0, 8)}`;
-  db.prepare(`
-    INSERT INTO live_rooms (id, host_id, title, category, scene_preset, viewers_count)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, hostId, title.trim(), category || 'بث مباشر شخصي', 'webcam-live', 1);
-  liveEngine.ensureRoom(id);
-  res.json({ ok: true, id });
 });
 
 app.get('/api/live/rooms/:id/state', (req, res) => {
@@ -596,7 +687,7 @@ app.get('/api/ai/security-logs', (_req, res) => {
 });
 
 // ============================================================
-// VIP, RANKS, AD REMOVAL, CUSTOMIZATION & GEO-PRICING
+// VIP, RANKS, AD REMOVAL & GEO-PRICING
 // ============================================================
 app.get('/api/pricing/catalog', (req, res) => {
   const country = (String(req.query.country || 'EG').toUpperCase() as CountryCode);
@@ -643,20 +734,14 @@ app.post('/api/users/:id/activate-vip', (req, res) => {
   const { vipTier, prioritySupport, aiTier } = req.body as { vipTier?: VipTier; prioritySupport?: boolean; aiTier?: AiTierId };
   const user = getUserOrNull(req.params.id);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
-
   const nextVip = vipTier !== undefined ? vipTier : user.vipTier;
   const nextPriority = prioritySupport !== undefined ? prioritySupport : user.prioritySupport;
   const nextAi = aiTier !== undefined ? aiTier : user.aiTier;
   let nextAds = user.adRemoval;
-  // VIP 5+ includes core ad-removal convenience in demo
-  if (nextVip > 0) {
-    nextAds = { videos: true, largeGroups: true, ai: true, investment: true };
-  }
+  if (nextVip > 0) nextAds = { videos: true, largeGroups: true, ai: true, investment: true };
 
-  db.prepare(`
-    UPDATE users SET vip_tier = ?, priority_support = ?, ai_tier = ?, ad_removal_json = ? WHERE id = ?
-  `).run(nextVip, nextPriority ? 1 : 0, nextAi, JSON.stringify(nextAds), user.id);
-
+  db.prepare('UPDATE users SET vip_tier = ?, priority_support = ?, ai_tier = ?, ad_removal_json = ? WHERE id = ?')
+    .run(nextVip, nextPriority ? 1 : 0, nextAi, JSON.stringify(nextAds), user.id);
   res.json({ ok: true, user: getUserOrNull(user.id) });
 });
 
@@ -683,30 +768,21 @@ app.post('/api/users/:id/customize', (req, res) => {
   const user = getUserOrNull(req.params.id);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
 
-  db.prepare(`
-    UPDATE users SET theme = ?, custom_app_name = ?, custom_app_icon = ?, country = ? WHERE id = ?
-  `).run(
-    theme || user.theme,
-    customAppName !== undefined ? customAppName.slice(0, 18) : user.customAppName,
-    customAppIcon || user.customAppIcon,
-    country || user.country,
-    user.id
-  );
+  db.prepare('UPDATE users SET theme = ?, custom_app_name = ?, custom_app_icon = ?, country = ? WHERE id = ?')
+    .run(theme || user.theme, customAppName !== undefined ? customAppName.slice(0, 18) : user.customAppName, customAppIcon || user.customAppIcon, country || user.country, user.id);
   res.json({ ok: true, user: getUserOrNull(user.id) });
 });
 
 // ============================================================
-// FINANCE SANDBOX (VISUAL DESIGN + DEMO LEDGER + MARKET DATA)
+// FINANCE SANDBOX & TRADINGVIEW DATA
 // ============================================================
 app.get('/api/finance/ledger/:userId', (req, res) => {
-  const entries = db.prepare(`
-    SELECT * FROM ledger_entries WHERE user_id = ? OR credit_account LIKE ? ORDER BY created_at DESC LIMIT 30
-  `).all(req.params.userId, `%${req.params.userId}%`);
+  const entries = db.prepare('SELECT * FROM ledger_entries WHERE user_id = ? OR credit_account LIKE ? ORDER BY created_at DESC LIMIT 30')
+    .all(req.params.userId, `%${req.params.userId}%`);
   res.json({ ok: true, entries, mode: 'SANDBOX_DESIGN_ONLY' });
 });
 
 app.get('/api/finance/markets', (_req, res) => {
-  // Deterministic realistic OHLC candlestick series for TradingView Lightweight Charts
   const makeSeries = (startPrice: number, drift: number, vol: number, days = 90) => {
     const out = [];
     let price = startPrice;
@@ -720,32 +796,25 @@ app.get('/api/finance/markets', (_req, res) => {
       const high = Number((Math.max(open, close) * (1 + Math.abs(seed) * vol * 0.6)).toFixed(2));
       const low = Number((Math.min(open, close) * (1 - Math.abs(seed) * vol * 0.5)).toFixed(2));
       price = close;
-      out.push({
-        time: d.toISOString().slice(0, 10),
-        open,
-        high,
-        low,
-        close,
-      });
+      out.push({ time: d.toISOString().slice(0, 10), open, high, low, close });
     }
     return out;
   };
-
   res.json({
     ok: true,
     assets: [
       { symbol: 'EGX30', nameAr: 'مؤشر البورصة المصرية EGX30', nameEn: 'Egypt EGX30 Index', category: 'stocks', currency: 'EGP', series: makeSeries(30450, 0.0018, 0.014) },
       { symbol: 'COMI.CA', nameAr: 'البنك التجاري الدولي CIB', nameEn: 'CIB Egypt', category: 'stocks', currency: 'EGP', series: makeSeries(81.5, 0.0014, 0.018) },
-      { symbol: 'AAPL', nameAr: 'شركة آبل Apple Inc.', nameEn: 'Apple Inc.', category: 'stocks', currency: 'USD', series: makeSeries(226.4, 0.0015, 0.015) },
+      { symbol: 'AAPL', nameAr: 'آبل Apple Inc.', nameEn: 'Apple Inc.', category: 'stocks', currency: 'USD', series: makeSeries(226.4, 0.0015, 0.015) },
       { symbol: 'NVDA', nameAr: 'إنفيديا NVIDIA', nameEn: 'NVIDIA Corp.', category: 'stocks', currency: 'USD', series: makeSeries(138.2, 0.0024, 0.026) },
-      { symbol: 'BTC', nameAr: 'بيتكوين Bitcoin (عرض تحليلي)', nameEn: 'Bitcoin (Analytics Preview)', category: 'crypto', currency: 'USD', series: makeSeries(89400, 0.0021, 0.032) },
-      { symbol: 'ETH', nameAr: 'إيثيريوم Ethereum (عرض تحليلي)', nameEn: 'Ethereum (Analytics Preview)', category: 'crypto', currency: 'USD', series: makeSeries(3240, 0.0016, 0.035) },
+      { symbol: 'BTC', nameAr: 'بيتكوين Bitcoin', nameEn: 'Bitcoin', category: 'crypto', currency: 'USD', series: makeSeries(89400, 0.0021, 0.032) },
+      { symbol: 'ETH', nameAr: 'إيثيريوم Ethereum', nameEn: 'Ethereum', category: 'crypto', currency: 'USD', series: makeSeries(3240, 0.0016, 0.035) },
     ],
   });
 });
 
 // ============================================================
-// MULTI-PROVIDER API HUB & OPEN-SOURCE CONNECTORS
+// API HUB
 // ============================================================
 function maskKey(k: string): string {
   if (!k) return '';
@@ -805,33 +874,32 @@ app.post('/api/providers/test', async (req, res) => {
     if (target === 'ollama') {
       const r = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/tags`, { signal: AbortSignal.timeout(3000) });
       const data = (await r.json()) as { models?: Array<{ name: string }> };
-      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: `تم الاتصال بـ Ollama (${data.models?.length || 0} نماذج متاحة محليًا)` });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: `تم الاتصال بـ Ollama (${data.models?.length || 0} نماذج متاحة)` });
     }
     if (target === 'gemini') {
-      if (!cfg.geminiApiKey) return res.json({ ok: false, detail: 'لم يتم إدخال مفتاح Gemini API بعد.' });
+      if (!cfg.geminiApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح Gemini API أولًا.' });
       const ai = new GoogleGenAI({ apiKey: cfg.geminiApiKey });
-      const out = await ai.interactions.create({ model: 'gemini-3.5-flash-lite', input: 'Reply with OK' });
+      const out = await ai.interactions.create({ model: 'gemini-3.5-flash-lite', input: 'Reply OK' });
       return res.json({ ok: true, latencyMs: Date.now() - start, detail: `اتصال ناجح بـ Gemini API: ${(out.output_text || 'OK').slice(0, 40)}` });
     }
     if (target === 'meilisearch' && cfg.meilisearchUrl) {
       const r = await fetch(`${cfg.meilisearchUrl.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(3000) });
-      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Meilisearch متصل ويعمل' : `HTTP ${r.status}` });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Meilisearch متصل' : `HTTP ${r.status}` });
     }
     if (target === 'blnk' && cfg.blnkUrl) {
       const r = await fetch(`${cfg.blnkUrl.replace(/\/$/, '')}/`, { signal: AbortSignal.timeout(3000) });
-      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Blnk Ledger متصل' : `HTTP ${r.status}` });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Blnk متصل' : `HTTP ${r.status}` });
     }
     if (target === 'matrix' && cfg.matrixUrl) {
       const r = await fetch(`${cfg.matrixUrl.replace(/\/$/, '')}/_matrix/client/versions`, { signal: AbortSignal.timeout(3000) });
-      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Matrix Synapse Homeserver متصل' : `HTTP ${r.status}` });
+      return res.json({ ok: r.ok, latencyMs: Date.now() - start, detail: r.ok ? 'Matrix Synapse متصل' : `HTTP ${r.status}` });
     }
-    return res.json({ ok: false, detail: 'يرجى إدخال عنوان الخادم أو مفتاح API أولًا ثم الحفظ.' });
+    return res.json({ ok: false, detail: 'أدخل العنوان أو المفتاح أولًا.' });
   } catch (e) {
-    return res.json({ ok: false, latencyMs: Date.now() - start, detail: `غير متصل محليًا: ${e instanceof Error ? e.message : String(e)}` });
+    return res.json({ ok: false, latencyMs: Date.now() - start, detail: `غير متصل: ${e instanceof Error ? e.message : String(e)}` });
   }
 });
 
-// Serve built SPA in production mode
 const distDir = path.resolve(__dirname, '../dist');
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
@@ -842,6 +910,5 @@ if (fs.existsSync(distDir)) {
 
 const PORT = Number(process.env.PORT || 4000);
 server.listen(PORT, () => {
-  console.log(`\n  ✦ LM Super App Local Server running at http://localhost:${PORT}`);
-  console.log(`  ✦ WebSocket endpoint ready at ws://localhost:${PORT}/ws\n`);
+  console.log(`\n  ✦ LM Super App v2 running at http://localhost:${PORT}\n`);
 });

@@ -1,20 +1,18 @@
-# LM — Integrated Super App Platform (Open-Source Prototype Edition)
+# LM — Integrated Super App Platform (V2 Open-Source UI Edition)
 
-**LM** is an open-source, locally runnable Super App prototype designed in Egypt for global expansion. It unifies Social Networking, Short Vertical Videos, Live Streaming with VIP Highlighted Comments Priority Queue, Realtime Encrypted-Style Messaging & Calls, a Privacy-First Multi-Provider AI Assistant (`LM AI`), Modular VIP / Ranks / Geo-Residency Pricing, and a Sandbox Finance & Market Analytics Hub — all under **one unified account and bespoke flagship interface**.
+**LM** is an open-source, locally runnable Super App designed in Egypt for global expansion — built with frameless edge-to-edge native app architecture (zero admin dashboard bars!) combining the best open-source design & engineering systems in each domain:
 
-## Core Capabilities Included
+## Open-Source Engines & UI Systems Integrated
 
-- **Unified Identity & Multi-Language (AR RTL / EN LTR):** Sign up, sign in, sign out, or instant-switch between VIP 1 Emperor, VIP 3 Creator, VIP 2 Analyst, VIP 5, and Free demo accounts.
-- **Social Feed & Profiles:** Posts, local image uploads, likes, comments, creator profiles, clear separation between **Platform Ads** (removable) and **Sponsored User Campaigns** (`محتوى ممول`), plus one-click explicit `LM AI` summarization.
-- **Short Videos (Vertical Reels):** Smooth vertical theater with keyboard/button navigation, local `.mp4`/`.webm` video uploads, likes, saves, and paid promotion campaigns.
-- **Live Streaming + VIP Highlighted Comments Engine:**
-  - Server-side priority queue: **VIP 1 (15s, #1) > VIP 2 (10s, #2) > VIP 3 (5s, #3)**, FIFO within same tier, cooldown enforcement, pre-display content moderation filter, host controls, local WebRTC camera preview, and virtual gifts with **75% Creator / 25% LM** revenue split.
-- **Messaging & Calls:** 1-on-1 & Group/Community realtime WebSocket chat, voice note recording, file/image sharing, WebRTC voice/video call preview, and explicit `@LM AI` message-sharing consent bar.
-- **Multi-Provider LM AI + Security Firewall:** Plug in API keys for **Google Gemini (`@google/genai`), OpenAI, Anthropic Claude, OpenRouter, Groq, or local Ollama** — backed by a zero-key local fallback engine and server-enforced **Privacy & Financial Isolation Firewall** with live audit logs.
-- **VIP 1–5, Priority Tier, Ranks & Geo-Pricing:** Live interior theme switching (`Obsidian`, `Alabaster`, `Royal Gold`, `Emerald Reserve`, `Imperial Onyx`), custom app icon & name, Supreme Titles (`الملك / الرئيس / الإمبراطور`), modular ad-removal toggles (205 EGP), and the **3+1 month residency currency switch & 2-month travel exemption simulator**.
-- **Finance & Market Analytics (Sandbox Design Preview):** Interactive Japanese candlestick charts powered by **TradingView Lightweight Charts (Apache 2.0)**, Double-Entry Demo Ledger, and LM 52% Private Equity governance showcase (zero real money/Visa/bank processing in prototype mode).
+- **Frameless Super App Dock:** Telegram Desktop / WeChat-style `72px` edge dock (no top header bar; 100% full-viewport immersion per section).
+- **Messaging & Calls (`ChatView.tsx`):** Modeled directly on **Telegram Web A (`Ajaxy/telegram-tt`)** & **Tinode (`tinode/webapp`)** — folder tabs (`الكل | شخصي | المجموعات | القنوات`), subtle Telegram doodle SVG wallpaper, asymmetric speech bubbles with inline `✓✓` read ticks, quote-replies, floating emoji reactions (`❤️ 🔥 👍 😂`), real interactive voice note waveforms via **`wavesurfer.js`**, emoji picker via **`emoji-picker-react`**, shared media drawer, WebRTC calls, and explicit `@LM AI` message-sharing consent.
+- **Short Videos (`ShortVideosView.tsx`):** Modeled directly on **Loops (`joinloops/loops-expo`)** & **TikTok** — pitch-black full-height vertical theater powered by **`swiper`**, real local 720p HD `.mp4` videos, floating transparent `أتابعه | لك` tabs, double-tap `#FE2C55` heart bursts, spinning vinyl audio disc, scrubbable hairline progress bar, and slide-over TikTok comments drawer.
+- **Social & Stories (`SocialView.tsx`):** **Instagram / Pixelfed** full-screen Stories viewer with gradient rings, multi-photo `Swiper` carousels, double-tap heart burst, and Sponsored vs Platform Ad separation.
+- **Live Streaming (`LiveView.tsx`):** **TikTok Live** full-bleed video stage + local WebRTC camera broadcast + server-enforced **VIP Highlighted Comments Priority Queue** (`VIP 1 = 15s > VIP 2 = 10s > VIP 3 = 5s`, FIFO, cooldown, moderation) + animated gifts with **`canvas-confetti`** & `75% Creator / 25% LM` split.
+- **LM AI Studio (`AiView.tsx`):** **LobeChat / LibreChat** borderless prompt workspace with collapsible agents sidebar, **`react-markdown` + `remark-gfm`**, multi-provider gateway (**Google `@google/genai`, OpenAI, Anthropic, OpenRouter, Groq, Ollama**), and server-side Financial & Privacy Firewall.
+- **Finance & Markets (`FinanceView.tsx`):** Sandbox preview with interactive Japanese candlesticks via **TradingView `lightweight-charts`** (Apache 2.0) and Double-Entry Demo Ledger.
 
-## Run Locally (100% Free — $0)
+## Run Locally ($0 Cost)
 
 ```bash
 npm install
@@ -22,8 +20,4 @@ npm run build
 npm start
 ```
 
-Then open **`http://localhost:4000`** (or run `npm run dev` for hot-reload development on `http://localhost:5173`).
-
-## License
-
-MIT License — see [LICENSE](./LICENSE). All third-party open-source dependencies retain their respective licenses (MIT / Apache 2.0).
+Open **`http://localhost:4000`** (or double-click `START-LM.bat`).

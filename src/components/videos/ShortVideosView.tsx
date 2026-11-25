@@ -1,130 +1,342 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Swiper, SwiperSlide } from 'swiper/react';
+import { Mousewheel, Keyboard } from 'swiper/modules';
+import type { Swiper as SwiperType } from 'swiper';
+import 'swiper/css';
 import {
   Heart,
+  MessageCircle,
   Bookmark,
   Share2,
-  ChevronUp,
-  ChevronDown,
   Play,
-  Pause,
-  Upload,
-  Megaphone,
-  Cpu,
-  Eye,
-  X,
   Volume2,
   VolumeX,
+  Plus,
+  Check,
+  Music2,
+  Sparkles,
+  Upload,
+  X,
+  ChevronUp,
+  ChevronDown,
+  Send,
+  Megaphone,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api, uploadFile } from '../../lib/api';
 import { ShortVideoItem } from '../../types';
-import { RankBadge, UserAvatar, VerifiedIcon, VipBadge } from '../shared/LmBrandMark';
+import { UserAvatar, VerifiedIcon, VipBadge } from '../shared/LmBrandMark';
 
-/** Smooth 60fps procedural cinema canvas for seeded short videos (zero broken external video URLs!) */
-function ProceduralReelCanvas({ preset, playing }: { preset: string; playing: boolean }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+interface VideoCommentRow {
+  id: string;
+  display_name: string;
+  username: string;
+  avatar_color: string;
+  avatar_initials: string;
+  avatar_url: string | null;
+  vip_tier: number;
+  content: string;
+  likes_count: number;
+  created_at: string;
+}
+
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+/** Individual Full-Screen Loops / TikTok Slide */
+function ReelSlide({
+  item,
+  isActive,
+  muted,
+  onToggleMute,
+  onLike,
+  onSave,
+  onOpenComments,
+  onShare,
+  onSummarize,
+  isAr,
+}: {
+  item: ShortVideoItem;
+  isActive: boolean;
+  muted: boolean;
+  onToggleMute: () => void;
+  onLike: () => void;
+  onSave: () => void;
+  onOpenComments: () => void;
+  onShare: () => void;
+  onSummarize: () => void;
+  isAr: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [followed, setFollowed] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [burstHearts, setBurstHearts] = useState<Array<{ id: number; x: number; y: number }>>([]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const el = videoRef.current;
+    if (!el) return;
+    if (isActive) {
+      el.currentTime = 0;
+      el.play().then(() => setPaused(false)).catch(() => setPaused(true));
+    } else {
+      el.pause();
+      setPaused(false);
+    }
+  }, [isActive]);
 
-    let rafId = 0;
-    let t = 0;
+  function handleSingleTap() {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) {
+      el.play();
+      setPaused(false);
+    } else {
+      el.pause();
+      setPaused(true);
+    }
+  }
 
-    const palettes: Record<string, { bg1: string; bg2: string; accent: string; accent2: string }> = {
-      'cairo-skyline': { bg1: '#0A0F1D', bg2: '#182442', accent: '#2F6BFF', accent2: '#D4AF37' },
-      'broadcast-pulse': { bg1: '#071713', bg2: '#0F2E26', accent: '#10B981', accent2: '#34D399' },
-      'market-wave': { bg1: '#14110A', bg2: '#262010', accent: '#D4AF37', accent2: '#F59E0B' },
-      'nile-gold': { bg1: '#100E16', bg2: '#1E1A2B', accent: '#E2C16B', accent2: '#60A5FA' },
-    };
-    const p = palettes[preset] || palettes['cairo-skyline'];
+  function handleDoubleTap(e: React.MouseEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const id = Date.now();
+    setBurstHearts(prev => [...prev, { id, x, y }]);
+    setTimeout(() => setBurstHearts(prev => prev.filter(h => h.id !== id)), 1000);
+    if (!item.likedByMe) onLike();
+  }
 
-    const render = () => {
-      if (playing) t += 0.014;
-      const w = canvas.width;
-      const h = canvas.height;
+  return (
+    <div className="w-full h-full flex items-center justify-center bg-black relative overflow-hidden select-none">
+      {/* Subtle Ambient Blurred Backdrop on Wide Desktop Screens (Just like TikTok Web!) */}
+      {item.posterUrl && (
+        <img
+          src={item.posterUrl}
+          alt=""
+          className="hidden md:block absolute inset-0 w-full h-full object-cover blur-3xl opacity-30 scale-110 pointer-events-none"
+        />
+      )}
 
-      const grad = ctx.createLinearGradient(0, 0, w, h);
-      grad.addColorStop(0, p.bg1);
-      grad.addColorStop(1, p.bg2);
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
+      {/* Centered 9:16 Immersive Reel Frame (100% height, edge-to-edge on mobile, crisp vertical theater on desktop) */}
+      <div
+        onClick={handleSingleTap}
+        onDoubleClick={handleDoubleTap}
+        className="relative h-full w-full md:w-auto md:aspect-[9/16] max-w-full bg-black md:rounded-2xl overflow-hidden shadow-2xl cursor-pointer"
+      >
+        <video
+          ref={videoRef}
+          src={item.videoUrl || '/uploads/seed/reel1.mp4'}
+          poster={item.posterUrl || undefined}
+          loop
+          muted={muted}
+          playsInline
+          onTimeUpdate={(e) => {
+            const el = e.currentTarget;
+            if (el.duration) setProgress((el.currentTime / el.duration) * 100);
+          }}
+          className="w-full h-full object-cover"
+        />
 
-      // Subtle architectural grid lines
-      ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-      ctx.lineWidth = 1;
-      for (let x = 0; x < w; x += 36) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
+        {/* Smooth Bottom Gradient Overlay (Exact Loops style) */}
+        <div
+          style={{
+            background: 'linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.35) 45%, transparent 100%)',
+          }}
+          className="absolute inset-x-0 bottom-0 h-[44%] pointer-events-none"
+        />
 
-      // Soft ambient kinetic light spheres
-      const x1 = w * (0.5 + 0.28 * Math.sin(t * 0.9));
-      const y1 = h * (0.35 + 0.14 * Math.cos(t * 0.7));
-      const g1 = ctx.createRadialGradient(x1, y1, 10, x1, y1, 210);
-      g1.addColorStop(0, `${p.accent}55`);
-      g1.addColorStop(1, 'transparent');
-      ctx.fillStyle = g1;
-      ctx.fillRect(0, 0, w, h);
+        {/* Center Pause Indicator */}
+        {paused && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
+            <div className="w-20 h-20 rounded-full bg-black/45 backdrop-blur-sm flex items-center justify-center">
+              <Play className="w-10 h-10 text-white/90 fill-white/90 ms-1" />
+            </div>
+          </div>
+        )}
 
-      const x2 = w * (0.45 + 0.3 * Math.cos(t * 0.6));
-      const y2 = h * (0.65 + 0.12 * Math.sin(t * 0.8));
-      const g2 = ctx.createRadialGradient(x2, y2, 10, x2, y2, 180);
-      g2.addColorStop(0, `${p.accent2}38`);
-      g2.addColorStop(1, 'transparent');
-      ctx.fillStyle = g2;
-      ctx.fillRect(0, 0, w, h);
+        {/* Double-Click Heart Bursts */}
+        {burstHearts.map(h => (
+          <div
+            key={h.id}
+            style={{ left: h.x - 36, top: h.y - 36 }}
+            className="absolute pointer-events-none animate-float-heart z-30"
+          >
+            <Heart className="w-20 h-20 text-[#FE2C55] fill-[#FE2C55] drop-shadow-2xl" />
+          </div>
+        ))}
 
-      // Smooth audio/data waveform bars in center
-      ctx.save();
-      const bars = 28;
-      const barW = 5;
-      const gap = 6;
-      const totalW = bars * (barW + gap);
-      const startX = (w - totalW) / 2;
-      const midY = h * 0.44;
-      for (let i = 0; i < bars; i++) {
-        const amp = 18 + Math.abs(Math.sin(t * 2.4 + i * 0.38)) * 58 + Math.cos(t * 1.3 - i * 0.2) * 14;
-        ctx.fillStyle = i % 3 === 0 ? `${p.accent2}CC` : `${p.accent}AA`;
-        ctx.beginPath();
-        ctx.roundRect(startX + i * (barW + gap), midY - amp / 2, barW, Math.max(8, amp), 3);
-        ctx.fill();
-      }
-      ctx.restore();
+        {/* Top-End Mute Pill */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleMute(); }}
+          className="absolute top-16 end-3.5 z-20 w-9 h-9 rounded-full bg-black/45 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/65 cursor-pointer"
+        >
+          {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+        </button>
 
-      rafId = requestAnimationFrame(render);
-    };
-    render();
-    return () => cancelAnimationFrame(rafId);
-  }, [preset, playing]);
+        {/* ============================================================
+            TIKTOK / LOOPS FLOATING ACTION RAIL (Side Stack)
+           ============================================================ */}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute end-3 bottom-6 z-20 flex flex-col items-center gap-5"
+        >
+          {/* Creator Avatar + Red Follow Plus Badge */}
+          <div className="relative mb-1">
+            <div className="rounded-full p-0.5 bg-white shadow-lg">
+              <UserAvatar
+                initials={item.avatarInitials}
+                color={item.avatarColor}
+                avatarUrl={item.avatarUrl}
+                size={46}
+              />
+            </div>
+            <button
+              onClick={() => setFollowed(f => !f)}
+              className={`absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-white shadow-md cursor-pointer ${
+                followed ? 'bg-emerald-500' : 'bg-[#FE2C55]'
+              }`}
+            >
+              {followed ? <Check className="w-3 h-3 stroke-[3]" /> : <Plus className="w-3.5 h-3.5 stroke-[3]" />}
+            </button>
+          </div>
 
-  return <canvas ref={canvasRef} width={360} height={640} className="w-full h-full object-cover block" />;
+          {/* Heart */}
+          <button onClick={onLike} className="flex flex-col items-center gap-1 cursor-pointer group">
+            <Heart
+              className={`w-8 h-8 transition-transform group-active:scale-125 drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)] ${
+                item.likedByMe ? 'text-[#FE2C55] fill-[#FE2C55]' : 'text-white fill-white/95'
+              }`}
+            />
+            <span className="text-xs font-bold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] font-mono-num">
+              {formatCompact(item.likesCount)}
+            </span>
+          </button>
+
+          {/* Comments */}
+          <button onClick={onOpenComments} className="flex flex-col items-center gap-1 cursor-pointer group">
+            <MessageCircle className="w-8 h-8 text-white fill-white/95 drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)] group-active:scale-110 transition-transform" />
+            <span className="text-xs font-bold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] font-mono-num">
+              {formatCompact(item.commentsCount)}
+            </span>
+          </button>
+
+          {/* Bookmark */}
+          <button onClick={onSave} className="flex flex-col items-center gap-1 cursor-pointer group">
+            <Bookmark
+              className={`w-8 h-8 drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)] transition-transform group-active:scale-110 ${
+                item.savedByMe ? 'text-[#FACE15] fill-[#FACE15]' : 'text-white fill-white/95'
+              }`}
+            />
+            <span className="text-xs font-bold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] font-mono-num">
+              {formatCompact(item.savesCount)}
+            </span>
+          </button>
+
+          {/* Share / Promote */}
+          <button onClick={onShare} className="flex flex-col items-center gap-1 cursor-pointer group">
+            <Share2 className="w-7 h-7 text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]" />
+            <span className="text-xs font-bold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] font-mono-num">
+              {formatCompact(item.sharesCount || 420)}
+            </span>
+          </button>
+
+          {/* Spinning Vinyl Record Disc */}
+          <button
+            onClick={onSummarize}
+            title={isAr ? 'تلخيص الفيديو عبر LM AI' : 'AI Summary'}
+            className={`w-11 h-11 rounded-full bg-gradient-to-tr from-zinc-900 via-zinc-700 to-zinc-900 p-2 border border-white/20 shadow-xl flex items-center justify-center cursor-pointer ${
+              !paused && isActive ? 'animate-vinyl' : ''
+            }`}
+          >
+            <UserAvatar initials={item.avatarInitials} color={item.avatarColor} avatarUrl={item.avatarUrl} size={24} />
+          </button>
+        </div>
+
+        {/* ============================================================
+            BOTTOM CAPTION, CREATOR HANDLE & AUDIO TRACK OVERLAY
+           ============================================================ */}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute start-4 end-18 bottom-5 z-20 text-white space-y-2"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <span dir="ltr" className="text-base font-bold drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
+              @{item.username}
+            </span>
+            {item.verified && <VerifiedIcon />}
+            <VipBadge tier={item.vipTier} compact />
+            {item.isSponsored && (
+              <span className="px-2 py-0.5 rounded bg-white/20 backdrop-blur-md text-[10px] font-semibold">
+                {isAr ? 'ممول' : 'Sponsored'}
+              </span>
+            )}
+          </div>
+
+          <p className="text-[13.5px] leading-snug text-white/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] line-clamp-2">
+            {item.title} — {item.description}
+          </p>
+
+          <div className="text-xs font-semibold text-white/90">{item.tags}</div>
+
+          <div className="flex items-center justify-between gap-2 pt-0.5">
+            <div className="flex items-center gap-2 text-xs text-white/85 truncate">
+              <Music2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{item.audioTitle}</span>
+            </div>
+            <button
+              onClick={onSummarize}
+              className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur-md text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+            >
+              <Sparkles className="w-3 h-3" /> {isAr ? 'ملخص AI' : 'AI'}
+            </button>
+          </div>
+        </div>
+
+        {/* Bottom Scrubber Hairline (TikTok / Loops Progress Bar) */}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            const el = videoRef.current;
+            if (!el || !el.duration) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            el.currentTime = ratio * el.duration;
+          }}
+          className="absolute bottom-0 inset-x-0 h-1.5 bg-white/20 z-30 cursor-pointer group"
+        >
+          <div style={{ width: `${progress}%` }} className="h-full bg-[#FE2C55] transition-all duration-100" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ShortVideosView() {
-  const { user, lang, toast, sendToAi, setActiveTab } = useApp();
+  const { user, lang, toast, sendToAi } = useApp();
   const isAr = lang === 'ar';
 
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
-  const [feedMode, setFeedMode] = useState<'for_you' | 'following'>('for_you');
-  const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
-  const [muted, setMuted] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [feedTab, setFeedTab] = useState<'forYou' | 'following'>('forYou');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [muted, setMuted] = useState(true); // Browsers allow instant autoplay when muted initially; 1 tap unmutes!
+  const swiperRef = useRef<SwiperType | null>(null);
 
+  // TikTok Slide-over Comments Drawer
+  const [commentsVideo, setCommentsVideo] = useState<ShortVideoItem | null>(null);
+  const [comments, setComments] = useState<VideoCommentRow[]>([]);
+  const [commentText, setCommentText] = useState('');
+
+  // Upload Modal
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newTags, setNewTags] = useState('#LM #مصر');
-  const [newPreset, setNewPreset] = useState('cairo-skyline');
-  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
-  const [uploadingFile, setUploadingFile] = useState(false);
-  const [newSponsored, setNewSponsored] = useState(false);
-
-  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const loadVideos = useCallback(async () => {
     if (!user) return;
@@ -136,40 +348,17 @@ export function ShortVideosView() {
     loadVideos();
   }, [loadVideos]);
 
-  const activeList = feedMode === 'for_you' ? videos : videos.filter((_, idx) => idx % 2 === 0);
-  const current = activeList[index] || activeList[0] || null;
-
-  const goNext = useCallback(() => {
-    if (activeList.length === 0) return;
-    setIndex(i => (i + 1) % activeList.length);
-    setPlaying(true);
-  }, [activeList.length]);
-
-  const goPrev = useCallback(() => {
-    if (activeList.length === 0) return;
-    setIndex(i => (i - 1 + activeList.length) % activeList.length);
-    setPlaying(true);
-  }, [activeList.length]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (uploadOpen) return;
-      if (e.key === 'ArrowDown') { e.preventDefault(); goNext(); }
-      if (e.key === 'ArrowUp') { e.preventDefault(); goPrev(); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [goNext, goPrev, uploadOpen]);
-
   if (!user) return null;
+
+  const displayed = feedTab === 'forYou' ? videos : videos.filter((_, i) => i % 2 === 0);
 
   async function toggleLike(v: ShortVideoItem) {
     if (!user) return;
     setVideos(prev =>
-      prev.map(item =>
-        item.id === v.id
-          ? { ...item, likedByMe: !item.likedByMe, likesCount: item.likedByMe ? item.likesCount - 1 : item.likesCount + 1 }
-          : item
+      prev.map(x =>
+        x.id === v.id
+          ? { ...x, likedByMe: !x.likedByMe, likesCount: x.likedByMe ? x.likesCount - 1 : x.likesCount + 1 }
+          : x
       )
     );
     await api(`/api/videos/${v.id}/like`, { method: 'POST', body: JSON.stringify({ userId: user.id }) });
@@ -178,27 +367,46 @@ export function ShortVideosView() {
   async function toggleSave(v: ShortVideoItem) {
     if (!user) return;
     setVideos(prev =>
-      prev.map(item =>
-        item.id === v.id
-          ? { ...item, savedByMe: !item.savedByMe, savesCount: item.savedByMe ? item.savesCount - 1 : item.savesCount + 1 }
-          : item
+      prev.map(x =>
+        x.id === v.id
+          ? { ...x, savedByMe: !x.savedByMe, savesCount: x.savedByMe ? x.savesCount - 1 : x.savesCount + 1 }
+          : x
       )
     );
     await api(`/api/videos/${v.id}/save`, { method: 'POST', body: JSON.stringify({ userId: user.id }) });
   }
 
-  async function handleVideoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function openComments(v: ShortVideoItem) {
+    setCommentsVideo(v);
+    const data = await api<{ comments: VideoCommentRow[] }>(`/api/videos/${v.id}/comments`);
+    setComments(data.comments);
+  }
+
+  async function submitComment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user || !commentsVideo || !commentText.trim()) return;
+    await api(`/api/videos/${commentsVideo.id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: user.id, content: commentText }),
+    });
+    setCommentText('');
+    const data = await api<{ comments: VideoCommentRow[] }>(`/api/videos/${commentsVideo.id}/comments`);
+    setComments(data.comments);
+    setVideos(prev => prev.map(x => (x.id === commentsVideo.id ? { ...x, commentsCount: x.commentsCount + 1 } : x)));
+  }
+
+  async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadingFile(true);
+    setUploading(true);
     try {
       const up = await uploadFile(file);
-      setUploadedVideoUrl(up.url);
-      toast(isAr ? 'تم رفع ملف الفيديو محليًا بنجاح' : 'Video uploaded locally', 'success');
+      setUploadedUrl(up.url);
+      toast(isAr ? 'تم تجهيز الفيديو للنشر' : 'Video uploaded', 'success');
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Upload failed', 'error');
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
     } finally {
-      setUploadingFile(false);
+      setUploading(false);
     }
   }
 
@@ -211,359 +419,201 @@ export function ShortVideosView() {
         userId: user.id,
         title: newTitle,
         description: newDesc,
-        tags: newTags,
-        videoUrl: uploadedVideoUrl,
-        scenePreset: newPreset,
-        isSponsored: newSponsored,
-        sponsorBudgetEgp: newSponsored ? 800 : 0,
+        videoUrl: uploadedUrl,
       }),
     });
     setUploadOpen(false);
     setNewTitle('');
     setNewDesc('');
-    setUploadedVideoUrl(null);
-    setNewSponsored(false);
+    setUploadedUrl(null);
     await loadVideos();
-    setIndex(0);
-    toast(isAr ? 'تم نشر الفيديو القصير بنجاح' : 'Short video published', 'success');
-  }
-
-  async function promoteVideo(v: ShortVideoItem) {
-    await api(`/api/videos/${v.id}/promote`, { method: 'POST', body: JSON.stringify({ budgetEgp: 1000 }) });
-    await loadVideos();
-    toast(isAr ? 'تم إطلاق حملة ترويج مدفوعة للفيديو (واضحة كمحتوى ممول)' : 'Video promotion launched', 'success');
+    swiperRef.current?.slideTo(0);
+    toast(isAr ? 'تم نشر الريل بنجاح' : 'Short published', 'success');
   }
 
   return (
-    <div className="h-full overflow-y-auto px-4 sm:px-6 py-4 flex flex-col">
-      {/* Top Control Strip */}
-      <div className="max-w-5xl w-full mx-auto flex flex-wrap items-center justify-between gap-3 mb-4 shrink-0">
-        <div className="inline-flex p-1 rounded-xl bg-[var(--lm-surface)] border border-[var(--lm-border)]">
-          <button
-            onClick={() => { setFeedMode('for_you'); setIndex(0); }}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              feedMode === 'for_you' ? 'bg-[var(--lm-accent)] text-[var(--lm-accent-text)]' : 'text-[var(--lm-text-secondary)]'
-            }`}
-          >
-            {isAr ? 'مخصص لك (For You)' : 'For You'}
-          </button>
-          <button
-            onClick={() => { setFeedMode('following'); setIndex(0); }}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              feedMode === 'following' ? 'bg-[var(--lm-accent)] text-[var(--lm-accent-text)]' : 'text-[var(--lm-text-secondary)]'
-            }`}
-          >
-            {isAr ? 'المتابَعون' : 'Following'}
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {!user.adRemoval.videos && (
+    <div className="h-full w-full bg-black relative flex overflow-hidden">
+      {/* MAIN TIKTOK / LOOPS FULL-SCREEN VERTICAL SWIPER */}
+      <div className="flex-1 h-full relative">
+        {/* FLOATING TRANSPARENT TOP BAR OVER VIDEO (Exact Loops style!) */}
+        <div className="absolute top-4 inset-x-4 z-30 flex items-center justify-between pointer-events-none">
+          <div className="w-24" />
+          <div className="flex items-center gap-6 pointer-events-auto">
             <button
-              onClick={() => setActiveTab('vip')}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] bg-[var(--lm-surface)] border border-[var(--lm-border)] text-[var(--lm-text-secondary)] hover:border-[var(--lm-border-strong)] cursor-pointer"
+              onClick={() => { setFeedTab('following'); setActiveIndex(0); swiperRef.current?.slideTo(0); }}
+              className={`pb-1.5 text-base font-bold transition-all cursor-pointer drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] ${
+                feedTab === 'following'
+                  ? 'text-white border-b-2 border-white'
+                  : 'text-white/60 hover:text-white/90'
+              }`}
             >
-              {isAr ? 'إزالة إعلانات الفيديوهات (100 ج.م)' : 'Remove Video Ads (100 EGP)'}
+              {isAr ? 'أتابعه' : 'Following'}
             </button>
-          )}
-          <button
-            onClick={() => setUploadOpen(true)}
-            className="lm-btn-primary px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            {isAr ? 'رفع فيديو قصير' : 'Upload Short'}
-          </button>
-        </div>
-      </div>
-
-      {/* Main Theater Split (No Overlapping Elements!) */}
-      {current && (
-        <div className="max-w-5xl w-full mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center min-h-0">
-          {/* Vertical 9:16 Stage */}
-          <div className="lg:col-span-6 flex items-center justify-center gap-4">
-            {/* Prev/Next Vertical Controls */}
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={goPrev}
-                title={isAr ? 'الفيديو السابق' : 'Previous'}
-                className="w-10 h-10 rounded-full lm-card hover:bg-[var(--lm-surface-hover)] flex items-center justify-center cursor-pointer"
-              >
-                <ChevronUp className="w-5 h-5" />
-              </button>
-              <div className="text-center text-[11px] font-mono-num text-[var(--lm-text-muted)]">
-                {index + 1}/{activeList.length}
-              </div>
-              <button
-                onClick={goNext}
-                title={isAr ? 'الفيديو التالي' : 'Next'}
-                className="w-10 h-10 rounded-full lm-card hover:bg-[var(--lm-surface-hover)] flex items-center justify-center cursor-pointer"
-              >
-                <ChevronDown className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Clean Phone-Ratio Frame */}
-            <div className="relative w-[300px] sm:w-[330px] aspect-[9/16] max-h-[72vh] rounded-3xl overflow-hidden border border-[var(--lm-border-strong)] bg-black shadow-2xl shrink-0">
-              {current.videoUrl ? (
-                <video
-                  ref={videoElRef}
-                  src={current.videoUrl}
-                  autoPlay
-                  loop
-                  muted={muted}
-                  playsInline
-                  onClick={() => {
-                    const el = videoElRef.current;
-                    if (!el) return;
-                    if (el.paused) { el.play(); setPlaying(true); } else { el.pause(); setPlaying(false); }
-                  }}
-                  className="w-full h-full object-cover cursor-pointer"
-                />
-              ) : (
-                <div onClick={() => setPlaying(p => !p)} className="w-full h-full cursor-pointer">
-                  <ProceduralReelCanvas preset={current.scenePreset} playing={playing} />
-                </div>
-              )}
-
-              {/* Top clean overlay badges */}
-              <div className="absolute top-3 inset-x-3 flex items-center justify-between pointer-events-none">
-                <span className="px-2.5 py-1 rounded-full bg-black/55 backdrop-blur-md text-[10px] font-mono-num text-white flex items-center gap-1">
-                  <Eye className="w-3 h-3" /> {current.viewsCount.toLocaleString('en-US')}
-                </span>
-                {current.isSponsored && (
-                  <span className="px-2.5 py-1 rounded-full bg-amber-500/85 text-black text-[10px] font-bold flex items-center gap-1">
-                    <Megaphone className="w-3 h-3" /> {isAr ? 'محتوى ممول' : 'Sponsored'}
-                  </span>
-                )}
-              </div>
-
-              {/* Bottom Minimal Playback Controls */}
-              <div className="absolute bottom-3 inset-x-3 flex items-center justify-between gap-2">
-                <button
-                  onClick={() => {
-                    if (videoElRef.current) {
-                      if (playing) videoElRef.current.pause(); else videoElRef.current.play();
-                    }
-                    setPlaying(p => !p);
-                  }}
-                  className="w-9 h-9 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center cursor-pointer"
-                >
-                  {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </button>
-                <div className="flex-1 px-3 py-1.5 rounded-full bg-black/55 backdrop-blur-md text-[11px] text-white/90 truncate">
-                  {current.title}
-                </div>
-                {current.videoUrl && (
-                  <button
-                    onClick={() => setMuted(m => !m)}
-                    className="w-9 h-9 rounded-full bg-black/60 backdrop-blur-md text-white flex items-center justify-center cursor-pointer"
-                  >
-                    {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  </button>
-                )}
-              </div>
-            </div>
+            <button
+              onClick={() => { setFeedTab('forYou'); setActiveIndex(0); swiperRef.current?.slideTo(0); }}
+              className={`pb-1.5 text-base font-bold transition-all cursor-pointer drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] ${
+                feedTab === 'forYou'
+                  ? 'text-white border-b-2 border-white'
+                  : 'text-white/60 hover:text-white/90'
+              }`}
+            >
+              {isAr ? 'لك' : 'For You'}
+            </button>
           </div>
 
-          {/* Dedicated Metadata & Interaction Panel (Clean, spacious, zero crowding!) */}
-          <div className="lg:col-span-6 space-y-4">
-            <div className="lm-card rounded-2xl p-5 space-y-4">
-              {/* Creator Header */}
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <UserAvatar initials={current.avatarInitials} color={current.avatarColor} size={42} vipTier={current.vipTier} />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold truncate">{current.displayName}</span>
-                      {current.verified && <VerifiedIcon />}
-                      <VipBadge tier={current.vipTier} compact />
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span dir="ltr" className="text-xs text-[var(--lm-text-muted)] font-mono-num inline-block">@{current.username}</span>
-                      <RankBadge rankId={current.rankId} lang={lang} />
-                    </div>
-                  </div>
-                </div>
-                {user.prioritySupport && (
-                  <span className="text-[10px] font-mono-num px-2 py-1 rounded-lg bg-[#D4AF37]/15 text-[#E8C85E] border border-[#D4AF37]/30 shrink-0">
-                    {isAr ? 'أولوية معالجة HD' : 'Priority HD'}
-                  </span>
-                )}
-              </div>
+          <button
+            onClick={() => setUploadOpen(true)}
+            className="pointer-events-auto px-3.5 py-1.5 rounded-full bg-[#FE2C55] hover:opacity-95 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg cursor-pointer"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>{isAr ? 'رفع' : 'Upload'}</span>
+          </button>
+        </div>
 
-              {/* Title & Description */}
-              <div className="space-y-2">
-                <h2 className="text-base font-bold leading-snug">{current.title}</h2>
-                <p className="text-xs text-[var(--lm-text-secondary)] leading-relaxed">{current.description}</p>
-                <div className="text-xs text-[var(--lm-accent)] font-medium">{current.tags}</div>
-              </div>
+        {/* Desktop Floating Up/Down Navigation Chevrons (TikTok Web Right Edge) */}
+        <div className="hidden lg:flex flex-col gap-3 absolute end-6 top-1/2 -translate-y-1/2 z-30">
+          <button
+            onClick={() => swiperRef.current?.slidePrev()}
+            className="w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer"
+          >
+            <ChevronUp className="w-6 h-6" />
+          </button>
+          <button
+            onClick={() => swiperRef.current?.slideNext()}
+            className="w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer"
+          >
+            <ChevronDown className="w-6 h-6" />
+          </button>
+        </div>
 
-              {/* Engagement Bar */}
-              <div className="grid grid-cols-3 gap-2 pt-3 border-t border-[var(--lm-border)]">
-                <button
-                  onClick={() => toggleLike(current)}
-                  className={`py-2.5 rounded-xl border text-xs font-mono-num font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                    current.likedByMe
-                      ? 'bg-red-500/15 border-red-500/35 text-red-400'
-                      : 'bg-[var(--lm-surface-2)] border-[var(--lm-border)] text-[var(--lm-text)] hover:bg-[var(--lm-surface-hover)]'
-                  }`}
-                >
-                  <Heart className={`w-4 h-4 ${current.likedByMe ? 'fill-current' : ''}`} />
-                  {current.likesCount.toLocaleString('en-US')}
-                </button>
-                <button
-                  onClick={() => toggleSave(current)}
-                  className={`py-2.5 rounded-xl border text-xs font-mono-num font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                    current.savedByMe
-                      ? 'bg-[var(--lm-accent-soft)] border-[var(--lm-accent)]/40 text-[var(--lm-accent)]'
-                      : 'bg-[var(--lm-surface-2)] border-[var(--lm-border)] text-[var(--lm-text)] hover:bg-[var(--lm-surface-hover)]'
-                  }`}
-                >
-                  <Bookmark className={`w-4 h-4 ${current.savedByMe ? 'fill-current' : ''}`} />
-                  {current.savesCount.toLocaleString('en-US')}
-                </button>
-                <button
-                  onClick={() => toast(isAr ? 'تم نسخ رابط الفيديو القصير' : 'Short link copied', 'info')}
-                  className="py-2.5 rounded-xl border bg-[var(--lm-surface-2)] border-[var(--lm-border)] hover:bg-[var(--lm-surface-hover)] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Share2 className="w-4 h-4" />
-                  {isAr ? 'مشاركة' : 'Share'}
-                </button>
-              </div>
-
-              {/* Action Buttons: AI Summary + Promote */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  onClick={() =>
+        {/* Hardware-Accelerated Vertical Swiper */}
+        {displayed.length > 0 && (
+          <Swiper
+            direction="vertical"
+            slidesPerView={1}
+            mousewheel={{ forceToAxis: true, sensitivity: 1 }}
+            keyboard={{ enabled: true }}
+            modules={[Mousewheel, Keyboard]}
+            onSwiper={(sw) => { swiperRef.current = sw; }}
+            onSlideChange={(sw) => setActiveIndex(sw.activeIndex)}
+            className="w-full h-full"
+          >
+            {displayed.map((v, idx) => (
+              <SwiperSlide key={v.id} className="w-full h-full">
+                <ReelSlide
+                  item={v}
+                  isActive={idx === activeIndex}
+                  muted={muted}
+                  onToggleMute={() => setMuted(m => !m)}
+                  onLike={() => toggleLike(v)}
+                  onSave={() => toggleSave(v)}
+                  onOpenComments={() => openComments(v)}
+                  onShare={() => {
+                    api(`/api/videos/${v.id}/promote`, { method: 'POST', body: JSON.stringify({ budgetEgp: 1000 }) }).then(loadVideos);
+                    toast(isAr ? 'تم نسخ الرابط / ترويج الفيديو' : 'Shared / Promoted', 'info');
+                  }}
+                  onSummarize={() =>
                     sendToAi({
-                      title: `${isAr ? 'فيديو قصير' : 'Short Video'}: ${current.title}`,
-                      content: `${current.title}\n${current.description}\n${current.tags}`,
+                      title: `${v.title} (@${v.username})`,
+                      content: `${v.title}\n${v.description}\n${v.tags}`,
                       source: 'video_summary',
                     })
                   }
-                  className="lm-btn-ghost py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Cpu className="w-3.5 h-3.5 text-[var(--lm-accent)]" />
-                  {isAr ? 'تلخيص عبر LM AI' : 'Summarize w/ AI'}
-                </button>
-                <button
-                  onClick={() => promoteVideo(current)}
-                  className="lm-btn-ghost py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Megaphone className="w-3.5 h-3.5 text-amber-400" />
-                  {isAr ? 'ترويج الفيديو' : 'Promote Video'}
-                </button>
-              </div>
-            </div>
+                  isAr={isAr}
+                />
+              </SwiperSlide>
+            ))}
+          </Swiper>
+        )}
+      </div>
 
-            {/* Platform Ad Notice when not removed */}
-            {!user.adRemoval.videos && (
-              <div className="lm-card-subtle rounded-2xl p-4 flex items-center justify-between gap-3">
-                <div className="text-xs">
-                  <div className="font-semibold">{isAr ? 'مساحة إعلان قسم الفيديوهات' : 'Video Section Platform Ad'}</div>
-                  <div className="text-[var(--lm-text-muted)] mt-0.5">
-                    {isAr ? 'يمكنك إزالة إعلانات الفيديوهات مقابل 100 ج.م/شهريًا أو عبر VIP 5.' : 'Remove video ads for 100 EGP/mo or VIP 5.'}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setActiveTab('vip')}
-                  className="lm-btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 cursor-pointer"
-                >
-                  {isAr ? 'إزالة' : 'Remove'}
-                </button>
-              </div>
-            )}
-
-            {/* Quick Playlist Thumbnails */}
-            <div className="lm-card rounded-2xl p-4 space-y-2.5">
-              <div className="text-xs font-semibold text-[var(--lm-text-secondary)]">
-                {isAr ? 'قائمة الفيديوهات المقترحة (استخدم أسهم الكيبورد ↑ ↓)' : 'Up Next (Use ↑ ↓ keys)'}
-              </div>
-              <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                {activeList.map((v, i) => (
-                  <button
-                    key={v.id}
-                    onClick={() => { setIndex(i); setPlaying(true); }}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs text-start transition-colors cursor-pointer ${
-                      i === index
-                        ? 'bg-[var(--lm-accent-soft)] border border-[var(--lm-accent)]/35 font-semibold'
-                        : 'bg-[var(--lm-surface-2)] hover:bg-[var(--lm-surface-hover)] border border-transparent'
-                    }`}
-                  >
-                    <span className="truncate">{v.title}</span>
-                    <span className="text-[10px] font-mono-num text-[var(--lm-text-muted)] shrink-0">@{v.username}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+      {/* TIKTOK COMMENTS SLIDE-OVER DRAWER */}
+      {commentsVideo && (
+        <aside className="fixed inset-x-0 bottom-0 h-[68vh] md:static md:h-full md:w-[380px] bg-[#18181B] text-white border-t md:border-t-0 md:border-s border-white/10 rounded-t-3xl md:rounded-none z-40 flex flex-col">
+          <div className="h-13 px-4 border-b border-white/10 flex items-center justify-between shrink-0">
+            <span className="text-sm font-bold">
+              {commentsVideo.commentsCount.toLocaleString('en-US')} {isAr ? 'تعليق' : 'Comments'}
+            </span>
+            <button onClick={() => setCommentsVideo(null)} className="p-1.5 rounded-full hover:bg-white/10 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-        </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-3">
+                <UserAvatar
+                  initials={c.avatar_initials}
+                  color={c.avatar_color}
+                  avatarUrl={c.avatar_url}
+                  size={34}
+                  vipTier={c.vip_tier as 0 | 1 | 2 | 3 | 4 | 5}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white/80">{c.display_name}</span>
+                    <VipBadge tier={c.vip_tier as 0 | 1 | 2 | 3 | 4 | 5} compact />
+                  </div>
+                  <p className="text-xs text-white mt-0.5 leading-relaxed">{c.content}</p>
+                </div>
+                <div className="flex flex-col items-center text-white/45 text-[10px]">
+                  <Heart className="w-3.5 h-3.5" />
+                  <span>{c.likes_count}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={submitComment} className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0">
+            <input
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder={isAr ? 'أضف تعليقًا...' : 'Add comment...'}
+              className="flex-1 rounded-full bg-white/10 px-4 py-2 text-xs text-white placeholder:text-white/45 outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!commentText.trim()}
+              className="w-9 h-9 rounded-full bg-[#FE2C55] text-white flex items-center justify-center cursor-pointer disabled:opacity-40"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </aside>
       )}
 
-      {/* UPLOAD SHORT VIDEO MODAL */}
+      {/* UPLOAD SHORT MODAL */}
       {uploadOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4" onClick={() => setUploadOpen(false)}>
-          <form
-            onSubmit={publishVideo}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md lm-card rounded-2xl p-5 space-y-4"
-          >
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setUploadOpen(false)}>
+          <form onSubmit={publishVideo} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-3xl bg-[#18181B] text-white border border-white/12 p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold">{isAr ? 'رفع ونشر فيديو قصير جديد' : 'Upload New Short Video'}</h3>
-              <button type="button" onClick={() => setUploadOpen(false)} className="text-[var(--lm-text-muted)] cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
+              <h3 className="text-base font-bold">{isAr ? 'نشر فيديو قصير جديد' : 'Upload Short'}</h3>
+              <button type="button" onClick={() => setUploadOpen(false)} className="cursor-pointer"><X className="w-5 h-5" /></button>
             </div>
-
-            <div>
-              <label className="block text-xs text-[var(--lm-text-secondary)] mb-1">{isAr ? 'عنوان الفيديو' : 'Title'}</label>
-              <input
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder={isAr ? 'مثال: جولة سريعة في القاهرة' : 'Video title'}
-                className="lm-input w-full rounded-xl px-3 py-2 text-xs"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-[var(--lm-text-secondary)] mb-1">{isAr ? 'الوصف' : 'Description'}</label>
-              <textarea
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-                rows={2}
-                className="lm-input w-full rounded-xl px-3 py-2 text-xs resize-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-[var(--lm-text-secondary)] mb-1">
-                {isAr ? 'ملف فيديو محلي (MP4 / WebM — اختياري)' : 'Local Video File (MP4 / WebM — Optional)'}
-              </label>
-              <input type="file" accept="video/mp4,video/webm" onChange={handleVideoUpload} className="lm-input w-full rounded-xl px-3 py-2 text-xs" />
-              {uploadingFile && <div className="text-[11px] text-[var(--lm-accent)] mt-1">{isAr ? 'جاري الرفع...' : 'Uploading...'}</div>}
-              {!uploadedVideoUrl && (
-                <div className="mt-2">
-                  <label className="block text-[11px] text-[var(--lm-text-muted)] mb-1">
-                    {isAr ? 'أو اختر مشهدًا مرئيًا جاهزًا للتجربة:' : 'Or choose a studio preset:'}
-                  </label>
-                  <select value={newPreset} onChange={(e) => setNewPreset(e.target.value)} className="lm-input w-full rounded-xl px-3 py-1.5 text-xs">
-                    <option value="cairo-skyline">Cairo Skyline Pulse</option>
-                    <option value="broadcast-pulse">Emerald Studio Wave</option>
-                    <option value="market-wave">Royal Gold Markets</option>
-                    <option value="nile-gold">Nile Night Cinema</option>
-                  </select>
-                </div>
-              )}
-            </div>
-
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <input type="checkbox" checked={newSponsored} onChange={(e) => setNewSponsored(e.target.checked)} />
-              <span>{isAr ? 'نشر كفيديو ممول (حملة ترويج واضحة)' : 'Publish as Sponsored Video Campaign'}</span>
+            <input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder={isAr ? 'عنوان جذاب للفيديو...' : 'Catchy title...'}
+              className="w-full rounded-xl bg-white/10 px-3.5 py-2.5 text-xs outline-none"
+              required
+            />
+            <textarea
+              value={newDesc}
+              onChange={(e) => setNewDesc(e.target.value)}
+              rows={2}
+              placeholder={isAr ? 'الوصف والهاشتاجات...' : 'Caption & #hashtags...'}
+              className="w-full rounded-xl bg-white/10 px-3.5 py-2.5 text-xs outline-none resize-none"
+            />
+            <label className="block p-4 rounded-2xl border border-dashed border-white/25 text-center text-xs cursor-pointer hover:bg-white/5">
+              <input type="file" accept="video/mp4,video/webm" onChange={handleUploadFile} className="hidden" />
+              {uploading
+                ? (isAr ? 'جاري رفع ملف الفيديو...' : 'Uploading...')
+                : uploadedUrl
+                ? (isAr ? '✓ تم اختيار الفيديو بنجاح' : '✓ Video attached')
+                : (isAr ? 'اضغط لاختيار ملف فيديو MP4 / WebM من جهازك' : 'Choose MP4 / WebM file')}
             </label>
-
-            <button type="submit" disabled={uploadingFile} className="lm-btn-primary w-full py-2.5 rounded-xl text-xs font-semibold cursor-pointer">
-              {isAr ? 'نشر الفيديو الآن' : 'Publish Short Video'}
+            <button type="submit" disabled={uploading} className="w-full py-2.5 rounded-full bg-[#FE2C55] text-white text-xs font-bold cursor-pointer">
+              {isAr ? 'نشر الآن' : 'Post Now'}
             </button>
           </form>
         </div>
