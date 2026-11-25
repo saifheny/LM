@@ -1,4 +1,4 @@
-export type VipTier = 0 | 5 | 4 | 3 | 2 | 1; // 0 = Free, 5 = VIP 5 ... 1 = VIP 1 (highest)
+export type VipTier = 0 | 5 | 4 | 3 | 2 | 1;
 
 export type RankId =
   | 'soldier'
@@ -18,10 +18,10 @@ export type ThemeId = 'obsidian' | 'alabaster' | 'royal-gold' | 'emerald-reserve
 export type AiTierId = 'free' | 'ai_20' | 'ai_50' | 'ai_100' | 'ai_200';
 
 export interface AdRemovalFlags {
-  videos: boolean;      // 100 EGP
-  largeGroups: boolean; // 50 EGP
-  ai: boolean;          // 50 EGP
-  investment: boolean;  // 5 EGP
+  videos: boolean;
+  largeGroups: boolean;
+  ai: boolean;
+  investment: boolean;
 }
 
 export interface UserProfile {
@@ -56,12 +56,32 @@ export interface UserProfile {
   createdAt: string;
 }
 
+export type ProviderId =
+  | 'gemini'
+  | 'openai'
+  | 'anthropic'
+  | 'deepseek'
+  | 'xai'
+  | 'mistral'
+  | 'groq'
+  | 'openrouter'
+  | 'perplexity'
+  | 'together'
+  | 'cohere'
+  | 'ollama';
+
 export interface ProviderConfig {
   geminiApiKey: string;
   openaiApiKey: string;
   anthropicApiKey: string;
-  openrouterApiKey: string;
+  deepseekApiKey: string;
+  xaiApiKey: string;
+  mistralApiKey: string;
   groqApiKey: string;
+  openrouterApiKey: string;
+  perplexityApiKey: string;
+  togetherApiKey: string;
+  cohereApiKey: string;
   ollamaUrl: string;
   livekitUrl: string;
   livekitApiKey: string;
@@ -69,7 +89,7 @@ export interface ProviderConfig {
   meilisearchUrl: string;
   blnkUrl: string;
   matrixUrl: string;
-  defaultProvider: 'local-smart' | 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'groq' | 'ollama';
+  defaultProvider: ProviderId;
   defaultModel: string;
 }
 
@@ -84,7 +104,7 @@ export interface HighlightComment {
   avatarColor: string;
   avatarInitials: string;
   text: string;
-  durationSec: 15 | 10 | 5;
+  durationSec: number;
   createdAt: number;
   startedAt?: number;
   expiresAt?: number;

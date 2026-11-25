@@ -13,6 +13,7 @@ import {
   ArrowRight,
   CircleDot,
   Languages,
+  Slash,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile } from '../../types';
@@ -20,7 +21,7 @@ import { UserAvatar, RichMessageText } from '../shared/LmBrandMark';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramReactions';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
-import { MobileInlineNavTrigger } from '../layout/AppShell';
+import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
@@ -30,13 +31,23 @@ interface ChatViewProps {
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
 }
 
-const TRANSLATE_LANGS = [
+const WORLD_LANGUAGES = [
   { code: 'ar', label: 'العربية' },
   { code: 'en', label: 'English' },
-  { code: 'fr', label: 'Français' },
   { code: 'es', label: 'Español' },
+  { code: 'fr', label: 'Français' },
   { code: 'de', label: 'Deutsch' },
+  { code: 'zh-CN', label: '中文' },
+  { code: 'hi', label: 'हिन्दी' },
+  { code: 'ru', label: 'Русский' },
+  { code: 'pt', label: 'Português' },
+  { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
   { code: 'tr', label: 'Türkçe' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'ur', label: 'اردو' },
+  { code: 'fa', label: 'فارسی' },
+  { code: 'id', label: 'Indonesia' },
 ];
 
 function isMostlyLatin(text: string): boolean {
@@ -47,10 +58,10 @@ function isMostlyLatin(text: string): boolean {
 }
 
 export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
-  const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
+  const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded, setChatInThread, setBottomDockHidden } = useLayout();
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [activeConvId, setActiveConvId] = useState<string>('c_mariam');
-  const [mobileShowList, setMobileShowList] = useState(false);
+  const [mobileShowList, setMobileShowList] = useState(true);
   const [folder, setFolder] = useState<'all' | 'personal' | 'groups' | 'channels'>('all');
   const [search, setSearch] = useState('');
 
@@ -59,12 +70,14 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   const [replyTarget, setReplyTarget] = useState<ChatMessageItem | null>(null);
   const [sharedForAi, setSharedForAi] = useState<ChatMessageItem | null>(null);
   const [invokeAiMode, setInvokeAiMode] = useState(false);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [openPickerMsgId, setOpenPickerMsgId] = useState<string | null>(null);
   const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
   const [expandedVideoNote, setExpandedVideoNote] = useState<string | null>(null);
 
-  // Instant Message Translation state
+  // In-Place Message Translation (replaces bubble content directly, clears on empty-space click!)
   const [translateMenuMsgId, setTranslateMenuMsgId] = useState<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, { text: string; langLabel: string; loading?: boolean }>>({});
 
@@ -87,6 +100,13 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   const noteStreamRef = useRef<MediaStream | null>(null);
   const holdTimerRef = useRef<number | null>(null);
   const didHoldRef = useRef(false);
+  const listScrollRef = useRef(0);
+
+  // Sync whether mobile is viewing Chat List (show Bottom Dock!) vs active Thread (show Floating Composer + Split Orb!)
+  useEffect(() => {
+    setChatInThread(!mobileShowList);
+    return () => setChatInThread(false);
+  }, [mobileShowList, setChatInThread]);
 
   const loadConversations = useCallback(async () => {
     const res = await apiGet<{ ok: boolean; conversations: ConversationItem[] }>('/api/conversations');
@@ -124,6 +144,15 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
       noteStreamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
+
+  function handleConvListScroll(e: React.UIEvent<HTMLDivElement>) {
+    const top = e.currentTarget.scrollTop;
+    const delta = top - listScrollRef.current;
+    if (top < 20) setBottomDockHidden(false);
+    else if (delta > 10) setBottomDockHidden(true);
+    else if (delta < -6) setBottomDockHidden(false);
+    listScrollRef.current = top;
+  }
 
   async function translateMessage(msg: ChatMessageItem, targetCode: string, targetLabel: string) {
     setTranslateMenuMsgId(null);
@@ -174,7 +203,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         if (noteVideoRef.current) noteVideoRef.current.srcObject = s;
       }, 60);
     } catch {
-      // clean demo preview fallback
+      // clean fallback
     }
   }
 
@@ -212,29 +241,59 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
       holdTimerRef.current = null;
     }
     if (!didHoldRef.current) {
-      // Exact Telegram single-tap toggle: Voice <-> Circular Video Note
       setMediaBtnMode(prev => (prev === 'voice' ? 'video' : 'voice'));
       setShowQuickRecordHint(true);
+    }
+  }
+
+  function handleDraftChange(v: string) {
+    setDraft(v);
+    if (v.trim()) setShowQuickRecordHint(false);
+    // Open slash/dash command menu immediately when typing "/" or "-"
+    if (v === '/' || v === '-') {
+      setSlashMenuOpen(true);
+    } else if (!v.startsWith('/') && !v.startsWith('-')) {
+      setSlashMenuOpen(false);
+    }
+  }
+
+  function applySlashCommand(cmd: 'ai' | 'summarize') {
+    setSlashMenuOpen(false);
+    setInvokeAiMode(true);
+    const lastOther = [...messages].reverse().find(m => m.senderId !== user.id && m.msgType === 'text');
+    if (cmd === 'summarize' && lastOther) {
+      setSharedForAi(lastOther);
+      setDraft('لخّص هذه الرسالة باختصار');
+    } else {
+      if (lastOther && !sharedForAi) setSharedForAi(lastOther);
+      setDraft('/ai ');
     }
   }
 
   async function handleSendText(e: React.FormEvent) {
     e.preventDefault();
     if (!draft.trim() || !activeConvId) return;
-    const text = draft.trim();
+    const raw = draft.trim();
+    const cleaned = raw.replace(/^(\/ai|-ai|\/|-)\s*/i, '').trim() || raw;
     setDraft('');
+    setSlashMenuOpen(false);
     setComposerFocused(false);
 
-    const shouldInvokeAi = invokeAiMode || /@LM\s*AI/i.test(text) || Boolean(sharedForAi);
+    const shouldInvokeAi = invokeAiMode || /^(\/ai|-ai|@lm\s*ai|\/)/i.test(raw) || Boolean(sharedForAi);
+    const lastContextMsg = sharedForAi || [...messages].reverse().find(m => m.msgType === 'text');
+
     await apiPost(`/api/conversations/${activeConvId}/messages`, {
       senderId: user.id,
-      content: text,
+      content: cleaned,
       msgType: 'text',
       replyToId: replyTarget?.id || null,
       replySender: replyTarget?.displayName || null,
       replyText: replyTarget?.content?.slice(0, 80) || null,
       invokeAi: shouldInvokeAi,
-      sharedSnippet: sharedForAi ? `${sharedForAi.displayName}: ${sharedForAi.content}` : undefined,
+      sharedSnippet:
+        shouldInvokeAi && lastContextMsg
+          ? `${lastContextMsg.displayName}: ${lastContextMsg.content}`
+          : undefined,
     });
 
     setReplyTarget(null);
@@ -291,6 +350,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
     setNewChatTitle('');
     await loadConversations();
     setActiveConvId(res.id);
+    setMobileShowList(false);
   }
 
   const activeConv = conversations.find(c => c.id === activeConvId) || conversations[0];
@@ -303,28 +363,28 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   const hasText = draft.trim().length > 0;
 
   return (
-    <div className="h-full w-full bg-black text-[#F5F5F7] flex overflow-hidden">
-      {/* Left Conversation Column (Zero Containers, Pure #000000 + 1px Hairline) */}
+    <div className="h-full w-full bg-[#0A0A0C] text-[#F2F2F5] flex overflow-hidden">
+      {/* Left Conversations List (Bottom Dock stays visible outside here on mobile!) */}
       <aside
         className={`${
           mobileShowList ? 'flex' : 'hidden md:flex'
-        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-black border-e border-white/[0.08]`}
+        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#0A0A0C] border-e border-white/[0.07]`}
       >
-        <div className="p-3.5 border-b border-white/[0.08] space-y-3">
+        <div className="p-3.5 border-b border-white/[0.07] space-y-3">
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-9 rounded-full bg-[#09090B] border border-white/[0.09] px-3.5 flex items-center gap-2">
+            <div className="flex-1 h-9 rounded-full bg-[#131317] border border-white/[0.08] px-3.5 flex items-center gap-2">
               <Search className="w-3.5 h-3.5 text-[#71717A]" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={lang === 'ar' ? 'بحث...' : 'Search...'}
-                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#52525B] outline-none"
+                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#585860] outline-none"
               />
             </div>
             <button
               type="button"
               onClick={() => setNewChatOpen(true)}
-              className="w-9 h-9 rounded-full bg-[#09090B] border border-white/[0.09] hover:border-white/25 text-[#E4E4E7] flex items-center justify-center cursor-pointer shrink-0"
+              className="w-9 h-9 rounded-full bg-[#131317] border border-white/[0.08] hover:border-white/25 text-[#E4E4E7] flex items-center justify-center cursor-pointer shrink-0"
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -342,7 +402,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 type="button"
                 onClick={() => setFolder(f.id)}
                 className={`pb-1 border-b-2 transition-colors cursor-pointer ${
-                  folder === f.id ? 'border-white text-white font-semibold' : 'border-transparent text-[#71717A] hover:text-[#D4D4D8]'
+                  folder === f.id ? 'border-white text-white font-semibold' : 'border-transparent text-[#7A7A85] hover:text-[#D4D4D8]'
                 }`}
               >
                 {lang === 'ar' ? f.ar : f.en}
@@ -351,7 +411,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
+        <div onScroll={handleConvListScroll} className="flex-1 overflow-y-auto divide-y divide-white/[0.06] pb-20 md:pb-0">
           {filteredConvs.map(conv => {
             const active = conv.id === activeConvId;
             return (
@@ -363,7 +423,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                   setMobileShowList(false);
                 }}
                 className={`w-full px-3.5 py-3 flex items-center gap-3 text-start transition-colors cursor-pointer ${
-                  active ? 'bg-white/[0.05]' : 'hover:bg-white/[0.02]'
+                  active ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
                 }`}
               >
                 <UserAvatar
@@ -374,8 +434,8 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[13.5px] font-semibold text-[#F5F5F7] truncate">{conv.title}</span>
-                    <span className="text-[10.5px] text-[#71717A] font-mono-num shrink-0">{conv.lastMessageAt}</span>
+                    <span className="text-[13.5px] font-semibold text-[#F2F2F5] truncate">{conv.title}</span>
+                    <span className="text-[10.5px] text-[#7A7A85] font-mono-num shrink-0">{conv.lastMessageAt}</span>
                   </div>
                   <div className="mt-0.5 flex items-center justify-between gap-2">
                     <span className="text-xs text-[#8E8E93] truncate">{conv.lastMessage || conv.description}</span>
@@ -392,43 +452,48 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         </div>
       </aside>
 
-      {/* Active Monochrome Conversation Stage */}
-      <section className={`${mobileShowList ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-black min-w-0 relative`}>
-        {/* Minimal Header (Zero E2EE/Encrypted Clutter Badges!) */}
+      {/* Active Conversation Stage */}
+      <section className={`${mobileShowList ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-[#0A0A0C] min-w-0 relative`}>
+        {/* FLOATING TRANSPARENT HEADER PILLS (Messages scroll smoothly beneath!) */}
         {activeConv && (
-          <header className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between gap-3 bg-black/90 backdrop-blur-md z-10">
-            <div className="flex items-center gap-3 min-w-0">
+          <header className="pointer-events-none absolute top-3 inset-x-3.5 md:inset-x-5 z-20 flex items-center justify-between gap-2">
+            <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#131318]/78 backdrop-blur-xl border border-white/[0.1] min-w-0 shadow-lg">
               <button
                 type="button"
-                onClick={() => setMobileShowList(true)}
-                className="md:hidden w-8 h-8 rounded-full hover:bg-white/[0.06] flex items-center justify-center text-white cursor-pointer"
+                onClick={() => {
+                  setMobileShowList(true);
+                  setMobileNavExpanded(false);
+                }}
+                className="md:hidden w-7 h-7 rounded-full hover:bg-white/[0.08] flex items-center justify-center text-white cursor-pointer shrink-0"
               >
                 <ArrowRight className="w-4 h-4" />
               </button>
               <UserAvatar
                 initials={activeConv.title.slice(0, 2)}
                 avatarUrl={activeConv.avatarUrl}
-                size={38}
+                size={34}
                 online={activeConv.onlineText.includes('متصل')}
               />
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-white truncate">{activeConv.title}</div>
-                <div className="text-[11px] text-[#71717A] truncate">{activeConv.onlineText}</div>
+                <div className="text-[13px] font-semibold text-white truncate max-w-[160px] sm:max-w-[240px]">
+                  {activeConv.title}
+                </div>
+                <div className="text-[10.5px] text-[#9E9EA8] truncate">{activeConv.onlineText}</div>
               </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-full bg-[#131318]/78 backdrop-blur-xl border border-white/[0.1] shadow-lg">
               <button
                 type="button"
                 onClick={() => startCall('audio')}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.06] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer"
+                className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
               >
                 <Phone className="w-4 h-4" strokeWidth={1.8} />
               </button>
               <button
                 type="button"
                 onClick={() => startCall('video')}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.06] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer"
+                className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
               >
                 <Video className="w-4 h-4" strokeWidth={1.8} />
               </button>
@@ -436,25 +501,27 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
           </header>
         )}
 
-        {activeConv?.pinnedMessage && (
-          <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-2 text-xs text-[#A1A1AA]">
-            <Pin className="w-3.5 h-3.5 text-[#71717A] shrink-0" />
-            <span className="truncate">{activeConv.pinnedMessage}</span>
-          </div>
-        )}
-
-        {/* Open Message Stream (Extra bottom padding for Floating Composer) */}
+        {/* Open Message Stream (Tap empty space clears translation, menus, & mobile bottom dock!) */}
         <div
           onClick={() => {
             setOpenPickerMsgId(null);
             setTranslateMenuMsgId(null);
+            setTranslations({});
+            setSlashMenuOpen(false);
             setShowQuickRecordHint(false);
             setComposerFocused(false);
             setMobileNavExpanded(false);
           }}
-          className="flex-1 overflow-y-auto px-4 pt-5 pb-28 space-y-3 bg-black"
+          className="flex-1 overflow-y-auto px-4 pt-20 pb-28 space-y-3 bg-[#0A0A0C]"
         >
-          {messages.map(msg => {
+          {activeConv?.pinnedMessage && (
+            <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#131318]/80 border border-white/[0.08] flex items-center gap-2 text-[11.5px] text-[#A1A1AA] mb-2">
+              <Pin className="w-3 h-3 text-[#7A7A85] shrink-0" />
+              <span className="truncate">{activeConv.pinnedMessage}</span>
+            </div>
+          )}
+
+          {messages.map((msg, msgIdx) => {
             const isMine = msg.senderId === user.id;
             const isAi = msg.senderId === 'lm_ai' || msg.msgType === 'ai_reply';
             const reactionEntries = Object.entries(msg.reactions || {}).filter(([, arr]) => arr.length > 0);
@@ -463,6 +530,10 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
             const showAutoTranslateChip =
               msg.msgType !== 'audio' && msg.msgType !== 'video_note' && isMostlyLatin(msg.content) && !translated;
 
+            // Prevent clipping behind floating top header for top messages!
+            const openPopoverDownward = msgIdx < 2;
+            const popoverPosClass = openPopoverDownward ? 'top-full mt-2' : 'bottom-full mb-2';
+
             return (
               <div
                 key={msg.id}
@@ -470,31 +541,31 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 onMouseLeave={() => setHoveredMsgId(null)}
                 className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
               >
-                <div className={`relative max-w-[82%] sm:max-w-[68%] flex items-end gap-2 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className={`relative max-w-[84%] sm:max-w-[68%] flex items-end gap-2 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
                   {!isMine && <UserAvatar initials={msg.avatarInitials} avatarUrl={msg.avatarUrl} size={28} />}
 
                   <div className="relative">
-                    {/* Instant Reaction Strip */}
+                    {/* 2026 Custom Vector Reaction Picker (Auto-Flips Downward for Top Messages!) */}
                     {openPickerMsgId === msg.id && (
-                      <div className={`absolute -top-11 z-30 ${isMine ? 'end-0' : 'start-0'}`}>
+                      <div className={`absolute ${popoverPosClass} z-30 ${isMine ? 'end-0' : 'start-0'}`}>
                         <TelegramReactionStrip onSelect={rId => toggleReaction(msg.id, rId)} />
                       </div>
                     )}
 
-                    {/* Translation Language Picker Popover */}
+                    {/* 16 Major World Languages Translation Picker (Auto-Flips Downward for Top Messages!) */}
                     {translateMenuMsgId === msg.id && (
                       <div
                         onClick={e => e.stopPropagation()}
-                        className={`absolute -top-12 z-30 px-1.5 py-1 rounded-full bg-[#111114] border border-white/[0.14] flex items-center gap-1 whitespace-nowrap ${
+                        className={`absolute ${popoverPosClass} z-30 w-[268px] p-2 rounded-2xl bg-[#16161C]/96 backdrop-blur-xl border border-white/[0.14] shadow-2xl grid grid-cols-3 gap-1 ${
                           isMine ? 'end-0' : 'start-0'
                         }`}
                       >
-                        {TRANSLATE_LANGS.map(l => (
+                        {WORLD_LANGUAGES.map(l => (
                           <button
                             key={l.code}
                             type="button"
                             onClick={() => translateMessage(msg, l.code, l.label)}
-                            className="px-2.5 py-1 rounded-full text-[11px] text-[#E4E4E7] hover:bg-white hover:text-black transition-colors cursor-pointer"
+                            className="px-2 py-1.5 rounded-xl text-[11px] text-[#E4E4E7] hover:bg-white hover:text-black transition-colors cursor-pointer truncate text-center"
                           >
                             {l.label}
                           </button>
@@ -505,7 +576,10 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     {/* Circular Video Note */}
                     {msg.msgType === 'video_note' && msg.mediaUrl ? (
                       <div
-                        onClick={() => setExpandedVideoNote(expandedVideoNote === msg.id ? null : msg.id)}
+                        onClick={e => {
+                          e.stopPropagation();
+                          setExpandedVideoNote(expandedVideoNote === msg.id ? null : msg.id);
+                        }}
                         className={`rounded-full overflow-hidden border border-white/[0.16] cursor-pointer transition-all duration-200 ${
                           expandedVideoNote === msg.id ? 'w-60 h-60' : 'w-44 h-44'
                         }`}
@@ -521,12 +595,13 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                       </div>
                     ) : (
                       <div
+                        onClick={e => e.stopPropagation()}
                         className={`px-3.5 py-2.5 text-[14px] leading-relaxed ${
                           isAi
-                            ? 'rounded-2xl bg-[#0D0D11] border border-white/[0.14] text-[#F5F5F7]'
+                            ? 'rounded-2xl bg-[#15151B] border border-white/[0.14] text-[#F2F2F5]'
                             : isMine
-                            ? 'rounded-2xl rounded-ee-sm bg-[#16161A] text-[#F5F5F7]'
-                            : 'rounded-2xl rounded-es-sm bg-[#0C0C0E] text-[#F5F5F7]'
+                            ? 'rounded-2xl rounded-ee-sm bg-[#1B1B21] text-[#F2F2F5]'
+                            : 'rounded-2xl rounded-es-sm bg-[#131317] text-[#F2F2F5]'
                         }`}
                       >
                         {isAi && (
@@ -547,6 +622,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           <img src={msg.mediaUrl} alt="" className="rounded-xl max-h-[260px] w-full object-cover mb-2" />
                         )}
 
+                        {/* IN-PLACE TRANSLATION: Replaces message text directly! Click empty space anywhere to restore original. */}
                         {msg.msgType === 'audio' && msg.mediaUrl ? (
                           <SmartVoicePill url={msg.mediaUrl} transcript={msg.transcript} isMine={isMine} />
                         ) : msg.isSpoiler && !revealedSpoilers[msg.id] ? (
@@ -558,37 +634,17 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                             محتوى مخفي
                           </button>
                         ) : (
-                          <RichMessageText text={msg.content} />
-                        )}
-
-                        {/* Inline Translated Result */}
-                        {translated && (
-                          <div className="mt-2 pt-2 border-t border-white/[0.1] space-y-1">
-                            <div className="flex items-center justify-between text-[10px] text-[#8E8E93]">
-                              <span className="flex items-center gap-1">
-                                <Languages className="w-3 h-3" />
+                          <div>
+                            <RichMessageText text={translated ? translated.text : msg.content} />
+                            {translated && (
+                              <div className="mt-1 flex items-center gap-1 text-[10px] text-[#8E8E93]">
+                                <Languages className="w-2.5 h-2.5" />
                                 <span>{translated.langLabel}</span>
-                              </span>
-                              <button
-                                type="button"
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  setTranslations(prev => {
-                                    const copy = { ...prev };
-                                    delete copy[msg.id];
-                                    return copy;
-                                  });
-                                }}
-                                className="hover:text-white cursor-pointer"
-                              >
-                                إخفاء
-                              </button>
-                            </div>
-                            <div className="text-[13.5px] text-white leading-relaxed">{translated.text}</div>
+                              </div>
+                            )}
                           </div>
                         )}
 
-                        {/* 1-Click Translate Chip for Foreign Language Messages */}
                         {showAutoTranslateChip && (
                           <button
                             type="button"
@@ -603,27 +659,27 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           </button>
                         )}
 
-                        <div className="mt-1 flex items-center justify-end text-[10px] font-mono-num text-[#71717A]">
+                        <div className="mt-1 flex items-center justify-end text-[10px] font-mono-num text-[#7A7A85]">
                           <span>{msg.createdAt}</span>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Subtle Message Hover Controls: React, Translate, Reply, Share w/ AI */}
+                  {/* Subtle Message Hover Controls */}
                   <div
+                    onClick={e => e.stopPropagation()}
                     className={`flex items-center gap-0.5 transition-opacity ${
                       showHoverActions ? 'opacity-100' : 'opacity-0 pointer-events-none'
                     }`}
                   >
                     <button
                       type="button"
-                      onClick={e => {
-                        e.stopPropagation();
+                      onClick={() => {
                         setTranslateMenuMsgId(null);
                         setOpenPickerMsgId(openPickerMsgId === msg.id ? null : msg.id);
                       }}
-                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#71717A] hover:text-white flex items-center justify-center cursor-pointer"
+                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
                     >
                       <SmilePlus className="w-3.5 h-3.5" />
                     </button>
@@ -631,13 +687,12 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     {msg.msgType !== 'audio' && msg.msgType !== 'video_note' && (
                       <button
                         type="button"
-                        onClick={e => {
-                          e.stopPropagation();
+                        onClick={() => {
                           setOpenPickerMsgId(null);
                           setTranslateMenuMsgId(translateMenuMsgId === msg.id ? null : msg.id);
                         }}
-                        title="ترجمة الرسالة"
-                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#71717A] hover:text-white flex items-center justify-center cursor-pointer"
+                        title="ترجمة"
+                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
                       >
                         <Languages className="w-3.5 h-3.5" />
                       </button>
@@ -646,7 +701,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     <button
                       type="button"
                       onClick={() => setReplyTarget(msg)}
-                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#71717A] hover:text-white flex items-center justify-center cursor-pointer"
+                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
                     >
                       <CornerUpLeft className="w-3.5 h-3.5" />
                     </button>
@@ -657,14 +712,14 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                         setSharedForAi(msg);
                         setInvokeAiMode(true);
                       }}
-                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#71717A] hover:text-white flex items-center justify-center cursor-pointer"
+                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
 
-                {/* Clean Restrained Reaction Pills */}
+                {/* Custom Vector Reaction Pills */}
                 {reactionEntries.length > 0 && (
                   <div className={`mt-1 flex flex-wrap gap-1 ${isMine ? 'pe-1' : 'ps-9'}`}>
                     {reactionEntries.map(([rKey, usersList]) => (
@@ -687,7 +742,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         {/* Circular Video Note Live Recorder Overlay */}
         {recordingVideoNote && (
           <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center gap-5">
-            <div className="w-56 h-56 rounded-full overflow-hidden border-2 border-white/30 bg-[#0D0D10] flex items-center justify-center">
+            <div className="w-56 h-56 rounded-full overflow-hidden border-2 border-white/30 bg-[#131317] flex items-center justify-center">
               <video ref={noteVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
             </div>
             <div className="flex items-center gap-3">
@@ -703,87 +758,117 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 onClick={() => finishVideoNoteCapture(true)}
                 className="px-6 py-2 rounded-full bg-white text-black text-xs font-semibold cursor-pointer"
               >
-                إرسال الفيديو الدائري
+                إرسال
               </button>
             </div>
           </div>
         )}
 
-        {/* FLOATING TELEGRAM-STYLE COMPOSER (Zero Solid Bottom Strip!) */}
-        <div className="pointer-events-none absolute bottom-3.5 inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center">
-          <div className="pointer-events-auto w-full max-w-[740px] space-y-2">
-            {(replyTarget || sharedForAi) && (
-              <div className="px-3.5 py-1.5 rounded-full bg-[#09090B]/95 backdrop-blur-md border border-white/[0.1] flex items-center justify-between text-xs">
-                <span className="truncate text-[#D4D4D8]">
-                  {sharedForAi
-                    ? `LM AI ← "${sharedForAi.content.slice(0, 50)}"`
-                    : `${replyTarget?.displayName}: ${replyTarget?.content.slice(0, 50)}`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReplyTarget(null);
-                    setSharedForAi(null);
-                    setInvokeAiMode(false);
-                  }}
-                  className="text-[#71717A] hover:text-white ms-2 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
+        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Hidden when mobile full bottom dock is expanded!) */}
+        {!mobileNavExpanded && (
+          <div className="pointer-events-none absolute bottom-3.5 inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center">
+            <div className="pointer-events-auto w-full max-w-[740px] space-y-2">
+              {(replyTarget || sharedForAi) && (
+                <div className="px-3.5 py-1.5 rounded-full bg-[#131318]/95 backdrop-blur-xl border border-white/[0.1] flex items-center justify-between text-xs">
+                  <span className="truncate text-[#D4D4D8]">
+                    {sharedForAi
+                      ? `AI ← "${sharedForAi.content.slice(0, 50)}"`
+                      : `${replyTarget?.displayName}: ${replyTarget?.content.slice(0, 50)}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplyTarget(null);
+                      setSharedForAi(null);
+                      setInvokeAiMode(false);
+                    }}
+                    className="text-[#7A7A85] hover:text-white ms-2 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
-            {/* Quick Record Pill Appears Above the Single Mic/Video Switcher Button */}
-            {showQuickRecordHint && !hasText && !recordingVoice && (
-              <div className="flex justify-end px-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowQuickRecordHint(false);
-                    if (mediaBtnMode === 'voice') setRecordingVoice(true);
-                    else startVideoNoteCapture();
-                  }}
-                  className="px-3.5 py-1.5 rounded-full bg-[#111115] border border-white/[0.15] text-xs text-white flex items-center gap-1.5 cursor-pointer hover:bg-white hover:text-black transition-colors"
-                >
-                  {mediaBtnMode === 'voice' ? <Mic className="w-3.5 h-3.5" /> : <CircleDot className="w-3.5 h-3.5" />}
-                  <span>{mediaBtnMode === 'voice' ? 'تسجيل رسالة صوتية' : 'تسجيل فيديو دائري'}</span>
-                </button>
-              </div>
-            )}
+              {/* Slash / Dash Command Palette for Summoning AI */}
+              {slashMenuOpen && (
+                <div className="p-1.5 rounded-2xl bg-[#16161C]/96 backdrop-blur-xl border border-white/[0.14] w-fit space-y-0.5 shadow-2xl">
+                  <button
+                    type="button"
+                    onClick={() => applySlashCommand('ai')}
+                    className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs text-white cursor-pointer text-start"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span className="font-mono-num text-[#A1A1AA]">/ai</span>
+                    <span>استدعاء الذكاء الاصطناعي</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySlashCommand('summarize')}
+                    className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs text-white cursor-pointer text-start"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span className="font-mono-num text-[#A1A1AA]">/summarize</span>
+                    <span>تلخيص آخر رسالة</span>
+                  </button>
+                </div>
+              )}
 
-            <input ref={fileInputRef} type="file" onChange={handleAttachFile} className="hidden" />
+              {/* Quick Record Trigger Above Single Voice/Video Toggle */}
+              {showQuickRecordHint && !hasText && !recordingVoice && (
+                <div className="flex justify-end px-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowQuickRecordHint(false);
+                      if (mediaBtnMode === 'voice') setRecordingVoice(true);
+                      else startVideoNoteCapture();
+                    }}
+                    className="px-3.5 py-1.5 rounded-full bg-[#16161C] border border-white/[0.15] text-xs text-white flex items-center gap-1.5 cursor-pointer hover:bg-white hover:text-black transition-colors"
+                  >
+                    {mediaBtnMode === 'voice' ? <Mic className="w-3.5 h-3.5" /> : <CircleDot className="w-3.5 h-3.5" />}
+                    <span>{mediaBtnMode === 'voice' ? 'تسجيل صوتي' : 'تسجيل فيديو دائري'}</span>
+                  </button>
+                </div>
+              )}
 
-            <div className="flex items-center gap-2">
-              <MobileInlineNavTrigger lang={lang} />
+              <input ref={fileInputRef} type="file" onChange={handleAttachFile} className="hidden" />
 
-              {!mobileNavExpanded && (
+              <div className="flex items-end gap-2">
+                {/* Split Orb: Expands upward into "إرفاق ملف" + "الشريط السفلي"! */}
+                <SplitComposerOrb onAttach={() => fileInputRef.current?.click()} showNavOption />
+
                 <div className="flex-1 min-w-0">
                   {recordingVoice ? (
                     <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={handleSendVoice} />
                   ) : (
                     <ObsidianComposerPill
                       value={draft}
-                      onChange={v => {
-                        setDraft(v);
-                        if (v.trim()) setShowQuickRecordHint(false);
-                      }}
+                      onChange={handleDraftChange}
                       onSubmit={handleSendText}
                       onFocus={() => setComposerFocused(true)}
                       onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
                       placeholder={
                         invokeAiMode
-                          ? '@LM AI...'
+                          ? '/ai اكتب سؤالك...'
                           : lang === 'ar'
-                          ? 'اكتب رسالة...'
-                          : 'Message...'
+                          ? 'اكتب رسالة أو / لاستدعاء AI...'
+                          : 'Message or / for AI...'
                       }
-                      onAttach={() => fileInputRef.current?.click()}
-                      onSparkle={() => setInvokeAiMode(v => !v)}
-                      sparkleActive={invokeAiMode}
-                      /* Exact Telegram Morphing End Button: Typing -> Chrome ↑ Send | Empty -> Single Voice/Circular-Video Toggle Button */
+                      extraEnd={
+                        <button
+                          type="button"
+                          onClick={() => setSlashMenuOpen(v => !v)}
+                          title="أمر / لاستدعاء AI"
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+                            invokeAiMode || slashMenuOpen ? 'text-white bg-white/[0.1]' : 'text-[#7A7A85] hover:text-white'
+                          }`}
+                        >
+                          <Slash className="w-4 h-4" strokeWidth={2} />
+                        </button>
+                      }
                       customAction={
                         hasText ? (
-                          <ChromeArrowButton type="submit" size={40} />
+                          <ChromeArrowButton type="submit" size={38} />
                         ) : (
                           <button
                             type="button"
@@ -795,18 +880,13 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                                 holdTimerRef.current = null;
                               }
                             }}
-                            title={
-                              mediaBtnMode === 'voice'
-                                ? 'اضغط للتبديل إلى فيديو دائري أو اضغط مطولًا للتسجيل'
-                                : 'اضغط للتبديل إلى صوت أو اضغط مطولًا للتسجيل'
-                            }
-                            className="chrome-rim-btn w-10 h-10 shrink-0 cursor-pointer"
+                            className="chrome-rim-btn w-[38px] h-[38px] shrink-0 cursor-pointer"
                           >
                             <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
                               {mediaBtnMode === 'voice' ? (
-                                <Mic className="w-[18px] h-[18px]" strokeWidth={1.9} />
+                                <Mic className="w-[17px] h-[17px]" strokeWidth={1.9} />
                               ) : (
-                                <CircleDot className="w-[18px] h-[18px]" strokeWidth={1.9} />
+                                <CircleDot className="w-[17px] h-[17px]" strokeWidth={1.9} />
                               )}
                             </span>
                           </button>
@@ -815,10 +895,10 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     />
                   )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* Voice / Video Call Overlay */}
@@ -826,17 +906,15 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-between py-14 px-6">
           <div className="text-center space-y-1">
             <div className="text-xl font-semibold text-white">{activeConv.title}</div>
-            <div className="text-xs text-[#71717A]">جارٍ الاتصال...</div>
+            <div className="text-xs text-[#7A7A85]">جارٍ الاتصال...</div>
           </div>
-
           {callOverlay === 'video' ? (
-            <div className="w-full max-w-[360px] h-[420px] rounded-3xl overflow-hidden border border-white/[0.12] bg-[#070709] flex items-center justify-center">
+            <div className="w-full max-w-[360px] h-[420px] rounded-3xl overflow-hidden border border-white/[0.12] bg-[#131317] flex items-center justify-center">
               <video ref={callVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
             </div>
           ) : (
             <UserAvatar initials={activeConv.title.slice(0, 2)} avatarUrl={activeConv.avatarUrl} size={110} online />
           )}
-
           <button
             type="button"
             onClick={endCall}
@@ -853,11 +931,11 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
           <form
             onClick={e => e.stopPropagation()}
             onSubmit={createConversation}
-            className="w-full max-w-[380px] rounded-2xl bg-[#070709] border border-white/[0.12] p-5 space-y-3"
+            className="w-full max-w-[380px] rounded-2xl bg-[#131318] border border-white/[0.12] p-5 space-y-3"
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
               <span className="text-sm font-semibold text-white">محادثة جديدة</span>
-              <button type="button" onClick={() => setNewChatOpen(false)} className="text-[#71717A] hover:text-white cursor-pointer">
+              <button type="button" onClick={() => setNewChatOpen(false)} className="text-[#7A7A85] hover:text-white cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -865,7 +943,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
               value={newChatTitle}
               onChange={e => setNewChatTitle(e.target.value)}
               placeholder="الاسم..."
-              className="w-full h-11 rounded-xl bg-black border border-white/[0.1] px-3.5 text-xs text-white outline-none"
+              className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
             />
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2 text-xs">

@@ -1,17 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --lm-bg: #000000;
-  --lm-elevated: #0A0A0C;
-  --lm-pill: #070708;
-  --lm-pill-hover: #141417;
-  --lm-bubble-out: #16161A;
-  --lm-bubble-in: #0B0B0D;
+  --lm-bg: #0A0A0C;
+  --lm-elevated: #121216;
+  --lm-pill: #131317;
+  --lm-pill-hover: #1C1C22;
+  --lm-bubble-out: #1B1B21;
+  --lm-bubble-in: #121216;
   --lm-line: rgba(255, 255, 255, 0.08);
-  --lm-line-strong: rgba(255, 255, 255, 0.15);
-  --lm-text: #F5F5F7;
+  --lm-line-strong: rgba(255, 255, 255, 0.14);
+  --lm-text: #F2F2F5;
   --lm-text-secondary: #8E8E93;
-  --lm-text-muted: #52525B;
+  --lm-text-muted: #585860;
 }
 
 * {
@@ -24,8 +24,8 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: #000000;
-  color: #F5F5F7;
+  background-color: #0A0A0C;
+  color: #F2F2F5;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans Arabic', sans-serif;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -38,7 +38,7 @@ body,
 
 /* ============================================================
    IMAGE 1: BRUSHED CHROME / TITANIUM SPECULAR BEZEL BUTTON
-   Pure pitch-black dome core + razor-sharp metallic prism rim (ZERO outer glow!)
+   Pure dark dome core + sharp metallic prism rim (zero outer haze)
    ============================================================ */
 .chrome-rim-btn {
   position: relative;
@@ -74,41 +74,10 @@ body,
   width: 100%;
   height: 100%;
   border-radius: 9999px;
-  background: radial-gradient(circle at 50% 16%, #27272B 0%, #070709 58%, #000000 100%);
+  background: radial-gradient(circle at 50% 16%, #27272B 0%, #0A0A0C 60%, #050507 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-/* ============================================================
-   IMAGE 2: DARK SQUIRCLE TILE (Sharp Dual-Tone Rim, Zero Outer Haze)
-   ============================================================ */
-.squircle-rim-tile {
-  position: relative;
-  border-radius: 26px;
-  padding: 1.2px;
-  background: linear-gradient(
-    225deg,
-    rgba(216, 180, 254, 0.58) 0%,
-    rgba(39, 39, 42, 0.22) 44%,
-    rgba(39, 39, 42, 0.22) 56%,
-    rgba(245, 158, 11, 0.65) 100%
-  );
-  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.squircle-rim-tile:hover {
-  transform: translateY(-2px);
-}
-
-.squircle-rim-tile-inner {
-  width: 100%;
-  height: 100%;
-  border-radius: 24.8px;
-  background:
-    radial-gradient(circle at 16% 88%, rgba(217, 119, 6, 0.14), transparent 45%),
-    radial-gradient(circle at 86% 12%, rgba(192, 132, 252, 0.11), transparent 45%),
-    #050507;
 }
 
 /* ============================================================
@@ -135,7 +104,7 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.13);
   border-radius: 999px;
 }
 

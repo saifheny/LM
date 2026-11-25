@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ArrowUp, Paperclip, Sparkles } from 'lucide-react';
 
 export function ChromeArrowButton({
@@ -32,6 +32,12 @@ export function ChromeArrowButton({
   );
 }
 
+/**
+ * ChatGPT / Gemini-Grade Auto-Expanding Multiline Composer Pill:
+ * - Starts as a sleek 48px capsule
+ * - Expands UPWARD smoothly as you write multiple lines up to 148px, then scrolls vertically cleanly!
+ * - Enter submits, Shift+Enter adds a newline.
+ */
 export function ObsidianComposerPill({
   value,
   onChange,
@@ -61,49 +67,73 @@ export function ObsidianComposerPill({
   onFocus?: () => void;
   onBlur?: () => void;
 }) {
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = '24px';
+    const nextH = Math.min(148, Math.max(24, el.scrollHeight));
+    el.style.height = `${nextH}px`;
+  }, [value]);
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!disabled && value.trim()) {
+        onSubmit(e as unknown as React.FormEvent);
+      }
+    }
+  }
+
   return (
     <form
       onSubmit={onSubmit}
-      className="w-full min-h-[52px] rounded-full bg-[#070709]/95 backdrop-blur-md border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex items-center gap-2"
+      className="w-full min-h-[48px] rounded-[25px] bg-[#131318]/94 backdrop-blur-xl border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex items-end gap-2 transition-all"
     >
-      {extraStart}
+      {extraStart && <div className="pb-1 shrink-0">{extraStart}</div>}
 
-      <input
+      <textarea
+        ref={taRef}
+        rows={1}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
         onFocus={onFocus}
         onBlur={onBlur}
         placeholder={placeholder}
-        className="flex-1 bg-transparent text-[14px] text-[#F5F5F7] placeholder:text-[#52525B] outline-none min-w-0"
+        className="flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] placeholder:text-[#63636C] outline-none resize-none overflow-y-auto py-1.5 min-w-0 max-h-[148px]"
       />
 
-      {onAttach && (
-        <button
-          type="button"
-          onClick={onAttach}
-          title="إرفاق"
-          className="w-8 h-8 rounded-full flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] transition-colors cursor-pointer shrink-0"
-        >
-          <Paperclip className="w-[18px] h-[18px]" strokeWidth={1.8} />
-        </button>
-      )}
+      <div className="flex items-center gap-1 pb-0.5 shrink-0">
+        {onAttach && (
+          <button
+            type="button"
+            onClick={onAttach}
+            title="إرفاق"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[#7A7A85] hover:text-[#F2F2F5] transition-colors cursor-pointer shrink-0"
+          >
+            <Paperclip className="w-[18px] h-[18px]" strokeWidth={1.8} />
+          </button>
+        )}
 
-      {onSparkle && (
-        <button
-          type="button"
-          onClick={onSparkle}
-          title="LM AI"
-          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
-            sparkleActive ? 'text-white' : 'text-[#71717A] hover:text-[#E4E4E7]'
-          }`}
-        >
-          <Sparkles className="w-[18px] h-[18px] fill-current" strokeWidth={1.4} />
-        </button>
-      )}
+        {onSparkle && (
+          <button
+            type="button"
+            onClick={onSparkle}
+            title="LM AI"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+              sparkleActive ? 'text-white' : 'text-[#7A7A85] hover:text-[#F2F2F5]'
+            }`}
+          >
+            <Sparkles className="w-[18px] h-[18px] fill-current" strokeWidth={1.4} />
+          </button>
+        )}
 
-      {extraEnd}
+        {extraEnd}
 
-      {customAction ? customAction : <ChromeArrowButton type="submit" disabled={disabled} size={40} />}
+        {customAction ? customAction : <ChromeArrowButton type="submit" disabled={disabled} size={38} />}
+      </div>
     </form>
   );
 }

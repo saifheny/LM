@@ -14,7 +14,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 6;
+const TARGET_DB_VERSION = 7;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -364,7 +364,11 @@ function seedInitialData() {
       duration_sec, likes_count, comments_count, saves_count, shares_count, views_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertVideo.run('v_1', 'u_mariam', 'لما الإضاءة والموسيقى يندمجوا في لحظة واحدة', 'أقوى لقطة صورناها الأسبوع ده من الاستوديو', '#تصوير #سينما #القاهرة', 'Cairo Midnight — Mariam Studio', '/uploads/seed/reel1.mp4', '/uploads/seed/post_studio.jpg', 15, 248900, 4, 31400, 12800, 1950000);
+  insertVideo.run(
+    'v_1', 'u_mariam',
+    'لما الإضاءة والموسيقى يندمجوا في لحظة واحدة داخل الاستوديو — كواليس تصوير أحدث تجربة بصرية وإخراجية مع الفريق بالكامل باستخدام عدسات سينمائية وإضاءة ليلية طبيعية في قلب القاهرة ✨',
+    'أقوى لقطة صورناها الأسبوع ده من الاستوديو', '#تصوير #سينما #القاهرة #إخراج #إضاءة', 'Cairo Midnight — Mariam Studio', '/uploads/seed/reel1.mp4', '/uploads/seed/post_studio.jpg', 15, 248900, 4, 31400, 12800, 1950000
+  );
   insertVideo.run('v_2', 'u_nour', 'صوت المية والهوا بس بدون أي صخب', 'فصلان آخر الأسبوع', '#سفر #هدوء #طبيعة', 'Ocean Breeze — Nour Original', '/uploads/seed/reel2.mp4', '/uploads/seed/post_nile.jpg', 15, 164200, 2, 24100, 7430, 1120000);
   insertVideo.run('v_3', 'u_karim', 'طريق مفتوح وموسيقى آخر الليل', 'التجربة الكاملة على الطريق الساحلي', '#ليل #طريق #موسيقى', 'Nightrunner — Synth', '/uploads/seed/reel3.mp4', '/uploads/seed/post_tech1.jpg', 15, 92400, 1, 11900, 4120, 840000);
   insertVideo.run('v_4', 'u_youssef', 'التفاصيل البسيطة بتصنع كل الفارق', 'لقطات من يوم شغل مكثف', '#تصميم #تقنية #مصر', 'Focus Flow — Youssef', '/uploads/seed/reel4.mp4', '/uploads/seed/post_cairo.jpg', 15, 312000, 3, 52800, 19400, 2840000);
@@ -457,8 +461,14 @@ export function loadProviderConfig(): ProviderConfig {
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
+    xaiApiKey: process.env.XAI_API_KEY || '',
+    mistralApiKey: process.env.MISTRAL_API_KEY || '',
     groqApiKey: process.env.GROQ_API_KEY || '',
+    openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
+    perplexityApiKey: process.env.PERPLEXITY_API_KEY || '',
+    togetherApiKey: process.env.TOGETHER_API_KEY || '',
+    cohereApiKey: process.env.COHERE_API_KEY || '',
     ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
     livekitUrl: process.env.LIVEKIT_URL || '',
     livekitApiKey: process.env.LIVEKIT_API_KEY || '',
@@ -466,8 +476,8 @@ export function loadProviderConfig(): ProviderConfig {
     meilisearchUrl: process.env.MEILISEARCH_URL || '',
     blnkUrl: process.env.BLNK_URL || '',
     matrixUrl: process.env.MATRIX_HOMESERVER_URL || '',
-    defaultProvider: 'local-smart',
-    defaultModel: 'lm-smart-local',
+    defaultProvider: 'gemini',
+    defaultModel: 'gemini-4-hydrogen',
   };
   if (fs.existsSync(PROVIDERS_FILE)) {
     try {

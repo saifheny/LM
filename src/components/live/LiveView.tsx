@@ -13,7 +13,7 @@ import {
 import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
 import { UserAvatar } from '../shared/LmBrandMark';
 import { ObsidianComposerPill } from '../shared/HardwareUI';
-import { MobileInlineNavTrigger } from '../layout/AppShell';
+import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { TikTokGiftItem, TikTokGiftSheet } from './TikTokGiftSheet';
@@ -352,26 +352,24 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
           </div>
         )}
 
-        {/* Bottom Floating Composer + Mobile Morphing Nav Pill (Disappears completely when Gift Sheet opens!) */}
-        {!giftTrayOpen && (
+        {/* Bottom Floating Composer + Split Orb (Disappears when Gift Sheet or Full Bottom Dock is open!) */}
+        {!giftTrayOpen && !mobileNavExpanded && (
           <div
             onClick={e => e.stopPropagation()}
-            className="absolute bottom-3.5 inset-x-3.5 z-20 flex items-center gap-2"
+            className="absolute bottom-3.5 inset-x-3.5 z-20 flex items-end gap-2"
           >
-            <MobileInlineNavTrigger lang={lang} />
-            {!mobileNavExpanded && (
-              <div className="flex-1 min-w-0">
-                <ObsidianComposerPill
-                  value={commentText}
-                  onChange={setCommentText}
-                  onSubmit={handleSendComment}
-                  onFocus={() => setComposerFocused(true)}
-                  onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
-                  placeholder={pinMode ? 'تعليق مثبت...' : lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
-                  disabled={!commentText.trim()}
-                />
-              </div>
-            )}
+            <SplitComposerOrb showNavOption />
+            <div className="flex-1 min-w-0">
+              <ObsidianComposerPill
+                value={commentText}
+                onChange={setCommentText}
+                onSubmit={handleSendComment}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
+                placeholder={pinMode ? 'تعليق مثبت...' : lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
+                disabled={!commentText.trim()}
+              />
+            </div>
           </div>
         )}
 

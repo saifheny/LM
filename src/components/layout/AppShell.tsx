@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Compass,
@@ -10,6 +10,8 @@ import {
   SlidersHorizontal,
   LogOut,
   X,
+  Plus,
+  Paperclip,
   LayoutGrid,
 } from 'lucide-react';
 import { Lang, NavTab, UserProfile } from '../../types';
@@ -45,68 +47,104 @@ export const NAV_ITEMS: Array<{
 ];
 
 /**
- * Reusable Mobile Morphing Dock Button that lives side-by-side next to any Floating Composer on Mobile (< md).
- * - When Composer is focused -> this pill collapses smoothly to width 0 & fades out so Composer takes 100% width!
- * - When tapped -> expands into the quick floating 5-tab bar right next to/replacing the shrunk composer!
- * - On Desktop (md+) -> hidden because Desktop uses the permanent clean Side Rail!
+ * Innovative 2026 Split-Action Orb beside Floating Composers:
+ * - Tapping splits smoothly UPWARD (right above bottom, NOT center screen) into 2 ascending action pills:
+ *   1) إرفاق ملف (Attach)
+ *   2) الشريط السفلي (Open Full Bottom Dock without any X button — tap empty space to restore!)
+ * - Collapses cleanly to width 0 when user focuses the composer input!
  */
-export function MobileInlineNavTrigger({ lang }: { lang: Lang }) {
-  const { composerFocused, mobileNavExpanded, setMobileNavExpanded, activeTab, onSelectTab } = useLayout();
+export function SplitComposerOrb({
+  onAttach,
+  showNavOption = true,
+}: {
+  onAttach?: () => void;
+  showNavOption?: boolean;
+}) {
+  const { composerFocused, setMobileNavExpanded, setBottomDockHidden } = useLayout();
+  const [splitOpen, setSplitOpen] = useState(false);
+
+  useEffect(() => {
+    if (composerFocused) setSplitOpen(false);
+  }, [composerFocused]);
 
   return (
     <AnimatePresence initial={false}>
       {!composerFocused && (
         <motion.div
-          key="mobile-nav-morph"
-          initial={{ opacity: 0, width: 0, scale: 0.85 }}
+          key="split-orb-wrap"
+          initial={{ opacity: 0, width: 0, scale: 0.82 }}
           animate={{ opacity: 1, width: 'auto', scale: 1 }}
-          exit={{ opacity: 0, width: 0, scale: 0.85 }}
+          exit={{ opacity: 0, width: 0, scale: 0.82 }}
           transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          className="md:hidden shrink-0 overflow-hidden"
+          className="relative shrink-0"
         >
-          {mobileNavExpanded ? (
-            <div className="h-[52px] px-1.5 rounded-full bg-[#070709]/95 backdrop-blur-md border border-white/[0.12] flex items-center gap-0.5">
-              {NAV_ITEMS.map(item => {
-                const Icon = item.icon;
-                const active = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectTab(item.id);
-                      setMobileNavExpanded(false);
-                    }}
-                    title={lang === 'ar' ? item.ar : item.en}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center relative cursor-pointer transition-colors ${
-                      active ? 'bg-white text-black' : 'text-[#8E8E93] hover:text-white'
-                    }`}
-                  >
-                    <Icon className="w-[18px] h-[18px]" strokeWidth={active ? 2.2 : 1.8} />
-                    {item.liveDot && !active && (
-                      <span className="absolute top-2 end-2 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
-                    )}
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => setMobileNavExpanded(false)}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-[#71717A] hover:text-white cursor-pointer"
+          {/* Ascending Split Choices Right Above the Orb */}
+          <AnimatePresence>
+            {splitOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 12, scale: 0.86 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.86 }}
+                transition={{ type: 'spring', stiffness: 460, damping: 28 }}
+                onClick={e => e.stopPropagation()}
+                className="absolute bottom-[58px] start-0 z-40 flex flex-col gap-2 items-start"
               >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setMobileNavExpanded(true)}
-              aria-label="التنقل"
-              className="w-[52px] h-[52px] rounded-full bg-[#070709]/95 backdrop-blur-md border border-white/[0.12] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
-            >
-              <LayoutGrid className="w-[19px] h-[19px]" strokeWidth={1.8} />
-            </button>
-          )}
+                {onAttach && (
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, y: 14, scale: 0.85 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ delay: 0.03, type: 'spring', stiffness: 480, damping: 26 }}
+                    onClick={() => {
+                      setSplitOpen(false);
+                      onAttach();
+                    }}
+                    className="h-10 px-3.5 rounded-full bg-[#16161C]/95 backdrop-blur-xl border border-white/[0.14] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-xl transition-colors"
+                  >
+                    <Paperclip className="w-3.5 h-3.5" />
+                    <span>إرفاق ملف</span>
+                  </motion.button>
+                )}
+
+                {showNavOption && (
+                  <motion.button
+                    type="button"
+                    initial={{ opacity: 0, y: 18, scale: 0.85 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ delay: 0.06, type: 'spring', stiffness: 480, damping: 26 }}
+                    onClick={() => {
+                      setSplitOpen(false);
+                      setBottomDockHidden(false);
+                      setMobileNavExpanded(true);
+                    }}
+                    className="md:hidden h-10 px-3.5 rounded-full bg-[#16161C]/95 backdrop-blur-xl border border-white/[0.14] text-xs font-medium text-[#F2F2F5] hover:bg-white hover:text-black flex items-center gap-2 whitespace-nowrap cursor-pointer shadow-xl transition-colors"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>الشريط السفلي</span>
+                  </motion.button>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              // On desktop where bottom dock isn't needed, clicking directly attaches if only attach exists, else splits
+              if (!showNavOption && onAttach) {
+                onAttach();
+                return;
+              }
+              setSplitOpen(v => !v);
+            }}
+            aria-label="خيارات إضافية"
+            className={`w-[48px] h-[48px] rounded-full bg-[#131318]/95 backdrop-blur-xl border transition-all duration-200 flex items-center justify-center cursor-pointer active:scale-95 ${
+              splitOpen ? 'border-white/35 text-white bg-[#1D1D24]' : 'border-white/[0.12] text-[#D4D4D8] hover:text-white'
+            }`}
+          >
+            <Plus className={`w-5 h-5 transition-transform duration-200 ${splitOpen ? 'rotate-45' : ''}`} strokeWidth={1.9} />
+          </button>
         </motion.div>
       )}
     </AnimatePresence>
@@ -125,7 +163,16 @@ export function AppShell({
   onLogout,
   children,
 }: AppShellProps) {
-  const { composerFocused, hideMobileDock, setComposerFocused, setMobileNavExpanded } = useLayout();
+  const {
+    composerFocused,
+    mobileNavExpanded,
+    bottomDockHidden,
+    chatInThread,
+    setComposerFocused,
+    setMobileNavExpanded,
+    setBottomDockHidden,
+  } = useLayout();
+
   const [accountOpen, setAccountOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
@@ -136,10 +183,14 @@ export function AppShell({
     groups: Array<Record<string, unknown>>;
   } | null>(null);
 
+  const mainRef = useRef<HTMLElement | null>(null);
+  const lastScrollTopRef = useRef(0);
+
   useEffect(() => {
     setComposerFocused(false);
     setMobileNavExpanded(false);
-  }, [activeTab, setComposerFocused, setMobileNavExpanded]);
+    setBottomDockHidden(false);
+  }, [activeTab, setComposerFocused, setMobileNavExpanded, setBottomDockHidden]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -172,16 +223,34 @@ export function AppShell({
     return () => clearTimeout(t);
   }, [searchQ, searchOpen]);
 
-  // Views that render their own inline morphing nav beside their floating composer on mobile
-  const hasInlineComposerMobile = activeTab === 'chat' || activeTab === 'live' || activeTab === 'ai';
+  // Scroll-reactive bottom dock shrink/hide downward on scroll down, reappear smoothly on scroll up!
+  function handleMainScroll(e: React.UIEvent<HTMLElement>) {
+    const top = e.currentTarget.scrollTop;
+    const delta = top - lastScrollTopRef.current;
+    if (top < 24) {
+      setBottomDockHidden(false);
+    } else if (delta > 10) {
+      setBottomDockHidden(true);
+    } else if (delta < -6) {
+      setBottomDockHidden(false);
+    }
+    lastScrollTopRef.current = top;
+  }
+
+  // On mobile: Bottom Dock is visible on Social, Reels, Settings, Chat List (!chatInThread), OR whenever user expanded it from Split Orb!
+  const isComposerManagedView =
+    activeTab === 'live' || activeTab === 'ai' || (activeTab === 'chat' && chatInThread);
+
+  const shouldRenderMobileBottomDock =
+    !composerFocused && (!isComposerManagedView || mobileNavExpanded);
+
   const isFullHeightViewport = activeTab === 'videos' || activeTab === 'live' || activeTab === 'chat' || activeTab === 'ai';
 
   return (
-    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="h-screen w-screen bg-black text-[#F5F5F7] overflow-hidden flex select-none">
-      {/* DESKTOP / LAPTOP SIDE RAIL (Hidden on Mobile, Clean & Native on Laptop!) */}
-      <aside className="hidden md:flex flex-col justify-between w-[72px] lg:w-[216px] shrink-0 h-full bg-black border-e border-white/[0.08] py-5 px-3 z-30">
+    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="h-screen w-screen bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none">
+      {/* DESKTOP / LAPTOP SIDE RAIL */}
+      <aside className="hidden md:flex flex-col justify-between w-[72px] lg:w-[214px] shrink-0 h-full bg-[#0A0A0C] border-e border-white/[0.07] py-5 px-3 z-30">
         <div className="space-y-6">
-          {/* Brand Mark */}
           <button
             type="button"
             onClick={() => onSelectTab('social')}
@@ -191,7 +260,6 @@ export function AppShell({
             <span className="hidden lg:inline text-[17px] font-semibold tracking-tight text-white">LM</span>
           </button>
 
-          {/* Primary Navigation Items */}
           <nav className="space-y-1">
             {NAV_ITEMS.map(item => {
               const Icon = item.icon;
@@ -203,12 +271,12 @@ export function AppShell({
                   onClick={() => onSelectTab(item.id)}
                   className={`w-full h-11 px-3 rounded-full flex items-center gap-3.5 text-[14.5px] transition-colors cursor-pointer ${
                     active
-                      ? 'bg-white/[0.1] text-white font-semibold'
+                      ? 'bg-white/[0.11] text-white font-semibold'
                       : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
                   }`}
                 >
                   <span className="relative flex items-center justify-center shrink-0">
-                    <Icon className="w-[21px] h-[21px]" strokeWidth={active ? 2.2 : 1.75} />
+                    <Icon className="w-[20px] h-[20px]" strokeWidth={active ? 2.2 : 1.75} />
                     {item.liveDot && (
                       <span className="absolute -top-0.5 -end-0.5 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
                     )}
@@ -223,24 +291,23 @@ export function AppShell({
               onClick={() => setSearchOpen(true)}
               className="w-full h-11 px-3 rounded-full flex items-center gap-3.5 text-[14.5px] text-[#8E8E93] hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
             >
-              <Search className="w-[21px] h-[21px] shrink-0" strokeWidth={1.75} />
+              <Search className="w-[20px] h-[20px] shrink-0" strokeWidth={1.75} />
               <span className="hidden lg:inline truncate">{lang === 'ar' ? 'بحث' : 'Search'}</span>
             </button>
           </nav>
         </div>
 
-        {/* Bottom Side Rail Profile & API Hub */}
         <div className="space-y-1.5">
           <button
             type="button"
             onClick={() => onSelectTab('settings')}
             className={`w-full h-10 px-3 rounded-full flex items-center gap-3.5 text-[13.5px] transition-colors cursor-pointer ${
               activeTab === 'settings'
-                ? 'bg-white/[0.1] text-white font-semibold'
+                ? 'bg-white/[0.11] text-white font-semibold'
                 : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
             }`}
           >
-            <SlidersHorizontal className="w-[19px] h-[19px] shrink-0" strokeWidth={1.8} />
+            <SlidersHorizontal className="w-[18px] h-[18px] shrink-0" strokeWidth={1.8} />
             <span className="hidden lg:inline truncate">API Hub</span>
           </button>
 
@@ -259,54 +326,79 @@ export function AppShell({
       </aside>
 
       {/* Main Content Stage */}
-      <main className={`flex-1 min-w-0 h-full bg-black relative ${isFullHeightViewport ? 'overflow-hidden' : 'overflow-y-auto pb-20 md:pb-0'}`}>
+      <main
+        ref={mainRef}
+        onScroll={handleMainScroll}
+        className={`flex-1 min-w-0 h-full relative ${
+          activeTab === 'videos' || activeTab === 'live' ? 'bg-black' : 'bg-[#0A0A0C]'
+        } ${isFullHeightViewport ? 'overflow-hidden' : 'overflow-y-auto pb-20 md:pb-0'}`}
+      >
         {children}
       </main>
 
-      {/* MOBILE FLOATING BOTTOM DOCK (Only on Mobile < md AND Only when screen doesn't merge inline with a composer!) */}
-      {!hasInlineComposerMobile && !hideMobileDock && !composerFocused && (
-        <nav className="md:hidden fixed bottom-3 inset-x-0 z-40 flex justify-center px-3 pointer-events-none">
-          <div className="pointer-events-auto flex items-center gap-1 px-2 py-1.5 rounded-full bg-[#070709]/95 backdrop-blur-md border border-white/[0.12]">
-            {NAV_ITEMS.map(item => {
-              const Icon = item.icon;
-              const active = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelectTab(item.id)}
-                  className={`relative w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                    active ? 'bg-white text-black' : 'text-[#8E8E93] hover:text-white'
-                  }`}
-                >
-                  <Icon className="w-[19px] h-[19px]" strokeWidth={active ? 2.2 : 1.8} />
-                  {item.liveDot && !active && (
-                    <span className="absolute top-2 end-2 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
-                  )}
-                </button>
-              );
-            })}
+      {/* 2026 MOBILE FULL-WIDTH TOP-ROUNDED BOTTOM DOCK (rounded-t-[26px] rounded-b-none, NO X button, Scroll Shrink-Down Animation!) */}
+      <AnimatePresence>
+        {shouldRenderMobileBottomDock && (
+          <motion.nav
+            key="mobile-bottom-sheet-dock"
+            initial={{ y: 84, scale: 0.9, opacity: 0 }}
+            animate={
+              bottomDockHidden
+                ? { y: 86, scale: 0.84, opacity: 0, pointerEvents: 'none' as const }
+                : { y: 0, scale: 1, opacity: 1, pointerEvents: 'auto' as const }
+            }
+            exit={{ y: 84, scale: 0.88, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+            onClick={e => e.stopPropagation()}
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-t-[26px] rounded-b-none bg-[#121216]/94 backdrop-blur-2xl border-t border-white/[0.11] px-3 pt-2.5 pb-3 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]"
+          >
+            <div className="flex items-center justify-around gap-1">
+              {NAV_ITEMS.map(item => {
+                const Icon = item.icon;
+                const active = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectTab(item.id);
+                      setMobileNavExpanded(false);
+                    }}
+                    className={`relative flex flex-col items-center justify-center gap-1 px-3 py-1.5 rounded-2xl transition-colors cursor-pointer ${
+                      active ? 'text-white' : 'text-[#7A7A85] hover:text-[#D4D4D8]'
+                    }`}
+                  >
+                    <span className="relative flex items-center justify-center">
+                      <Icon className="w-[21px] h-[21px]" strokeWidth={active ? 2.3 : 1.75} />
+                      {item.liveDot && (
+                        <span className="absolute -top-0.5 -end-1 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
+                      )}
+                    </span>
+                    <span className={`text-[10px] leading-none ${active ? 'font-semibold text-white' : 'font-medium'}`}>
+                      {lang === 'ar' ? item.ar : item.en}
+                    </span>
+                    {active && (
+                      <motion.span
+                        layoutId="dock-active-dot"
+                        className="absolute -top-1 w-5 h-[2.5px] rounded-full bg-white"
+                      />
+                    )}
+                  </button>
+                );
+              })}
 
-            <div className="w-[1px] h-5 bg-white/[0.08] mx-0.5" />
-
-            <button
-              type="button"
-              onClick={() => setSearchOpen(true)}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-[#8E8E93] hover:text-white cursor-pointer"
-            >
-              <Search className="w-4 h-4" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setAccountOpen(true)}
-              className="p-0.5 rounded-full cursor-pointer"
-            >
-              <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={28} online={wsOnline} />
-            </button>
-          </div>
-        </nav>
-      )}
+              <button
+                type="button"
+                onClick={() => setAccountOpen(true)}
+                className="flex flex-col items-center justify-center gap-1 px-2 py-1 rounded-2xl cursor-pointer"
+              >
+                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={24} online={wsOnline} />
+                <span className="text-[10px] leading-none text-[#7A7A85]">{lang === 'ar' ? 'حسابي' : 'Me'}</span>
+              </button>
+            </div>
+          </motion.nav>
+        )}
+      </AnimatePresence>
 
       {/* Account Switcher & Quick Settings Modal */}
       {accountOpen && (
@@ -316,7 +408,7 @@ export function AppShell({
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[340px] rounded-2xl bg-[#070709] border border-white/[0.12] overflow-hidden text-start"
+            className="w-full max-w-[340px] rounded-2xl bg-[#121216] border border-white/[0.12] overflow-hidden text-start"
           >
             <div className="px-4 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -392,15 +484,15 @@ export function AppShell({
         </div>
       )}
 
-      {/* Clean Search Overlay */}
+      {/* Search Overlay */}
       {searchOpen && (
         <div
           onClick={() => setSearchOpen(false)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center pt-16 px-4"
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-start justify-center pt-16 px-4"
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[540px] bg-[#060608] border border-white/[0.12] rounded-2xl overflow-hidden text-start"
+            className="w-full max-w-[540px] bg-[#121216] border border-white/[0.12] rounded-2xl overflow-hidden text-start"
           >
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-3">
               <Search className="w-4 h-4 text-[#71717A]" />
@@ -409,7 +501,7 @@ export function AppShell({
                 value={searchQ}
                 onChange={e => setSearchQ(e.target.value)}
                 placeholder={lang === 'ar' ? 'ابحث...' : 'Search...'}
-                className="flex-1 bg-transparent text-sm text-white placeholder:text-[#52525B] outline-none"
+                className="flex-1 bg-transparent text-sm text-white placeholder:text-[#585860] outline-none"
               />
               <button
                 type="button"

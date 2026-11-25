@@ -80,10 +80,20 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 const LANG_NAMES: Record<string, string> = {
   ar: 'Arabic',
   en: 'English',
-  fr: 'French',
   es: 'Spanish',
+  fr: 'French',
   de: 'German',
+  'zh-CN': 'Chinese (Simplified)',
+  hi: 'Hindi',
+  ru: 'Russian',
+  pt: 'Portuguese',
+  ja: 'Japanese',
+  ko: 'Korean',
   tr: 'Turkish',
+  it: 'Italian',
+  ur: 'Urdu',
+  fa: 'Persian',
+  id: 'Indonesian',
 };
 
 const SEED_TRANSLATIONS: Record<string, Record<string, string>> = {
@@ -93,6 +103,9 @@ const SEED_TRANSLATIONS: Record<string, Record<string, string>> = {
     es: 'Acabo de terminar la corrección de color del atardecer — te lo envío ahora.',
     de: 'Ich bin gerade mit dem Color Grading des Sonnenuntergangs fertig — ich schicke es dir jetzt.',
     tr: 'Gün batımı karesinin renk düzenlemesini yeni bitirdim — şimdi sana gönderiyorum.',
+    'zh-CN': '刚完成日落画面的调色——现在发给你。',
+    ru: 'Только что закончил цветокоррекцию кадра заката — отправляю тебе сейчас.',
+    ja: '夕日のフレームのカラーグレーディングが終わりました。今送りますね。',
   },
   'Hey! Just finished testing the new release in New York — performance feels super fast and clean. Are we ready for tonight?': {
     ar: 'أهلًا! انتهيت للتو من اختبار الإصدار الجديد في نيويورك — الأداء سريع جدًا ونظيف. هل نحن جاهزون لليلة؟',
@@ -100,6 +113,9 @@ const SEED_TRANSLATIONS: Record<string, Record<string, string>> = {
     es: '¡Hola! Acabo de probar la nueva versión en Nueva York — el rendimiento es súper rápido y limpio. ¿Listos para esta noche?',
     de: 'Hey! Habe gerade das neue Release in New York getestet — extrem schnell und sauber. Bereit für heute Abend?',
     tr: 'Selam! New York’ta yeni sürümü test etmeyi bitirdim — performans çok hızlı ve akıcı. Bu geceye hazır mıyız?',
+    'zh-CN': '嗨！刚在纽约测试完新版本——速度极快且流畅。今晚准备好了吗？',
+    ru: 'Привет! Только что протестировал новый релиз в Нью-Йорке — всё работает молниеносно. Готовы к сегодняшнему вечеру?',
+    ja: 'やあ！ニューヨークで新リリースのテストを終えたよ。すごく高速でクリーンだ。今夜の準備はできてる？',
   },
 };
 
@@ -934,10 +950,22 @@ app.get('/api/providers', (_req, res) => {
       openaiMasked: maskKey(cfg.openaiApiKey),
       anthropicConfigured: Boolean(cfg.anthropicApiKey),
       anthropicMasked: maskKey(cfg.anthropicApiKey),
-      openrouterConfigured: Boolean(cfg.openrouterApiKey),
-      openrouterMasked: maskKey(cfg.openrouterApiKey),
+      deepseekConfigured: Boolean(cfg.deepseekApiKey),
+      deepseekMasked: maskKey(cfg.deepseekApiKey),
+      xaiConfigured: Boolean(cfg.xaiApiKey),
+      xaiMasked: maskKey(cfg.xaiApiKey),
+      mistralConfigured: Boolean(cfg.mistralApiKey),
+      mistralMasked: maskKey(cfg.mistralApiKey),
       groqConfigured: Boolean(cfg.groqApiKey),
       groqMasked: maskKey(cfg.groqApiKey),
+      openrouterConfigured: Boolean(cfg.openrouterApiKey),
+      openrouterMasked: maskKey(cfg.openrouterApiKey),
+      perplexityConfigured: Boolean(cfg.perplexityApiKey),
+      perplexityMasked: maskKey(cfg.perplexityApiKey),
+      togetherConfigured: Boolean(cfg.togetherApiKey),
+      togetherMasked: maskKey(cfg.togetherApiKey),
+      cohereConfigured: Boolean(cfg.cohereApiKey),
+      cohereMasked: maskKey(cfg.cohereApiKey),
       ollamaUrl: cfg.ollamaUrl,
       livekitUrl: cfg.livekitUrl,
       livekitConfigured: Boolean(cfg.livekitUrl && cfg.livekitApiKey),
@@ -954,7 +982,8 @@ app.post('/api/providers', (req, res) => {
   const body = req.body as Record<string, string>;
   const patch: Record<string, string> = {};
   const allowed = [
-    'geminiApiKey', 'openaiApiKey', 'anthropicApiKey', 'openrouterApiKey', 'groqApiKey',
+    'geminiApiKey', 'openaiApiKey', 'anthropicApiKey', 'deepseekApiKey', 'xaiApiKey',
+    'mistralApiKey', 'groqApiKey', 'openrouterApiKey', 'perplexityApiKey', 'togetherApiKey', 'cohereApiKey',
     'ollamaUrl', 'livekitUrl', 'livekitApiKey', 'livekitApiSecret',
     'meilisearchUrl', 'blnkUrl', 'matrixUrl', 'defaultProvider', 'defaultModel',
   ];

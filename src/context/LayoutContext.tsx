@@ -6,10 +6,12 @@ interface LayoutContextValue {
   setComposerFocused: (v: boolean) => void;
   mobileNavExpanded: boolean;
   setMobileNavExpanded: (v: boolean) => void;
+  bottomDockHidden: boolean;
+  setBottomDockHidden: (v: boolean) => void;
+  chatInThread: boolean;
+  setChatInThread: (v: boolean) => void;
   activeTab: NavTab;
   onSelectTab: (t: NavTab) => void;
-  hideMobileDock: boolean;
-  setHideMobileDock: (v: boolean) => void;
 }
 
 const LayoutContext = createContext<LayoutContextValue>({
@@ -17,10 +19,12 @@ const LayoutContext = createContext<LayoutContextValue>({
   setComposerFocused: () => {},
   mobileNavExpanded: false,
   setMobileNavExpanded: () => {},
+  bottomDockHidden: false,
+  setBottomDockHidden: () => {},
+  chatInThread: false,
+  setChatInThread: () => {},
   activeTab: 'social',
   onSelectTab: () => {},
-  hideMobileDock: false,
-  setHideMobileDock: () => {},
 });
 
 export function LayoutProvider({
@@ -34,7 +38,8 @@ export function LayoutProvider({
 }) {
   const [composerFocused, setComposerFocused] = useState(false);
   const [mobileNavExpanded, setMobileNavExpanded] = useState(false);
-  const [hideMobileDock, setHideMobileDock] = useState(false);
+  const [bottomDockHidden, setBottomDockHidden] = useState(false);
+  const [chatInThread, setChatInThread] = useState(false);
 
   return (
     <LayoutContext.Provider
@@ -43,10 +48,12 @@ export function LayoutProvider({
         setComposerFocused,
         mobileNavExpanded,
         setMobileNavExpanded,
+        bottomDockHidden,
+        setBottomDockHidden,
+        chatInThread,
+        setChatInThread,
         activeTab,
         onSelectTab,
-        hideMobileDock,
-        setHideMobileDock,
       }}
     >
       {children}

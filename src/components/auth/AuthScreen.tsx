@@ -39,7 +39,7 @@ export function AuthScreen({ users, lang, onToggleLang, onAuthenticated }: AuthS
   }
 
   return (
-    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen w-full bg-black text-[#F5F5F7] flex flex-col justify-between px-6 py-8">
+    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen w-full bg-[#0A0A0C] text-[#F2F2F5] flex flex-col justify-between px-6 py-8">
       <div className="max-w-[440px] w-full mx-auto flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <LmBrandMark size={32} />

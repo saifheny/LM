@@ -49,10 +49,10 @@ function normalizeArabicForFilter(text: string): string {
     .replace(/ى/g, 'ي');
 }
 
-const LM_AI_SYSTEM_PROMPT = `You are LM AI, an intelligent assistant integrated inside the LM platform.
-Rules:
-1. You NEVER read private chats automatically — only analyze content explicitly shared with you.
-2. You have ZERO financial authority — you cannot transfer money, modify balances, or execute payments.
+const LM_AI_SYSTEM_PROMPT = `You are an intelligent AI assistant integrated inside LM.
+Strict platform rules:
+1. Never read private chats automatically — only use explicitly shared context.
+2. You have zero financial authority — never transfer money, modify balances, or execute payments.
 3. Respond concisely, clearly, and naturally in the user's language (Arabic or English) using clean Markdown.`;
 
 function logSecurity(userId: string, actionType: string, decision: 'ALLOWED' | 'BLOCKED', reason: string): string {
@@ -64,20 +64,31 @@ function logSecurity(userId: string, actionType: string, decision: 'ALLOWED' | '
   return id;
 }
 
+const OPENAI_COMPAT_ENDPOINTS: Record<string, { url: string; label: string; keyField: keyof ReturnType<typeof loadProviderConfig>; defaultModel: string }> = {
+  openai: { url: 'https://api.openai.com/v1/chat/completions', label: 'OpenAI', keyField: 'openaiApiKey', defaultModel: 'gpt-4o' },
+  deepseek: { url: 'https://api.deepseek.com/chat/completions', label: 'DeepSeek', keyField: 'deepseekApiKey', defaultModel: 'deepseek-chat' },
+  xai: { url: 'https://api.x.ai/v1/chat/completions', label: 'xAI Grok', keyField: 'xaiApiKey', defaultModel: 'grok-3-mini' },
+  mistral: { url: 'https://api.mistral.ai/v1/chat/completions', label: 'Mistral AI', keyField: 'mistralApiKey', defaultModel: 'mistral-large-latest' },
+  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', label: 'Groq', keyField: 'groqApiKey', defaultModel: 'llama-3.3-70b-versatile' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', label: 'OpenRouter', keyField: 'openrouterApiKey', defaultModel: 'meta-llama/llama-3.3-70b-instruct' },
+  perplexity: { url: 'https://api.perplexity.ai/chat/completions', label: 'Perplexity', keyField: 'perplexityApiKey', defaultModel: 'sonar-pro' },
+  together: { url: 'https://api.together.xyz/v1/chat/completions', label: 'Together AI', keyField: 'togetherApiKey', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
+};
+
 export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   const start = Date.now();
   const prompt = (req.prompt || '').trim();
 
   // 1. Silent server-enforced privacy check for private chat
   if (req.source === 'chat' && !req.explicitUserConsent) {
-    const auditId = logSecurity(req.userId, 'CHAT_CONTEXT_READ', 'BLOCKED', 'المحادثات الخاصة تتطلب مشاركة صريحة.');
+    const auditId = logSecurity(req.userId, 'CHAT_CONTEXT_READ', 'BLOCKED', 'Explicit share required.');
     return {
       ok: false,
       blocked: true,
       blockCategory: 'PRIVACY_CONSENT_REQUIRED',
-      reply: 'يرجى تحديد الرسالة التي ترغب في مشاركتها معي أولًا لأتمكن من مساعدتك حولها.',
-      providerUsed: 'lm-core',
-      modelUsed: 'privacy-guard',
+      reply: 'حدّد الرسالة التي ترغب في مشاركتها أولًا لأتمكن من الإجابة عنها.',
+      providerUsed: 'LM',
+      modelUsed: 'guard',
       latencyMs: Date.now() - start,
       securityAuditId: auditId,
     };
@@ -87,14 +98,14 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   const normalizedPrompt = normalizeArabicForFilter(prompt);
   for (const rx of FINANCIAL_BLOCK_PATTERNS) {
     if (rx.test(normalizedPrompt)) {
-      const auditId = logSecurity(req.userId, 'FINANCIAL_OPERATION_REQUEST', 'BLOCKED', `Blocked financial action: "${prompt.slice(0, 60)}"`);
+      const auditId = logSecurity(req.userId, 'FINANCIAL_OPERATION_REQUEST', 'BLOCKED', `Blocked: "${prompt.slice(0, 60)}"`);
       return {
         ok: false,
         blocked: true,
         blockCategory: 'FINANCIAL_ISOLATION',
-        reply: 'لا يمكنني تنفيذ التحويلات أو التعديلات المالية أو المدفوعات. يمكنني فقط الإجابة على أسئلتك أو إعداد التحليلات والملخصات.',
-        providerUsed: 'lm-core',
-        modelUsed: 'policy-guard',
+        reply: 'لا يمكنني تنفيذ التحويلات أو التعديلات المالية أو المدفوعات. يمكنني مساعدتك فقط بالتحليل أو الصياغة أو المعلومات.',
+        providerUsed: 'LM',
+        modelUsed: 'guard',
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
       };
@@ -102,29 +113,51 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   }
 
   const config = loadProviderConfig();
-  const requestedProvider = (req.provider || config.defaultProvider || 'local-smart') as string;
+  const requestedProvider = (req.provider || config.defaultProvider || 'gemini') as string;
   const fullUserContent = req.sharedContext
-    ? `[السياق]:\n${req.sharedContext}\n\n[السؤال]:\n${prompt}`
+    ? `[السياق]:\n${req.sharedContext}\n\n[الطلب]:\n${prompt}`
     : prompt;
 
   db.prepare('UPDATE users SET ai_used_today = ai_used_today + 1 WHERE id = ?').run(req.userId);
   const auditId = logSecurity(req.userId, req.source || 'ai_tab', 'ALLOWED', 'Processed');
 
-  // If user explicitly chose a cloud provider whose API key isn't added yet -> signal UI to show inline API guide!
-  const missingKeyMap: Record<string, boolean> = {
-    gemini: !config.geminiApiKey,
-    openai: !config.openaiApiKey,
-    anthropic: !config.anthropicApiKey,
-    openrouter: !config.openrouterApiKey,
-    groq: !config.groqApiKey,
+  // Check if API key is missing for the selected provider
+  const keyCheck: Record<string, string> = {
+    gemini: config.geminiApiKey,
+    openai: config.openaiApiKey,
+    anthropic: config.anthropicApiKey,
+    deepseek: config.deepseekApiKey,
+    xai: config.xaiApiKey,
+    mistral: config.mistralApiKey,
+    groq: config.groqApiKey,
+    openrouter: config.openrouterApiKey,
+    perplexity: config.perplexityApiKey,
+    together: config.togetherApiKey,
+    cohere: config.cohereApiKey,
   };
 
-  if (requestedProvider in missingKeyMap && missingKeyMap[requestedProvider]) {
+  if (requestedProvider in keyCheck && !keyCheck[requestedProvider]) {
+    // Inside social/chat inline quick reply: give helpful fallback instead of dead-ending if no key configured yet
+    if (req.source === 'social' || req.source === 'chat') {
+      return {
+        ok: true,
+        needsApiKey: true,
+        missingProvider: requestedProvider,
+        reply: req.sharedContext
+          ? `بخصوص المحتوى المشارك: النقطة الأساسية تدور حول _"${req.sharedContext.slice(0, 110)}"_. للحصول على إجابات أعمق، أضف مفتاح API لأي شركة من تبويب **LM AI**.`
+          : `لم يتم ربط مفتاح API بعد. افتح تبويب **LM AI** واختر الشركة لإضافة مفتاحك.`,
+        providerUsed: requestedProvider,
+        modelUsed: req.model || requestedProvider,
+        latencyMs: Date.now() - start,
+        securityAuditId: auditId,
+      };
+    }
+
     return {
       ok: true,
       needsApiKey: true,
       missingProvider: requestedProvider,
-      reply: `لم يتم ربط مفتاح API الخاص بـ **${requestedProvider.toUpperCase()}** بعد. يمكنك إضافته مباشرةً من الدليل أدناه لتشغيل النموذج فورًا.`,
+      reply: `لم يتم إضافة مفتاح API لشركة **${requestedProvider.toUpperCase()}** بعد. أضف المفتاح من الدليل أدناه لتشغيل النموذج فورًا.`,
       providerUsed: requestedProvider,
       modelUsed: req.model || requestedProvider,
       latencyMs: Date.now() - start,
@@ -133,60 +166,26 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   }
 
   try {
+    // 1. Google Gemini (@google/genai)
     if (requestedProvider === 'gemini' && config.geminiApiKey) {
       const model = req.model || 'gemini-4-hydrogen';
       const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
-      const input: unknown = req.imageBase64
-        ? [
-            { type: 'text', text: fullUserContent },
-            { type: 'image', data: req.imageBase64, mime_type: req.imageMimeType || 'image/png' },
-          ]
-        : fullUserContent;
-
       const interaction = await ai.interactions.create({
         model,
         system_instruction: LM_AI_SYSTEM_PROMPT,
-        input: input as string,
+        input: fullUserContent,
       });
-
       return {
         ok: true,
-        reply: interaction.output_text || 'لم يتم استلام نص من النموذج.',
-        providerUsed: 'Gemini',
+        reply: interaction.output_text || 'لم يتم استلام رد من النموذج.',
+        providerUsed: 'Google Gemini',
         modelUsed: model,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
       };
     }
 
-    if (requestedProvider === 'openai' && config.openaiApiKey) {
-      const model = req.model || 'gpt-4o-mini';
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.openaiApiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: LM_AI_SYSTEM_PROMPT },
-            { role: 'user', content: fullUserContent },
-          ],
-        }),
-      });
-      const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
-      if (!resp.ok) throw new Error(data.error?.message || `HTTP ${resp.status}`);
-      return {
-        ok: true,
-        reply: data.choices?.[0]?.message?.content || '',
-        providerUsed: 'OpenAI',
-        modelUsed: model,
-        latencyMs: Date.now() - start,
-        securityAuditId: auditId,
-      };
-    }
-
+    // 2. Anthropic Claude
     if (requestedProvider === 'anthropic' && config.anthropicApiKey) {
       const model = req.model || 'claude-3-7-sonnet-latest';
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -198,7 +197,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 1024,
+          max_tokens: 1536,
           system: LM_AI_SYSTEM_PROMPT,
           messages: [{ role: 'user', content: fullUserContent }],
         }),
@@ -208,23 +207,58 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
       return {
         ok: true,
         reply: data.content?.[0]?.text || '',
-        providerUsed: 'Claude',
+        providerUsed: 'Anthropic Claude',
         modelUsed: model,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
       };
     }
 
-    if (requestedProvider === 'openrouter' && config.openrouterApiKey) {
-      const model = req.model || 'meta-llama/llama-3.3-70b-instruct';
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    // 3. Cohere v2 Chat
+    if (requestedProvider === 'cohere' && config.cohereApiKey) {
+      const model = req.model || 'command-a-03-2025';
+      const resp = await fetch('https://api.cohere.com/v2/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.openrouterApiKey}`,
-          'HTTP-Referer': 'http://localhost:4000',
-          'X-Title': 'LM',
+          Authorization: `Bearer ${config.cohereApiKey}`,
         },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: LM_AI_SYSTEM_PROMPT },
+            { role: 'user', content: fullUserContent },
+          ],
+        }),
+      });
+      const data = (await resp.json()) as { message?: { content?: Array<{ text?: string }> }; message_error?: string };
+      if (!resp.ok) throw new Error(`Cohere HTTP ${resp.status}`);
+      return {
+        ok: true,
+        reply: data.message?.content?.[0]?.text || '',
+        providerUsed: 'Cohere',
+        modelUsed: model,
+        latencyMs: Date.now() - start,
+        securityAuditId: auditId,
+      };
+    }
+
+    // 4. All 8 OpenAI-Compatible Global Providers (OpenAI, DeepSeek, xAI Grok, Mistral, Groq, OpenRouter, Perplexity, Together)
+    if (requestedProvider in OPENAI_COMPAT_ENDPOINTS) {
+      const spec = OPENAI_COMPAT_ENDPOINTS[requestedProvider];
+      const apiKey = String(config[spec.keyField] || '');
+      const model = req.model || spec.defaultModel;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      };
+      if (requestedProvider === 'openrouter') {
+        headers['HTTP-Referer'] = 'http://localhost:4000';
+        headers['X-Title'] = 'LM';
+      }
+      const resp = await fetch(spec.url, {
+        method: 'POST',
+        headers,
         body: JSON.stringify({
           model,
           messages: [
@@ -238,41 +272,14 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
       return {
         ok: true,
         reply: data.choices?.[0]?.message?.content || '',
-        providerUsed: 'OpenRouter',
+        providerUsed: spec.label,
         modelUsed: model,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
       };
     }
 
-    if (requestedProvider === 'groq' && config.groqApiKey) {
-      const model = req.model || 'llama-3.3-70b-versatile';
-      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.groqApiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: LM_AI_SYSTEM_PROMPT },
-            { role: 'user', content: fullUserContent },
-          ],
-        }),
-      });
-      const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
-      if (!resp.ok) throw new Error(data.error?.message || `HTTP ${resp.status}`);
-      return {
-        ok: true,
-        reply: data.choices?.[0]?.message?.content || '',
-        providerUsed: 'Groq',
-        modelUsed: model,
-        latencyMs: Date.now() - start,
-        securityAuditId: auditId,
-      };
-    }
-
+    // 5. Local Ollama
     if (requestedProvider === 'ollama' && config.ollamaUrl) {
       const model = req.model || 'llama3.2';
       const resp = await fetch(`${config.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
@@ -304,9 +311,9 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
       ok: true,
       needsApiKey: true,
       missingProvider: requestedProvider,
-      reply: `تعذر الاتصال بـ **${requestedProvider}** (${errMsg}). تأكد من صلاحية المفتاح أو جرب التبديل إلى LM Local.`,
+      reply: `تعذر الاتصال بـ **${requestedProvider}** (${errMsg}). تحقق من مفتاح الـ API أو إعدادات الاتصال.`,
       providerUsed: requestedProvider,
-      modelUsed: req.model || 'fallback',
+      modelUsed: req.model || 'error',
       latencyMs: Date.now() - start,
       securityAuditId: auditId,
     };
@@ -314,47 +321,12 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
 
   return {
     ok: true,
-    reply: generateLocalSmartReply(prompt, req.sharedContext),
-    providerUsed: 'LM Local',
-    modelUsed: 'lm-local-v2',
+    needsApiKey: true,
+    missingProvider: 'gemini',
+    reply: 'اختر شركة AI وأضف مفتاح الـ API الخاص بك للبدء فورًا.',
+    providerUsed: requestedProvider,
+    modelUsed: req.model || 'none',
     latencyMs: Date.now() - start,
     securityAuditId: auditId,
   };
-}
-
-function generateLocalSmartReply(prompt: string, sharedContext?: string): string {
-  const lower = prompt.toLowerCase();
-
-  if (sharedContext) {
-    const clean = sharedContext.replace(/\s+/g, ' ').trim();
-    const preview = clean.length > 150 ? `${clean.slice(0, 150)}...` : clean;
-    return [
-      `بخصوص المنشور: _"${preview}"_`,
-      '',
-      `• **الإجابة المباشرة:** ${prompt.includes('?') || prompt.includes('؟') ? 'الفكرة الأساسية تركز على تبسيط التجربة البصرية وسرعة التفاعل بدون عناصر مشتتة.' : 'النقطة المحورية هنا عملية ومباشرة وتدعم تجربة استخدام سريعة ونظيفة.'}`,
-      '• إذا كنت ترغب بتحليل أعمق باستخدام **Gemini** أو **GPT-4o**، اختر النموذج من الأعلى وأضف مفتاح الـ API الخاص بك.',
-    ].join('\n');
-  }
-
-  if (lower.includes('ابحث') || lower.includes('حسابات') || lower.includes('search')) {
-    const users = db.prepare('SELECT display_name, username, bio FROM users LIMIT 4').all() as Array<Record<string, unknown>>;
-    const lines = users.map(u => `• **${u.display_name}** (@${u.username}) — ${u.bio}`).join('\n');
-    return `إليك أبرز الحسابات النشطة حاليًا:\n\n${lines}`;
-  }
-
-  if (lower.includes('اكتب') || lower.includes('صياغ') || lower.includes('سكريبت') || lower.includes('draft')) {
-    return [
-      'إليك مسودة جاهزة ومختصرة:',
-      '',
-      '> "السرعة والبساطة هما معيار الجيل الجديد — تجربة واحدة تجمع التواصل، المحتوى، والذكاء الاصطناعي بدون أي تعقيد."',
-      '',
-      'هل تريد تعديل النبرة لتكون رسمية أكثر أو أقصر؟',
-    ].join('\n');
-  }
-
-  return [
-    `فهمت طلبك حول: **${prompt}**`,
-    '',
-    'هذا الرد يعمل عبر المحرك المحلي الفوري (`LM Local`). يمكنك في أي لحظة اختيار **Gemini** أو **OpenAI** أو **Claude** من قائمة النماذج العائمة وربط مفتاحك مباشرة لتشغيل النماذج السحابية الكاملة.',
-  ].join('\n');
 }

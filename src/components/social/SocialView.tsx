@@ -213,7 +213,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     const text = (replyDrafts[postId] || '').trim();
     if (!text) return;
     const parent = replyParentByPost[postId];
-    const invokeAi = Boolean(replyAiModeByPost[postId]) || /@(lm\s*ai|ai)/i.test(text);
+    const invokeAi = Boolean(replyAiModeByPost[postId]) || /^(\/ai|-ai|\/|@(lm\s*ai|ai))/i.test(text);
 
     setSubmittingCommentPost(postId);
     try {
@@ -254,9 +254,9 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   }
 
   return (
-    <div className="min-h-full w-full bg-black text-[#F5F5F7]">
-      {/* Pure Instagram-Inspired Stream on #000000 (Zero Categories, Zero Top Filter Tabs, Zero Cards) */}
-      <div className="max-w-[600px] mx-auto min-h-screen border-x border-white/[0.08]">
+    <div className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]">
+      {/* Pure Instagram-Inspired Stream on Refined Carbon #0A0A0C (Zero Categories, Zero Filter Tabs, Zero Cards) */}
+      <div className="max-w-[600px] mx-auto min-h-screen border-x border-white/[0.07]">
         {/* Stories Row */}
         {stories.length > 0 && (
           <div className="px-4 py-4 border-b border-white/[0.08] flex items-center gap-4 overflow-x-auto no-scrollbar">
