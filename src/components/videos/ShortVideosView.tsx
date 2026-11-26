@@ -34,7 +34,7 @@ import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { NavAiIcon, PulsePlayGlyph, SharePlatformIcons, StylusEditIcon } from '../shared/Icons2026Pro';
-import { ActionMenuOrb } from '../shared/ActionOrb2026';
+import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
@@ -42,6 +42,73 @@ interface ShortVideosViewProps {
   user: UserProfile;
   lang: Lang;
   onOpenProfile?: (userId: string) => void;
+  onOpenProfileByUsername?: (username: string) => void;
+  onOpenHashtag?: (tag: string) => void;
+}
+
+/**
+ * Generates a crisp JPEG thumbnail File from a user-selected video File right in the browser!
+ */
+async function generateVideoThumbnail(videoFile: File): Promise<File | null> {
+  return new Promise(resolve => {
+    const objectUrl = URL.createObjectURL(videoFile);
+    const vid = document.createElement('video');
+    vid.preload = 'auto';
+    vid.muted = true;
+    vid.playsInline = true;
+    vid.crossOrigin = 'anonymous';
+    vid.src = objectUrl;
+
+    let done = false;
+    const finish = (file: File | null) => {
+      if (done) return;
+      done = true;
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+
+    const timeout = window.setTimeout(() => finish(null), 6000);
+
+    const captureFrame = () => {
+      try {
+        const w = vid.videoWidth || 720;
+        const h = vid.videoHeight || 1280;
+        const scale = Math.min(1, 720 / Math.max(w, 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(160, Math.round(w * scale));
+        canvas.height = Math.max(160, Math.round(h * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return finish(null);
+        ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          blob => {
+            window.clearTimeout(timeout);
+            if (!blob) return finish(null);
+            finish(new File([blob], `pulse_thumb_${Date.now()}.jpg`, { type: 'image/jpeg' }));
+          },
+          'image/jpeg',
+          0.86
+        );
+      } catch {
+        window.clearTimeout(timeout);
+        finish(null);
+      }
+    };
+
+    vid.onloadeddata = () => {
+      const targetTime = Number.isFinite(vid.duration) && vid.duration > 0.6 ? Math.min(0.9, vid.duration * 0.22) : 0.05;
+      try {
+        vid.currentTime = targetTime;
+      } catch {
+        captureFrame();
+      }
+    };
+    vid.onseeked = captureFrame;
+    vid.onerror = () => {
+      window.clearTimeout(timeout);
+      finish(null);
+    };
+  });
 }
 
 function compactNum(n: number): string {
@@ -65,7 +132,13 @@ const SHARE_PLATFORMS: Array<{ id: keyof typeof SharePlatformIcons; label: strin
   { id: 'sms', label: 'رسائل', bg: '#10B981' },
 ];
 
-export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewProps) {
+export function ShortVideosView({
+  user,
+  lang,
+  onOpenProfile,
+  onOpenProfileByUsername,
+  onOpenHashtag,
+}: ShortVideosViewProps) {
   const { setBottomDockHidden } = useLayout();
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
   const [feedTab, setFeedTabState] = useState<'following' | 'friends' | 'for_you'>(() => {
@@ -180,12 +253,26 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
   const [sentToIds, setSentToIds] = useState<Record<string, boolean>>({});
   const [shareToast, setShareToast] = useState('');
 
-  // Upload Pulse Modal
+  // Upload Pulse Modal + Automatic Thumbnail Generation
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newTags, setNewTags] = useState('#LM');
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
+  const [uploadedPosterUrl, setUploadedPosterUrl] = useState<string | null>(null);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [generatingThumb, setGeneratingThumb] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const posterFileRef = useRef<HTMLInputElement | null>(null);
+
+  // Edit Own Pulse Comment Inline
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [savingCommentEdit, setSavingCommentEdit] = useState(false);
+
+  // Interactive Bottom Scrubber Hover/Drag State
+  const [scrubHover, setScrubHover] = useState(false);
+  const scrubberBarRef = useRef<HTMLDivElement | null>(null);
 
   // Edit Own Pulse Video Modal
   const [editingVideo, setEditingVideo] = useState<ShortVideoItem | null>(null);
@@ -470,28 +557,92 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
     setComments(prev => prev.map(c => (c.id === commentId ? { ...c, likesCount: res.likesCount, likedByMe: res.liked } : c)));
   }
 
+  async function saveEditedComment(commentId: string) {
+    if (!editingCommentText.trim() || savingCommentEdit) return;
+    setSavingCommentEdit(true);
+    try {
+      const clean = editingCommentText.trim();
+      await api(`/api/video-comments/${commentId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ userId: user.id, content: clean }),
+      });
+      setComments(prev => prev.map(c => (c.id === commentId ? { ...c, content: clean, isEdited: true } : c)));
+      setEditingCommentId(null);
+      setEditingCommentText('');
+    } finally {
+      setSavingCommentEdit(false);
+    }
+  }
+
+  async function deleteComment(commentId: string) {
+    if (!drawerVideo) return;
+    await api(`/api/video-comments/${commentId}?userId=${user.id}`, { method: 'DELETE' });
+    setComments(prev => {
+      const next = prev.filter(c => c.id !== commentId && c.parentId !== commentId);
+      setVideos(vids => vids.map(v => (v.id === drawerVideo.id ? { ...v, commentsCount: next.length } : v)));
+      return next;
+    });
+  }
+
+  function scrubFromPointer(clientX: number) {
+    const bar = scrubberBarRef.current;
+    if (!bar || duration <= 0) return;
+    const rect = bar.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(rect.width, 1)));
+    scrubTo(ratio * duration);
+  }
+
   async function handleVideoUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    const up = await apiUploadFile(f);
-    setUploadedVideoUrl(up.url);
-    e.target.value = '';
+    setUploadingVideo(true);
+    setGeneratingThumb(true);
+    try {
+      const [upVideo, thumbFile] = await Promise.all([apiUploadFile(f), generateVideoThumbnail(f)]);
+      setUploadedVideoUrl(upVideo.url);
+      if (thumbFile) {
+        const upThumb = await apiUploadFile(thumbFile);
+        setUploadedPosterUrl(upThumb.url);
+      }
+    } finally {
+      setUploadingVideo(false);
+      setGeneratingThumb(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleManualPosterFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setGeneratingThumb(true);
+    try {
+      const up = await apiUploadFile(f);
+      setUploadedPosterUrl(up.url);
+    } finally {
+      setGeneratingThumb(false);
+      e.target.value = '';
+    }
   }
 
   async function publishPulse(e: React.FormEvent) {
     e.preventDefault();
-    if (!newTitle.trim()) return;
+    if (!newTitle.trim() || uploadingVideo) return;
     await apiPost('/api/videos', {
       userId: user.id,
       title: newTitle.trim(),
       description: newDesc.trim(),
+      tags: newTags.trim() || '#LM',
       videoUrl: uploadedVideoUrl || '/uploads/seed/reel1.mp4',
+      posterUrl: uploadedPosterUrl,
     });
     setUploadOpen(false);
     setNewTitle('');
     setNewDesc('');
+    setNewTags('#LM');
     setUploadedVideoUrl(null);
+    setUploadedPosterUrl(null);
     loadVideos();
+    showToast('تم نشر فيديو نبض بنجاح');
   }
 
   function openEditVideoModal(v: ShortVideoItem) {
@@ -707,7 +858,15 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                       )}
                     </div>
 
-                    {v.tags && (isExpanded || !isLong) && <p className="text-xs text-white/65">{v.tags}</p>}
+                    {v.tags && (isExpanded || !isLong) && (
+                      <div className="text-xs text-white/75">
+                        <RichMessageText
+                          text={v.tags}
+                          onMentionClick={onOpenProfileByUsername}
+                          onHashtagClick={onOpenHashtag}
+                        />
+                      </div>
+                    )}
 
                     <div className="flex items-center gap-2 text-xs text-white/80 pt-0.5">
                       <Music2 className="w-3.5 h-3.5 shrink-0" />
@@ -774,13 +933,61 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                     </div>
                   </div>
 
-                  {/* Minimal 2px Passive Progress Hairline (Zero Seek Bar Clutter!) */}
+                  {/* Interactive Tactile 2026 Video Scrubber (Expands cleanly on touch/drag with floating timestamp!) */}
                   {idx === activeIndex && (
-                    <div className="pointer-events-none absolute bottom-0 inset-x-0 h-[2px] bg-white/15 z-20">
+                    <div
+                      dir="ltr"
+                      onClick={e => e.stopPropagation()}
+                      onMouseEnter={() => setScrubHover(true)}
+                      onMouseLeave={() => {
+                        if (!isScrubbing) setScrubHover(false);
+                      }}
+                      onPointerDown={e => {
+                        e.stopPropagation();
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                        setIsScrubbing(true);
+                        scrubFromPointer(e.clientX);
+                      }}
+                      onPointerMove={e => {
+                        if (!isScrubbing) return;
+                        e.stopPropagation();
+                        scrubFromPointer(e.clientX);
+                      }}
+                      onPointerUp={e => {
+                        e.stopPropagation();
+                        setIsScrubbing(false);
+                        setScrubHover(false);
+                      }}
+                      onPointerCancel={e => {
+                        e.stopPropagation();
+                        setIsScrubbing(false);
+                        setScrubHover(false);
+                      }}
+                      className="absolute bottom-0 inset-x-0 z-30 h-7 flex items-end cursor-pointer touch-none select-none"
+                    >
+                      {isScrubbing && (
+                        <div className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/82 backdrop-blur-xl border border-white/15 text-[11px] font-mono-num text-white shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+                          <span className="font-bold text-white">{fmtSec(currentTime)}</span>
+                          <span className="text-white/40">/</span>
+                          <span className="text-white/75">{fmtSec(duration)}</span>
+                        </div>
+                      )}
+
                       <div
-                        style={{ width: `${progressPct}%` }}
-                        className="h-full bg-white/80 transition-[width] duration-150"
-                      />
+                        ref={scrubberBarRef}
+                        className={`relative w-full bg-white/20 transition-all duration-150 ${
+                          isScrubbing || scrubHover ? 'h-[6px]' : 'h-[2.5px]'
+                        }`}
+                      >
+                        <div
+                          style={{ width: `${progressPct}%` }}
+                          className="h-full bg-gradient-to-r from-[#FF2D55] via-[#FB7185] to-[#F59E0B] relative"
+                        >
+                          {(isScrubbing || scrubHover) && (
+                            <span className="absolute -end-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-[0_0_12px_rgba(255,45,85,0.85)] border border-black/30 block" />
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -993,6 +1200,7 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                           {c.isAi && <AiSummonBadge label="LM AI" compact />}
                           {!c.isAi && c.aiSummoned && <AiSummonBadge label="AI" compact />}
                           <span className="text-[#7A7A85]">{c.createdAt}</span>
+                          {c.isEdited && <span className="text-[10px] text-[#FBBF24]/80">(معدّل)</span>}
                         </div>
                         {c.audioUrl ? (
                           <div
@@ -1009,6 +1217,33 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                               compact
                             />
                           </div>
+                        ) : editingCommentId === c.id ? (
+                          <div className="mt-1.5 space-y-1.5">
+                            <textarea
+                              rows={2}
+                              value={editingCommentText}
+                              onChange={e => setEditingCommentText(e.target.value)}
+                              className="w-full rounded-xl bg-[#0A0A0C] border border-white/[0.15] p-2 text-xs text-white outline-none resize-none"
+                            />
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingCommentId(null)}
+                                className="px-2.5 py-1 rounded-full bg-white/[0.07] text-[10.5px] text-[#A1A1AA] hover:text-white cursor-pointer"
+                              >
+                                إلغاء
+                              </button>
+                              <button
+                                type="button"
+                                disabled={savingCommentEdit || !editingCommentText.trim()}
+                                onClick={() => saveEditedComment(c.id)}
+                                className="px-3 py-1 rounded-full bg-white text-black text-[10.5px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                              >
+                                <Check className="w-3 h-3" />
+                                <span>حفظ</span>
+                              </button>
+                            </div>
+                          </div>
                         ) : c.isAi ? (
                           <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
                             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
@@ -1017,25 +1252,53 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                           </div>
                         ) : (
                           <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
-                            <RichMessageText text={c.content} />
+                            <RichMessageText
+                              text={c.content}
+                              onMentionClick={handle => {
+                                setDrawerVideo(null);
+                                onOpenProfileByUsername?.(handle);
+                              }}
+                              onHashtagClick={tag => {
+                                setDrawerVideo(null);
+                                onOpenHashtag?.(tag);
+                              }}
+                            />
                           </div>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setReplyTo({
-                              id: c.id,
-                              name: c.displayName,
-                              snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
-                              isAi: Boolean(c.isAi),
-                            });
-                            if (c.isAi) setAiMode(true);
-                          }}
-                          className="mt-1.5 text-[11px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
-                        >
-                          <CornerDownLeft className="w-3 h-3" />
-                          <span>{c.isAi ? 'الرد على AI' : 'رد'}</span>
-                        </button>
+                        <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReplyTo({
+                                id: c.id,
+                                name: c.displayName,
+                                snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
+                                isAi: Boolean(c.isAi),
+                              });
+                              if (c.isAi) setAiMode(true);
+                            }}
+                            className="text-[11px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
+                          >
+                            <CornerDownLeft className="w-3 h-3" />
+                            <span>{c.isAi ? 'الرد على AI' : 'رد'}</span>
+                          </button>
+                          {c.userId === user.id && !c.audioUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCommentId(c.id);
+                                setEditingCommentText(c.content);
+                              }}
+                              className="text-[11px] text-[#7A7A85] hover:text-[#FBBF24] flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <StylusEditIcon className="w-3 h-3" />
+                              <span>تعديل</span>
+                            </button>
+                          )}
+                          {c.userId === user.id && (
+                            <QuickRemovePill onRemove={() => deleteComment(c.id)} />
+                          )}
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -1084,6 +1347,7 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                                 {rep.isAi && <AiSummonBadge label="LM AI" compact />}
                                 {!rep.isAi && rep.aiSummoned && <AiSummonBadge label="AI" compact />}
                                 <span className="text-[#7A7A85]">{rep.createdAt}</span>
+                                {rep.isEdited && <span className="text-[10px] text-[#FBBF24]/80">(معدّل)</span>}
                               </div>
                               {rep.audioUrl ? (
                                 <div
@@ -1100,6 +1364,33 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                                     compact
                                   />
                                 </div>
+                              ) : editingCommentId === rep.id ? (
+                                <div className="mt-1 space-y-1.5">
+                                  <textarea
+                                    rows={2}
+                                    value={editingCommentText}
+                                    onChange={e => setEditingCommentText(e.target.value)}
+                                    className="w-full rounded-xl bg-[#0A0A0C] border border-white/[0.15] p-2 text-xs text-white outline-none resize-none"
+                                  />
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingCommentId(null)}
+                                      className="px-2.5 py-1 rounded-full bg-white/[0.07] text-[10.5px] text-[#A1A1AA] hover:text-white cursor-pointer"
+                                    >
+                                      إلغاء
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={savingCommentEdit || !editingCommentText.trim()}
+                                      onClick={() => saveEditedComment(rep.id)}
+                                      className="px-3 py-1 rounded-full bg-white text-black text-[10.5px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                      <span>حفظ</span>
+                                    </button>
+                                  </div>
+                                </div>
                               ) : rep.isAi ? (
                                 <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
                                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
@@ -1108,25 +1399,53 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
                                 </div>
                               ) : (
                                 <div className="text-[13px] text-[#D4D4D8] mt-0.5">
-                                  <RichMessageText text={rep.content} />
+                                  <RichMessageText
+                                    text={rep.content}
+                                    onMentionClick={handle => {
+                                      setDrawerVideo(null);
+                                      onOpenProfileByUsername?.(handle);
+                                    }}
+                                    onHashtagClick={tag => {
+                                      setDrawerVideo(null);
+                                      onOpenHashtag?.(tag);
+                                    }}
+                                  />
                                 </div>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setReplyTo({
-                                    id: rep.id,
-                                    name: rep.displayName,
-                                    snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
-                                    isAi: Boolean(rep.isAi),
-                                  });
-                                  if (rep.isAi) setAiMode(true);
-                                }}
-                                className="mt-1 text-[10.5px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
-                              >
-                                <CornerDownLeft className="w-2.5 h-2.5" />
-                                <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
-                              </button>
+                              <div className="mt-1 flex items-center gap-3 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReplyTo({
+                                      id: rep.id,
+                                      name: rep.displayName,
+                                      snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
+                                      isAi: Boolean(rep.isAi),
+                                    });
+                                    if (rep.isAi) setAiMode(true);
+                                  }}
+                                  className="text-[10.5px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
+                                >
+                                  <CornerDownLeft className="w-2.5 h-2.5" />
+                                  <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
+                                </button>
+                                {rep.userId === user.id && !rep.audioUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingCommentId(rep.id);
+                                      setEditingCommentText(rep.content);
+                                    }}
+                                    className="text-[10.5px] text-[#7A7A85] hover:text-[#FBBF24] flex items-center gap-1 cursor-pointer transition-colors"
+                                  >
+                                    <StylusEditIcon className="w-2.5 h-2.5" />
+                                    <span>تعديل</span>
+                                  </button>
+                                )}
+                                {rep.userId === user.id && (
+                                  <QuickRemovePill onRemove={() => deleteComment(rep.id)} />
+                                )}
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -1225,39 +1544,90 @@ export function ShortVideosView({ user, lang, onOpenProfile }: ShortVideosViewPr
       )}
       </div>
 
-      {/* Upload Pulse Modal (Tap Outside to Close) */}
+      {/* Upload Pulse Modal with Automatic Thumbnail Generation Preview */}
       {uploadOpen && (
-        <div onClick={() => setUploadOpen(false)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+        <div onClick={() => setUploadOpen(false)} className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-center justify-center p-4">
           <form
             onClick={e => e.stopPropagation()}
             onSubmit={publishPulse}
-            className="w-full max-w-[400px] rounded-2xl bg-[#131318] border border-white/[0.12] p-5 space-y-3"
+            className="w-full max-w-[420px] rounded-[28px] bg-[#13131A]/98 border border-white/[0.13] p-5 space-y-3.5 text-start shadow-2xl"
           >
-            <div className="pb-2 border-b border-white/[0.08] text-center">
-              <span className="text-sm font-semibold text-white">نشر نبض جديد</span>
+            <div className="pb-2.5 border-b border-white/[0.08] flex items-center justify-between">
+              <span className="text-sm font-bold text-white">نشر نبض جديد</span>
+              <button
+                type="button"
+                onClick={() => setUploadOpen(false)}
+                className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
+
+            {/* Auto-Generated Thumbnail Preview Card */}
+            {(uploadedPosterUrl || uploadedVideoUrl) && (
+              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-[#0B0B0F] border border-white/[0.09]">
+                <div className="w-16 h-24 rounded-xl overflow-hidden bg-black border border-white/[0.1] shrink-0 relative">
+                  {uploadedPosterUrl ? (
+                    <img src={uploadedPosterUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <video src={uploadedVideoUrl || ''} muted className="w-full h-full object-cover" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#34D399]">
+                    <Check className="w-3.5 h-3.5" />
+                    <span>
+                      {generatingThumb
+                        ? 'جارٍ استخراج صورة الغلاف...'
+                        : uploadedPosterUrl
+                        ? 'تم توليد صورة الغلاف تلقائيًا'
+                        : 'تم إرفاق الفيديو'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#8E8E93] leading-snug">
+                    ستظهر صورة الغلاف تلقائيًا في ملفك الشخصي وخلاصة نبض.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => posterFileRef.current?.click()}
+                    className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[10.5px] text-white cursor-pointer transition-colors"
+                  >
+                    تغيير الغلاف يدويًا
+                  </button>
+                </div>
+              </div>
+            )}
+
             <input
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
-              placeholder="العنوان..."
-              className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
+              placeholder="عنوان الفيديو..."
+              className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
             />
             <input
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
-              placeholder="الوسوم..."
-              className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
+              placeholder="وصف قصير (اختياري)..."
+              className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
+            />
+            <input
+              value={newTags}
+              onChange={e => setNewTags(e.target.value)}
+              placeholder="الوسوم (مثال: #LM #إبداع)..."
+              className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
             />
             <input ref={fileRef} type="file" accept="video/*" onChange={handleVideoUploadFile} className="hidden" />
+            <input ref={posterFileRef} type="file" accept="image/*" onChange={handleManualPosterFile} className="hidden" />
             <div className="flex items-center justify-between pt-2">
               <button
                 type="button"
+                disabled={uploadingVideo}
                 onClick={() => fileRef.current?.click()}
-                className="px-3.5 py-2 rounded-full bg-white/[0.06] border border-white/[0.1] text-xs text-[#E4E4E7] cursor-pointer"
+                className="px-4 py-2 rounded-full bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.1] text-xs font-medium text-[#E4E4E7] cursor-pointer transition-colors disabled:opacity-50"
               >
-                {uploadedVideoUrl ? 'تم إرفاق الفيديو ✓' : 'اختيار فيديو'}
+                {uploadingVideo ? 'جارٍ الرفع وتوليد الغلاف...' : uploadedVideoUrl ? 'تغيير الفيديو ✓' : 'اختيار فيديو'}
               </button>
-              <ChromeArrowButton type="submit" disabled={!newTitle.trim()} size={38} />
+              <ChromeArrowButton type="submit" disabled={!newTitle.trim() || uploadingVideo} size={38} />
             </div>
           </form>
         </div>

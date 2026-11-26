@@ -52,6 +52,7 @@ export function App() {
     }
   });
   const [pendingChatConvId, setPendingChatConvId] = useState<string | null>(null);
+  const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
 
@@ -73,6 +74,35 @@ export function App() {
         // ignore
       }
       setActiveTab('profile');
+    },
+    [setActiveTab]
+  );
+
+  const openProfileByUsername = useCallback(
+    async (username: string) => {
+      const clean = username.replace(/^@/, '').trim().toLowerCase();
+      if (!clean) return;
+      const localMatch = users.find(u => u.username.toLowerCase() === clean);
+      if (localMatch) {
+        openProfile(localMatch.id);
+        return;
+      }
+      try {
+        const res = await apiGet<{ ok: boolean; user?: UserProfile }>(`/api/users/by-username/${encodeURIComponent(clean)}`);
+        if (res.user?.id) openProfile(res.user.id);
+      } catch {
+        // user handle does not exist
+      }
+    },
+    [users, openProfile]
+  );
+
+  const openHashtagFeed = useCallback(
+    (tag: string) => {
+      const clean = tag.replace(/^#/, '').trim();
+      if (!clean) return;
+      setActiveHashtag(clean);
+      setActiveTab('social');
     },
     [setActiveTab]
   );
@@ -275,13 +305,23 @@ export function App() {
         {activeTab === 'social' && (
           <SocialView
             user={currentUser}
+            allUsers={users}
             lang={lang}
             lastWsEvent={lastWsEvent}
+            activeHashtag={activeHashtag}
+            onSelectHashtag={setActiveHashtag}
             onOpenProfile={openProfile}
+            onOpenProfileByUsername={openProfileByUsername}
           />
         )}
         {activeTab === 'videos' && (
-          <ShortVideosView user={currentUser} lang={lang} onOpenProfile={openProfile} />
+          <ShortVideosView
+            user={currentUser}
+            lang={lang}
+            onOpenProfile={openProfile}
+            onOpenProfileByUsername={openProfileByUsername}
+            onOpenHashtag={openHashtagFeed}
+          />
         )}
         {activeTab === 'live' && (
           <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} onOpenProfile={openProfile} />
@@ -294,6 +334,8 @@ export function App() {
             openConvId={pendingChatConvId}
             onConsumedOpenConv={() => setPendingChatConvId(null)}
             onOpenProfile={openProfile}
+            onOpenProfileByUsername={openProfileByUsername}
+            onOpenHashtag={openHashtagFeed}
           />
         )}
         {activeTab === 'ai' && (
@@ -305,6 +347,8 @@ export function App() {
             currentUser={currentUser}
             lang={lang}
             onOpenProfile={openProfile}
+            onOpenProfileByUsername={openProfileByUsername}
+            onOpenHashtag={openHashtagFeed}
             onProfileUpdated={updated => {
               setCurrentUser(updated);
               loadUsers();

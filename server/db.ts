@@ -131,6 +131,13 @@ export function initDatabase() {
       PRIMARY KEY (post_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS post_saves (
+      post_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (post_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS post_reactions (
       post_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
@@ -195,6 +202,7 @@ export function initDatabase() {
       ai_summoned INTEGER DEFAULT 0,
       likes_count INTEGER DEFAULT 0,
       liked_by_json TEXT DEFAULT '[]',
+      is_edited INTEGER DEFAULT 0,
       created_at TEXT DEFAULT 'منذ دقيقتين'
     );
 
@@ -317,6 +325,13 @@ export function initDatabase() {
       created_at TEXT DEFAULT 'الآن'
     );
   `);
+
+  // Safe non-destructive migrations for V15 columns on existing databases
+  try {
+    db.exec('ALTER TABLE video_comments ADD COLUMN is_edited INTEGER DEFAULT 0;');
+  } catch {
+    // column already exists
+  }
 
   const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;
   if (userCount === 0) {

@@ -80,6 +80,7 @@ export interface SocialPost {
   commentsCount: number;
   sharesCount: number;
   likedByMe: boolean;
+  savedByMe?: boolean;
   isEdited?: boolean;
   createdAt: string;
 }

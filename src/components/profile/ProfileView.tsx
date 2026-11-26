@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  Bookmark,
   Check,
   Globe,
   MapPin,
@@ -30,6 +31,8 @@ interface ProfileViewProps {
   onProfileUpdated: (u: UserProfile) => void;
   onMessageUser: (targetUserId: string) => void;
   onOpenProfile: (uid: string) => void;
+  onOpenProfileByUsername?: (username: string) => void;
+  onOpenHashtag?: (tag: string) => void;
   onOpenVideos: () => void;
 }
 
@@ -46,13 +49,17 @@ export function ProfileView({
   onProfileUpdated,
   onMessageUser,
   onOpenProfile,
+  onOpenProfileByUsername,
+  onOpenHashtag,
   onOpenVideos,
 }: ProfileViewProps) {
   const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
+  const [savedPosts, setSavedPosts] = useState<SocialPost[]>([]);
   const [savedVideos, setSavedVideos] = useState<ShortVideoItem[]>([]);
+  const [savedFilter, setSavedFilter] = useState<'all' | 'posts' | 'videos'>('all');
   const [followersList, setFollowersList] = useState<UserProfile[]>([]);
   const [followingList, setFollowingList] = useState<UserProfile[]>([]);
   const [tab, setTab] = useState<'posts' | 'videos' | 'saved'>('posts');
@@ -96,6 +103,7 @@ export function ProfileView({
         isFollowing: boolean;
         posts: SocialPost[];
         videos: ShortVideoItem[];
+        savedPosts?: SocialPost[];
         savedVideos?: ShortVideoItem[];
         followersList?: UserProfile[];
         followingList?: UserProfile[];
@@ -104,6 +112,7 @@ export function ProfileView({
       setIsFollowing(res.isFollowing);
       setPosts(res.posts);
       setVideos(res.videos);
+      setSavedPosts(res.savedPosts || []);
       setSavedVideos(res.savedVideos || []);
       setFollowersList(res.followersList || []);
       setFollowingList(res.followingList || []);
@@ -206,6 +215,11 @@ export function ProfileView({
   async function deletePost(postId: string) {
     await api(`/api/posts/${postId}?userId=${currentUser.id}`, { method: 'DELETE' });
     setPosts(prev => prev.filter(p => p.id !== postId));
+  }
+
+  async function unsavePost(postId: string) {
+    await apiPost(`/api/posts/${postId}/save`, { userId: currentUser.id });
+    setSavedPosts(prev => prev.filter(p => p.id !== postId));
   }
 
   function openVideoEditor(v: ShortVideoItem) {
@@ -479,7 +493,11 @@ export function ProfileView({
                   : 'bg-[#121217] border border-white/[0.08] text-[#8E8E93] hover:text-white'
               }`}
             >
-              <span>{lang === 'ar' ? `المحفوظات (${savedVideos.length})` : `Saved (${savedVideos.length})`}</span>
+              <span>
+                {lang === 'ar'
+                  ? `المحفوظات (${savedPosts.length + savedVideos.length})`
+                  : `Saved (${savedPosts.length + savedVideos.length})`}
+              </span>
             </button>
           )}
         </div>
@@ -540,7 +558,11 @@ export function ProfileView({
                     </div>
                   ) : (
                     <div className="text-[14.5px] text-[#F2F2F5] leading-relaxed">
-                      <RichMessageText text={post.content} />
+                      <RichMessageText
+                        text={post.content}
+                        onMentionClick={onOpenProfileByUsername}
+                        onHashtagClick={onOpenHashtag}
+                      />
                     </div>
                   )}
 
@@ -562,14 +584,12 @@ export function ProfileView({
               ))
             )}
           </div>
-        ) : (
+        ) : tab === 'videos' ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            {(tab === 'videos' ? videos : savedVideos).length === 0 ? (
-              <div className="col-span-full py-16 text-center text-xs text-[#7A7A85]">
-                {tab === 'videos' ? 'لا توجد فيديوهات نبض بعد' : 'لم تحفظ أي فيديوهات بعد'}
-              </div>
+            {videos.length === 0 ? (
+              <div className="col-span-full py-16 text-center text-xs text-[#7A7A85]">لا توجد فيديوهات نبض بعد</div>
             ) : (
-              (tab === 'videos' ? videos : savedVideos).map(v => (
+              videos.map(v => (
                 <div
                   key={v.id}
                   onClick={onOpenVideos}
@@ -586,7 +606,7 @@ export function ProfileView({
                   )}
 
                   {/* Edit / Remove Floating Orb on Own Pulse Videos */}
-                  {isMe && tab === 'videos' && (
+                  {isMe && (
                     <div className="absolute top-2 end-2 z-20">
                       <ActionMenuOrb
                         compact
@@ -607,6 +627,129 @@ export function ProfileView({
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-5">
+            {/* Sub-Filter Chips inside Saved */}
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'all' as const, label: `الكل (${savedPosts.length + savedVideos.length})` },
+                { id: 'posts' as const, label: `المنشورات (${savedPosts.length})` },
+                { id: 'videos' as const, label: `نبض (${savedVideos.length})` },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setSavedFilter(f.id)}
+                  className={`px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-colors ${
+                    savedFilter === f.id
+                      ? 'bg-[#34D399]/18 border border-[#34D399]/40 text-[#6EE7B7]'
+                      : 'bg-white/[0.04] border border-white/[0.08] text-[#8E8E93] hover:text-white'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {savedPosts.length === 0 && savedVideos.length === 0 ? (
+              <div className="py-16 text-center text-xs text-[#7A7A85]">لم تحفظ أي منشورات أو فيديوهات بعد</div>
+            ) : (
+              <>
+                {(savedFilter === 'all' || savedFilter === 'posts') && savedPosts.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-semibold text-[#A1A1AA]">المنشورات المحفوظة</div>
+                    <div className="divide-y divide-white/[0.07] rounded-2xl bg-[#111116] border border-white/[0.08] px-4">
+                      {savedPosts.map(post => (
+                        <article key={post.id} className="py-4 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onOpenProfile(post.userId)}
+                              className="flex items-center gap-2 text-start cursor-pointer group"
+                            >
+                              <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={30} />
+                              <div>
+                                <div className="text-xs font-semibold text-white group-hover:underline flex items-center gap-1">
+                                  <span>{post.displayName}</span>
+                                  {post.verified && <VerifiedIcon />}
+                                </div>
+                                <div className="text-[10.5px] text-[#7A7A85]">@{post.username} · {post.createdAt}</div>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => unsavePost(post.id)}
+                              title="إزالة من المحفوظات"
+                              className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#FACC15] flex items-center justify-center cursor-pointer transition-colors"
+                            >
+                              <Bookmark className="w-4 h-4 fill-current" />
+                            </button>
+                          </div>
+
+                          {post.content && (
+                            <div className="text-[14px] text-[#F2F2F5] leading-relaxed">
+                              <RichMessageText
+                                text={post.content}
+                                onMentionClick={onOpenProfileByUsername}
+                                onHashtagClick={onOpenHashtag}
+                              />
+                            </div>
+                          )}
+
+                          {post.mediaUrls.length > 0 && (
+                            <div className={`grid gap-1.5 ${post.mediaUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                              {post.mediaUrls.map((url, idx) => (
+                                <img
+                                  key={idx}
+                                  src={url}
+                                  alt=""
+                                  className={`w-full rounded-2xl object-cover border border-white/[0.08] ${
+                                    post.mediaUrls.length === 1 ? 'max-h-[340px]' : 'h-[170px]'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(savedFilter === 'all' || savedFilter === 'videos') && savedVideos.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-semibold text-[#A1A1AA]">فيديوهات نبض المحفوظة</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                      {savedVideos.map(v => (
+                        <div
+                          key={v.id}
+                          onClick={onOpenVideos}
+                          className="group relative aspect-[9/14] rounded-2xl overflow-hidden bg-[#121217] border border-white/[0.09] text-start cursor-pointer"
+                        >
+                          {v.posterUrl ? (
+                            <img
+                              src={v.posterUrl}
+                              alt=""
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
+                          ) : (
+                            <video src={v.videoUrl || ''} muted className="w-full h-full object-cover" />
+                          )}
+                          <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/90 via-black/45 to-transparent space-y-1">
+                            <p className="text-[11.5px] text-white line-clamp-2 leading-snug">{v.title}</p>
+                            <div className="flex items-center gap-1 text-[10.5px] font-mono-num text-white/80">
+                              <Play className="w-3 h-3 fill-current text-[#FF2D55]" />
+                              <span>{compactNum(v.viewsCount)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

@@ -38,9 +38,17 @@ import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface SocialViewProps {
   user: UserProfile;
+  allUsers?: UserProfile[];
   lang: Lang;
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
+  activeHashtag?: string | null;
+  onSelectHashtag?: (tag: string | null) => void;
   onOpenProfile?: (userId: string) => void;
+  onOpenProfileByUsername?: (username: string) => void;
+}
+
+function isVideoMediaUrl(url: string): boolean {
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
 }
 
 function formatCount(n: number): string {
@@ -49,12 +57,29 @@ function formatCount(n: number): string {
   return String(n);
 }
 
-export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialViewProps) {
+export function SocialView({
+  user,
+  allUsers = [],
+  lang,
+  lastWsEvent,
+  activeHashtag = null,
+  onSelectHashtag,
+  onOpenProfile,
+  onOpenProfileByUsername,
+}: SocialViewProps) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingPostText, setEditingPostText] = useState('');
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [activeStory, setActiveStory] = useState<StoryItem | null>(null);
+
+  // Story Studio Upload Modal State
+  const [storyStudioOpen, setStoryStudioOpen] = useState(false);
+  const [storyMediaUrl, setStoryMediaUrl] = useState<string | null>(null);
+  const [storyCaption, setStoryCaption] = useState('');
+  const [uploadingStory, setUploadingStory] = useState(false);
+  const [publishingStory, setPublishingStory] = useState(false);
+  const storyFileRef = useRef<HTMLInputElement | null>(null);
 
   // Full-Screen Interactive Lightbox State
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; caption: string; author: string } | null>(null);
@@ -92,8 +117,21 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
   const [recordingPostId, setRecordingPostId] = useState<string | null>(null);
   const [submittingCommentPost, setSubmittingCommentPost] = useState<string | null>(null);
   const [aiTypingPostId, setAiTypingPostId] = useState<string | null>(null);
-  const [savedPosts, setSavedPosts] = useState<Record<string, boolean>>({});
   const [doubleTapPostId, setDoubleTapPostId] = useState<string | null>(null);
+
+  // Live @mention autocomplete query in Post Composer
+  const mentionMatch = draft.match(/(?:^|\s)@([A-Za-z0-9_\u0600-\u06FF]*)$/);
+  const mentionSuggestions = React.useMemo(() => {
+    if (!mentionMatch) return [];
+    const q = mentionMatch[1].toLowerCase();
+    return allUsers
+      .filter(u => !q || u.username.toLowerCase().includes(q) || u.displayName.toLowerCase().includes(q))
+      .slice(0, 5);
+  }, [mentionMatch, allUsers]);
+
+  function insertMentionHandle(username: string) {
+    setDraft(prev => prev.replace(/(^|\s)@[A-Za-z0-9_\u0600-\u06FF]*$/, `$1@${username} `));
+  }
 
   const setReplyDraftForPost = useCallback((postId: string, val: string) => {
     setReplyDraftsState(prev => {
@@ -108,20 +146,21 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
   }, []);
 
   const loadFeed = useCallback(async () => {
+    const tagQs = activeHashtag ? `&tag=${encodeURIComponent(activeHashtag)}` : '';
     const [pRes, sRes] = await Promise.all([
-      apiGet<{ ok: boolean; posts: SocialPost[] }>(`/api/posts?userId=${user.id}`),
+      apiGet<{ ok: boolean; posts: SocialPost[] }>(`/api/posts?userId=${user.id}${tagQs}`),
       apiGet<{ ok: boolean; stories: StoryItem[] }>('/api/stories'),
     ]);
     setPosts(pRes.posts);
     setStories(sRes.stories);
-  }, [user.id]);
+  }, [user.id, activeHashtag]);
 
   useEffect(() => {
     loadFeed();
   }, [loadFeed]);
 
   useEffect(() => {
-    if (lastWsEvent?.event === 'social:new_post') loadFeed();
+    if (lastWsEvent?.event === 'social:new_post' || lastWsEvent?.event === 'story:new') loadFeed();
   }, [lastWsEvent, loadFeed]);
 
   useEffect(() => {
@@ -130,12 +169,61 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
         setLightbox(null);
         setLightboxZoomed(false);
         setActiveStory(null);
+        setStoryStudioOpen(false);
         setComposerExpanded(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  async function handleStoryFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploadingStory(true);
+    try {
+      const up = await apiUploadFile(f);
+      setStoryMediaUrl(up.url);
+    } finally {
+      setUploadingStory(false);
+      e.target.value = '';
+    }
+  }
+
+  async function publishStory(e: React.FormEvent) {
+    e.preventDefault();
+    if (!storyMediaUrl || publishingStory) return;
+    setPublishingStory(true);
+    try {
+      await apiPost('/api/stories', {
+        userId: user.id,
+        mediaUrl: storyMediaUrl,
+        caption: storyCaption.trim(),
+      });
+      setStoryStudioOpen(false);
+      setStoryMediaUrl(null);
+      setStoryCaption('');
+      loadFeed();
+    } finally {
+      setPublishingStory(false);
+    }
+  }
+
+  async function deleteStory(storyId: string) {
+    await api(`/api/stories/${storyId}?userId=${user.id}`, { method: 'DELETE' });
+    setActiveStory(null);
+    setStories(prev => prev.filter(s => s.id !== storyId));
+  }
+
+  async function toggleSavePost(postId: string) {
+    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, savedByMe: !p.savedByMe } : p)));
+    try {
+      const res = await apiPost<{ ok: boolean; saved: boolean }>(`/api/posts/${postId}/save`, { userId: user.id });
+      setPosts(prev => prev.map(p => (p.id === postId ? { ...p, savedByMe: res.saved } : p)));
+    } catch {
+      loadFeed();
+    }
+  }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
@@ -419,29 +507,73 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
     >
       {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop!) */}
       <div className="max-w-[620px] mx-auto min-h-screen px-2 sm:px-0">
-        {/* Stories Strip */}
-        {stories.length > 0 && (
-          <div className="px-4 py-4 border-b border-white/[0.07] flex items-center gap-4 overflow-x-auto no-scrollbar">
-            {stories.map(st => (
-              <button
-                key={st.id}
-                type="button"
-                onClick={() => setActiveStory(st)}
-                className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
-              >
-                <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] group-hover:scale-[1.04] transition-transform">
-                  <div className="p-[2px] rounded-full bg-[#0A0A0C]">
-                    <UserAvatar initials={st.avatarInitials} avatarUrl={st.avatarUrl} size={50} />
-                  </div>
+        {/* Stories Strip with Direct Upload Story Tile */}
+        <div className="px-4 py-4 border-b border-white/[0.07] flex items-center gap-4 overflow-x-auto no-scrollbar">
+          {/* Add Story Tile */}
+          <button
+            type="button"
+            onClick={() => {
+              setStoryMediaUrl(null);
+              setStoryCaption('');
+              setStoryStudioOpen(true);
+            }}
+            className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
+          >
+            <div className="relative p-[2px] rounded-full border border-dashed border-[#F59E0B]/60 group-hover:border-[#FB7185] transition-colors">
+              <div className="p-[2px] rounded-full bg-[#0A0A0C]">
+                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={50} />
+              </div>
+              <span className="absolute -bottom-0.5 -end-0.5 w-5 h-5 rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] text-white border-2 border-[#0A0A0C] flex items-center justify-center shadow-md group-hover:scale-110 transition-transform">
+                <Plus className="w-3 h-3" strokeWidth={2.8} />
+              </span>
+            </div>
+            <span className="text-[11px] font-medium text-[#FBBF24] max-w-[64px] truncate">
+              {lang === 'ar' ? 'قصتك' : 'Your Story'}
+            </span>
+          </button>
+
+          {stories.map(st => (
+            <button
+              key={st.id}
+              type="button"
+              onClick={() => setActiveStory(st)}
+              className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
+            >
+              <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] group-hover:scale-[1.04] transition-transform">
+                <div className="p-[2px] rounded-full bg-[#0A0A0C]">
+                  <UserAvatar initials={st.avatarInitials} avatarUrl={st.avatarUrl} size={50} />
                 </div>
-                <span className="text-[11px] text-[#C4C4CC] group-hover:text-white max-w-[64px] truncate transition-colors">{st.displayName.split(' ')[0]}</span>
-              </button>
-            ))}
+              </div>
+              <span className="text-[11px] text-[#C4C4CC] group-hover:text-white max-w-[64px] truncate transition-colors">
+                {st.displayName.split(' ')[0]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Active Hashtag Filter Banner (Appears when user clicks ANY #hashtag!) */}
+        {activeHashtag && (
+          <div className="px-4 py-2.5 border-b border-white/[0.07] bg-gradient-to-l from-[#FB7185]/10 to-transparent flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-full bg-[#FB7185]/18 border border-[#FB7185]/35 text-[#FDA4AF] font-semibold">
+                #{activeHashtag}
+              </span>
+              <span className="text-[#A1A1AA] font-mono-num">{posts.length} منشور</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelectHashtag?.(null)}
+              className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[11px] text-[#E4E4E7] flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <X className="w-3 h-3" />
+              <span>عرض الكل</span>
+            </button>
           </div>
         )}
 
         {/* Hidden Multi-Image File Input (Up to 4 Photos!) */}
         <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" />
+        <input ref={storyFileRef} type="file" accept="image/*,video/*" onChange={handleStoryFile} className="hidden" />
 
         {/* Inline Post Composer with Expand-to-Full-Page Trigger */}
         <form onSubmit={submitPost} className="px-4 py-4 border-b border-white/[0.07] flex gap-3 relative">
@@ -478,6 +610,29 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                 </button>
               )}
             </div>
+
+            {/* Live @mention Autocomplete Popover */}
+            {mentionSuggestions.length > 0 && (
+              <div className="mt-2 rounded-2xl bg-[#14141B]/98 backdrop-blur-2xl border border-white/[0.13] p-1.5 shadow-2xl space-y-0.5">
+                {mentionSuggestions.map(u => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => insertMentionHandle(u.username)}
+                    className="w-full px-2.5 py-1.5 rounded-xl hover:bg-white/[0.07] flex items-center gap-2.5 text-start cursor-pointer transition-colors"
+                  >
+                    <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={26} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                        <span>{u.displayName}</span>
+                        {u.verified && <VerifiedIcon />}
+                      </div>
+                      <div className="text-[10.5px] text-[#FBBF24] font-mono-num">@{u.username}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Inline Preview of Up to 4 Selected Photos */}
             {uploadedMediaUrls.length > 0 && (
@@ -668,7 +823,11 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                           onDoubleClick={() => handlePostReact(post.id, 'love', true)}
                           className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
                         >
-                          <RichMessageText text={post.content} />
+                          <RichMessageText
+                            text={post.content}
+                            onMentionClick={onOpenProfileByUsername}
+                            onHashtagClick={tag => onSelectHashtag?.(tag)}
+                          />
                         </div>
                       )
                     )}
@@ -774,13 +933,13 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setSavedPosts(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
-                          title="حفظ"
+                          onClick={() => toggleSavePost(post.id)}
+                          title={post.savedByMe ? 'إزالة من المحفوظات' : 'حفظ المنشور'}
                           className={`w-7 h-7 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
-                            savedPosts[post.id] ? 'text-[#FACC15]' : 'hover:text-white'
+                            post.savedByMe ? 'text-[#FACC15]' : 'hover:text-white'
                           }`}
                         >
-                          <Bookmark className={`w-4 h-4 ${savedPosts[post.id] ? 'fill-current' : ''}`} strokeWidth={1.75} />
+                          <Bookmark className={`w-4 h-4 ${post.savedByMe ? 'fill-current' : ''}`} strokeWidth={1.75} />
                         </button>
                         <button
                           type="button"
@@ -851,11 +1010,19 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                                         compact
                                       />
                                     </div>
-                                  ) : (
+                                  ) : c.isAi ? (
                                     <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
                                       <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
                                         {c.content}
                                       </ReactMarkdown>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
+                                      <RichMessageText
+                                        text={c.content}
+                                        onMentionClick={onOpenProfileByUsername}
+                                        onHashtagClick={tag => onSelectHashtag?.(tag)}
+                                      />
                                     </div>
                                   )}
 
@@ -937,11 +1104,19 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                                               compact
                                             />
                                           </div>
-                                        ) : (
+                                        ) : rep.isAi ? (
                                           <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
                                             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
                                               {rep.content}
                                             </ReactMarkdown>
+                                          </div>
+                                        ) : (
+                                          <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
+                                            <RichMessageText
+                                              text={rep.content}
+                                              onMentionClick={onOpenProfileByUsername}
+                                              onHashtagClick={tag => onSelectHashtag?.(tag)}
+                                            />
                                           </div>
                                         )}
 
@@ -1310,15 +1485,19 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
         </div>
       )}
 
-      {/* Story Viewer */}
+      {/* Story Viewer (Supports Image & Video Stories + Own Story Removal) */}
       {activeStory && (
         <div onClick={() => setActiveStory(null)} className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
           <div
             onClick={e => e.stopPropagation()}
             className="relative w-full max-w-[400px] h-[82vh] rounded-3xl overflow-hidden border border-white/[0.12] bg-black"
           >
-            <img src={activeStory.mediaUrl} alt="" className="w-full h-full object-cover" />
-            <div className="absolute inset-x-0 top-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between">
+            {isVideoMediaUrl(activeStory.mediaUrl) ? (
+              <video src={activeStory.mediaUrl} autoPlay loop playsInline className="w-full h-full object-cover" />
+            ) : (
+              <img src={activeStory.mediaUrl} alt="" className="w-full h-full object-cover" />
+            )}
+            <div className="absolute inset-x-0 top-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -1329,22 +1508,132 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                 className="flex items-center gap-2.5 cursor-pointer group"
               >
                 <UserAvatar initials={activeStory.avatarInitials} avatarUrl={activeStory.avatarUrl} size={34} />
-                <span className="text-xs font-semibold text-white group-hover:underline">{activeStory.displayName}</span>
+                <div className="text-start">
+                  <div className="text-xs font-semibold text-white group-hover:underline">{activeStory.displayName}</div>
+                  <div className="text-[10px] text-white/65">{activeStory.createdAt}</div>
+                </div>
               </button>
+              <div className="flex items-center gap-2">
+                {activeStory.userId === user.id && (
+                  <div className="px-2.5 py-1 rounded-full bg-black/65 border border-white/15">
+                    <QuickRemovePill onRemove={() => deleteStory(activeStory.id)} />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveStory(null)}
+                  className="w-8 h-8 rounded-full bg-black/55 border border-white/15 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            {activeStory.caption && (
+              <div className="absolute inset-x-0 bottom-0 p-5 bg-gradient-to-t from-black/90 to-transparent text-sm text-white">
+                <RichMessageText
+                  text={activeStory.caption}
+                  onMentionClick={handle => {
+                    setActiveStory(null);
+                    onOpenProfileByUsername?.(handle);
+                  }}
+                  onHashtagClick={tag => {
+                    setActiveStory(null);
+                    onSelectHashtag?.(tag);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Story Studio Upload Modal */}
+      {storyStudioOpen && (
+        <div
+          onClick={() => setStoryStudioOpen(false)}
+          className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-center justify-center p-4"
+        >
+          <form
+            onClick={e => e.stopPropagation()}
+            onSubmit={publishStory}
+            className="w-full max-w-[400px] rounded-[28px] bg-[#13131A]/98 border border-white/[0.13] overflow-hidden shadow-2xl text-start"
+          >
+            <div className="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
+              <span className="text-sm font-bold text-white">إنشاء قصة جديدة</span>
               <button
                 type="button"
-                onClick={() => setActiveStory(null)}
-                className="w-8 h-8 rounded-full bg-black/55 border border-white/15 text-white flex items-center justify-center cursor-pointer"
+                onClick={() => setStoryStudioOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            {activeStory.caption && (
-              <div className="absolute inset-x-0 bottom-0 p-5 bg-gradient-to-t from-black/90 to-transparent text-sm text-white">
-                {activeStory.caption}
+
+            <div className="p-4 space-y-3.5">
+              {storyMediaUrl ? (
+                <div className="relative aspect-[9/13] max-h-[52vh] mx-auto rounded-2xl overflow-hidden border border-white/[0.12] bg-black">
+                  {isVideoMediaUrl(storyMediaUrl) ? (
+                    <video src={storyMediaUrl} autoPlay loop muted playsInline className="w-full h-full object-cover" />
+                  ) : (
+                    <img src={storyMediaUrl} alt="" className="w-full h-full object-cover" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => storyFileRef.current?.click()}
+                    className="absolute top-3 end-3 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-[11px] font-medium text-white hover:bg-white hover:text-black transition-colors cursor-pointer"
+                  >
+                    تغيير
+                  </button>
+                  {storyCaption && (
+                    <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/85 to-transparent text-xs text-white">
+                      {storyCaption}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={uploadingStory}
+                  onClick={() => storyFileRef.current?.click()}
+                  className="w-full aspect-[9/11] max-h-[44vh] rounded-2xl border border-dashed border-white/[0.18] hover:border-[#FB7185]/60 bg-[#0B0B0F] flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors group"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#F59E0B]/20 via-[#FB7185]/20 to-[#FF2D55]/20 border border-[#FB7185]/35 flex items-center justify-center text-[#FB7185] group-hover:scale-105 transition-transform">
+                    <ImageIcon className="w-6 h-6" />
+                  </div>
+                  <div className="text-center space-y-1">
+                    <div className="text-xs font-semibold text-white">
+                      {uploadingStory ? 'جارٍ الرفع...' : 'اختر صورة أو فيديو قصير لقصتك'}
+                    </div>
+                    <div className="text-[11px] text-[#7A7A85]">JPG · PNG · MP4 · WEBM</div>
+                  </div>
+                </button>
+              )}
+
+              <input
+                value={storyCaption}
+                onChange={e => setStoryCaption(e.target.value)}
+                placeholder="أضف تعليقًا أو #هاشتاج أو @منشن (اختياري)..."
+                className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FB7185]/50 px-3.5 text-xs text-white placeholder:text-[#63636C] outline-none transition-colors"
+              />
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setStoryStudioOpen(false)}
+                  className="px-4 py-2 rounded-full bg-white/[0.07] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={!storyMediaUrl || publishingStory}
+                  className="px-5 py-2 rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] text-white text-xs font-bold disabled:opacity-35 cursor-pointer shadow-lg"
+                >
+                  {publishingStory ? 'جارٍ النشر...' : 'نشر القصة'}
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+          </form>
         </div>
       )}
     </div>

@@ -35,6 +35,8 @@ interface ChatViewProps {
   openConvId?: string | null;
   onConsumedOpenConv?: () => void;
   onOpenProfile?: (userId: string) => void;
+  onOpenProfileByUsername?: (username: string) => void;
+  onOpenHashtag?: (tag: string) => void;
 }
 
 const WORLD_LANGUAGES = [
@@ -63,7 +65,16 @@ function isMostlyLatin(text: string): boolean {
   return latin / letters.length > 0.65;
 }
 
-export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenConv, onOpenProfile }: ChatViewProps) {
+export function ChatView({
+  user,
+  lang,
+  lastWsEvent,
+  openConvId,
+  onConsumedOpenConv,
+  onOpenProfile,
+  onOpenProfileByUsername,
+  onOpenHashtag,
+}: ChatViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded, setChatInThread, setBottomDockHidden } = useLayout();
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [activeConvId, setActiveConvIdState] = useState<string>(() => {
@@ -1031,7 +1042,11 @@ export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenCo
                                 </ReactMarkdown>
                               </div>
                             ) : (
-                              <RichMessageText text={translated ? translated.text : msg.content} />
+                              <RichMessageText
+                                text={translated ? translated.text : msg.content}
+                                onMentionClick={onOpenProfileByUsername}
+                                onHashtagClick={onOpenHashtag}
+                              />
                             )}
                             {translated && (
                               <div className="mt-1 flex items-center gap-1 text-[10px] text-[#8E8E93]">

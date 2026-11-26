@@ -377,6 +377,14 @@ app.post('/api/auth/register', (req, res) => {
   res.json({ ok: true, user: getUserOrNull(id) });
 });
 
+app.get('/api/users/by-username/:username', (req, res) => {
+  const handle = String(req.params.username || '').replace(/^@/, '').trim().toLowerCase();
+  if (!handle) return res.status(400).json({ ok: false, error: 'اسم المستخدم مطلوب.' });
+  const row = db.prepare('SELECT * FROM users WHERE LOWER(username) = ?').get(handle) as Record<string, unknown> | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+  res.json({ ok: true, user: mapUserRow(row) });
+});
+
 app.get('/api/users/:id', (req, res) => {
   const user = getUserOrNull(req.params.id);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
@@ -499,6 +507,47 @@ app.get('/api/users/:id/profile', (req, res) => {
     createdAt: r.created_at,
   }));
 
+  const savedPostRows = db.prepare(`
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM post_saves ps
+    JOIN posts p ON ps.post_id = p.id
+    JOIN users u ON p.user_id = u.id
+    WHERE ps.user_id = ? ORDER BY ps.rowid DESC
+  `).all(targetId) as Array<Record<string, unknown>>;
+
+  const savedPosts = savedPostRows.map(r => {
+    let mediaUrls: string[] = [];
+    try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
+    if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    return {
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      verified: Boolean(r.verified),
+      topic: r.topic || 'عام',
+      content: r.content,
+      mediaUrl: r.media_url,
+      mediaUrls,
+      location: r.location || 'القاهرة',
+      poll: null,
+      score: Number(r.score ?? r.likes_count ?? 0),
+      myVote: 0,
+      reactions: {},
+      myReaction: null,
+      likesCount: Number(r.likes_count || 0),
+      commentsCount: Number(r.comments_count || 0),
+      sharesCount: Number(r.shares_count || 0),
+      likedByMe: false,
+      savedByMe: true,
+      isEdited: Boolean(r.is_edited),
+      createdAt: r.created_at,
+    };
+  });
+
   const followersList = (db.prepare(`
     SELECT u.* FROM user_follows f JOIN users u ON f.follower_id = u.id
     WHERE f.following_id = ? LIMIT 40
@@ -509,7 +558,7 @@ app.get('/api/users/:id/profile', (req, res) => {
     WHERE f.follower_id = ? LIMIT 40
   `).all(targetId) as Array<Record<string, unknown>>).map(mapUserRow);
 
-  res.json({ ok: true, user, isFollowing, posts, videos, savedVideos, followersList, followingList });
+  res.json({ ok: true, user, isFollowing, posts, videos, savedPosts, savedVideos, followersList, followingList });
 });
 
 app.patch('/api/users/:id', (req, res) => {
@@ -688,18 +737,56 @@ app.get('/api/stories', (_req, res) => {
   });
 });
 
+app.post('/api/stories', (req, res) => {
+  const { userId, mediaUrl, caption } = req.body as {
+    userId?: string;
+    mediaUrl?: string;
+    caption?: string;
+  };
+  if (!userId || !mediaUrl) return res.status(400).json({ ok: false, error: 'الوسائط مطلوبة لنشر القصة.' });
+  const id = `st_${uuid().slice(0, 8)}`;
+  db.prepare(`
+    INSERT INTO stories (id, user_id, media_url, caption, created_at)
+    VALUES (?, ?, ?, ?, 'الآن')
+  `).run(id, userId, mediaUrl, (caption || '').trim());
+  broadcast('story:new', { id, userId });
+  res.json({ ok: true, id });
+});
+
+app.delete('/api/stories/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const row = db.prepare('SELECT user_id FROM stories WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'القصة غير موجودة.' });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'يمكنك إزالة قصصك فقط.' });
+  db.prepare('DELETE FROM stories WHERE id = ?').run(req.params.id);
+  broadcast('story:new', { id: req.params.id, deleted: true });
+  res.json({ ok: true });
+});
+
 app.get('/api/posts', (req, res) => {
   const viewerId = String(req.query.userId || '');
-  const rows = db.prepare(`
-    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
-    FROM posts p
-    JOIN users u ON p.user_id = u.id
-    ORDER BY p.rowid DESC
-  `).all() as Array<Record<string, unknown>>;
+  const rawTag = String(req.query.tag || '').trim().replace(/^#/, '');
+  const rows = (
+    rawTag
+      ? db.prepare(`
+          SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+          FROM posts p
+          JOIN users u ON p.user_id = u.id
+          WHERE LOWER(p.content) LIKE ?
+          ORDER BY p.rowid DESC
+        `).all(`%#${rawTag.toLowerCase()}%`)
+      : db.prepare(`
+          SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+          FROM posts p
+          JOIN users u ON p.user_id = u.id
+          ORDER BY p.rowid DESC
+        `).all()
+  ) as Array<Record<string, unknown>>;
 
   const voteMap = new Map<string, -1 | 0 | 1>();
   const pollVoteMap = new Map<string, string>();
   const likedSet = new Set<string>();
+  const savedSet = new Set<string>();
   const reactionsByPost = new Map<string, Record<string, number>>();
   const myReactionMap = new Map<string, string>();
 
@@ -724,6 +811,9 @@ app.get('/api/posts', (req, res) => {
 
     const lRows = db.prepare('SELECT post_id FROM post_likes WHERE user_id = ?').all(viewerId) as Array<{ post_id: string }>;
     for (const lr of lRows) likedSet.add(lr.post_id);
+
+    const sRows = db.prepare('SELECT post_id FROM post_saves WHERE user_id = ?').all(viewerId) as Array<{ post_id: string }>;
+    for (const sr of sRows) savedSet.add(sr.post_id);
   }
 
   const posts = rows.map(r => {
@@ -764,6 +854,7 @@ app.get('/api/posts', (req, res) => {
       commentsCount: Number(r.comments_count || 0),
       sharesCount: Number(r.shares_count || 0),
       likedByMe: likedSet.has(String(r.id)) || myReactionMap.has(String(r.id)),
+      savedByMe: savedSet.has(String(r.id)),
       isEdited: Boolean(r.is_edited),
       createdAt: r.created_at,
     };
@@ -830,9 +921,23 @@ app.delete('/api/posts/:id', (req, res) => {
   const row = db.prepare('SELECT user_id FROM posts WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
   if (!row) return res.status(404).json({ ok: false, error: 'المنشور غير موجود.' });
   if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'لا يمكنك حذف منشور شخص آخر.' });
+  db.prepare('DELETE FROM post_saves WHERE post_id = ?').run(req.params.id);
   db.prepare('DELETE FROM posts WHERE id = ?').run(req.params.id);
   broadcast('social:new_post', { id: req.params.id, deleted: true });
   res.json({ ok: true });
+});
+
+app.post('/api/posts/:id/save', (req, res) => {
+  const { userId } = req.body as { userId?: string };
+  if (!userId) return res.status(400).json({ ok: false });
+  const exists = db.prepare('SELECT 1 FROM post_saves WHERE post_id = ? AND user_id = ?').get(req.params.id, userId);
+  if (exists) {
+    db.prepare('DELETE FROM post_saves WHERE post_id = ? AND user_id = ?').run(req.params.id, userId);
+    res.json({ ok: true, saved: false });
+  } else {
+    db.prepare('INSERT OR IGNORE INTO post_saves (post_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
+    res.json({ ok: true, saved: true });
+  }
 });
 
 app.delete('/api/post-comments/:id', (req, res) => {
@@ -1157,20 +1262,21 @@ app.get('/api/videos', (req, res) => {
 });
 
 app.post('/api/videos', (req, res) => {
-  const { userId, title, description, tags, videoUrl } = req.body as {
+  const { userId, title, description, tags, videoUrl, posterUrl } = req.body as {
     userId: string;
     title: string;
     description: string;
     tags?: string;
     videoUrl?: string;
+    posterUrl?: string | null;
   };
   if (!userId || !title?.trim()) return res.status(400).json({ ok: false, error: 'عنوان الفيديو مطلوب.' });
   const id = `v_${uuid().slice(0, 8)}`;
   db.prepare(`
-    INSERT INTO short_videos (id, user_id, title, description, tags, video_url)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, userId, title.trim(), (description || '').trim(), tags || '#LM', videoUrl || '/uploads/seed/reel1.mp4');
-  res.json({ ok: true, id });
+    INSERT INTO short_videos (id, user_id, title, description, tags, video_url, poster_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, title.trim(), (description || '').trim(), tags || '#LM', videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null);
+  res.json({ ok: true, id, posterUrl: posterUrl || null });
 });
 
 app.patch('/api/videos/:id', (req, res) => {
@@ -1281,6 +1387,7 @@ app.get('/api/videos/:id/comments', (req, res) => {
       transcript: r.transcript ? String(r.transcript) : null,
       likesCount: Number(r.likes_count || 0),
       likedByMe: viewerId ? likedBy.includes(viewerId) : false,
+      isEdited: Boolean(r.is_edited),
       createdAt: r.created_at || 'الآن',
     };
   });
@@ -1392,6 +1499,28 @@ app.post('/api/video-comments/:commentId/like', (req, res) => {
   }
   db.prepare('UPDATE video_comments SET likes_count = ?, liked_by_json = ? WHERE id = ?').run(count, JSON.stringify(likedBy), req.params.commentId);
   res.json({ ok: true, likesCount: count, liked: likedBy.includes(userId) });
+});
+
+app.patch('/api/video-comments/:id', (req, res) => {
+  const { userId, content } = req.body as { userId?: string; content?: string };
+  const row = db.prepare('SELECT user_id FROM video_comments WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'التعليق غير موجود.' });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'يمكنك تعديل تعليقاتك فقط.' });
+  if (!content?.trim()) return res.status(400).json({ ok: false, error: 'نص التعليق مطلوب.' });
+  db.prepare('UPDATE video_comments SET content = ?, is_edited = 1 WHERE id = ?').run(content.trim(), req.params.id);
+  res.json({ ok: true, content: content.trim(), isEdited: true });
+});
+
+app.delete('/api/video-comments/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const row = db.prepare('SELECT video_id, user_id FROM video_comments WHERE id = ?').get(req.params.id) as
+    | { video_id: string; user_id: string }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'التعليق غير موجود.' });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'يمكنك حذف تعليقاتك فقط.' });
+  db.prepare('DELETE FROM video_comments WHERE id = ? OR parent_id = ?').run(req.params.id, req.params.id);
+  db.prepare('UPDATE short_videos SET comments_count = (SELECT COUNT(*) FROM video_comments WHERE video_id = short_videos.id) WHERE id = ?').run(row.video_id);
+  res.json({ ok: true });
 });
 
 // ============================================================

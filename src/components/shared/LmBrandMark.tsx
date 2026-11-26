@@ -101,16 +101,41 @@ export const MARKDOWN_LINK_COMPONENTS: Components = {
   ),
 };
 
-const URL_TOKEN_RX = /(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+)/gi;
+const RICH_ENTITY_RX = /(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+|@[A-Za-z0-9_]{2,30}|#[\p{L}\p{N}_]{2,40})/giu;
 
-function renderTextWithShiningLinks(str: string, keyPrefix: string) {
-  const parts = str.split(URL_TOKEN_RX);
-  return parts.map((part, idx) => {
-    if (/^(https?:\/\/|www\.)/i.test(part)) {
-      const href = /^https?:\/\//i.test(part) ? part : `https://${part}`;
-      return (
+function renderTextWithRichEntities(
+  str: string,
+  keyPrefix: string,
+  onMentionClick?: (username: string) => void,
+  onHashtagClick?: (tag: string) => void
+) {
+  const nodes: React.ReactNode[] = [];
+  let lastIdx = 0;
+  RICH_ENTITY_RX.lastIndex = 0;
+
+  let m: RegExpExecArray | null;
+  let tokenIdx = 0;
+  while ((m = RICH_ENTITY_RX.exec(str)) !== null) {
+    const matchText = m[0];
+    const start = m.index;
+    const prevChar = start > 0 ? str[start - 1] : '';
+
+    // Avoid matching emails like name@domain.com as @mentions
+    if (matchText.startsWith('@') && /[A-Za-z0-9._+-]/.test(prevChar)) {
+      continue;
+    }
+
+    if (start > lastIdx) {
+      nodes.push(
+        <React.Fragment key={`${keyPrefix}-txt-${tokenIdx++}`}>{str.slice(lastIdx, start)}</React.Fragment>
+      );
+    }
+
+    if (/^(https?:\/\/|www\.)/i.test(matchText)) {
+      const href = /^https?:\/\//i.test(matchText) ? matchText : `https://${matchText}`;
+      nodes.push(
         <a
-          key={`${keyPrefix}-lnk-${idx}`}
+          key={`${keyPrefix}-lnk-${tokenIdx++}`}
           href={href}
           target="_blank"
           rel="noopener noreferrer"
@@ -118,15 +143,72 @@ function renderTextWithShiningLinks(str: string, keyPrefix: string) {
           dir="ltr"
           className="lm-link-shine"
         >
-          {part}
+          {matchText}
         </a>
       );
+    } else if (matchText.startsWith('@')) {
+      const handle = matchText.slice(1);
+      nodes.push(
+        onMentionClick ? (
+          <button
+            key={`${keyPrefix}-mnt-${tokenIdx++}`}
+            type="button"
+            dir="ltr"
+            onClick={e => {
+              e.stopPropagation();
+              onMentionClick(handle);
+            }}
+            className="inline font-semibold text-[#FBBF24] hover:text-[#FDE68A] hover:underline cursor-pointer transition-colors"
+          >
+            {matchText}
+          </button>
+        ) : (
+          <span key={`${keyPrefix}-mnt-${tokenIdx++}`} dir="ltr" className="font-semibold text-[#FBBF24]">
+            {matchText}
+          </span>
+        )
+      );
+    } else if (matchText.startsWith('#')) {
+      const tag = matchText.slice(1);
+      nodes.push(
+        onHashtagClick ? (
+          <button
+            key={`${keyPrefix}-tag-${tokenIdx++}`}
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              onHashtagClick(tag);
+            }}
+            className="inline font-medium text-[#FB7185] hover:text-[#FDA4AF] hover:underline cursor-pointer transition-colors"
+          >
+            {matchText}
+          </button>
+        ) : (
+          <span key={`${keyPrefix}-tag-${tokenIdx++}`} className="font-medium text-[#FB7185]">
+            {matchText}
+          </span>
+        )
+      );
     }
-    return <React.Fragment key={`${keyPrefix}-txt-${idx}`}>{part}</React.Fragment>;
-  });
+
+    lastIdx = start + matchText.length;
+  }
+
+  if (lastIdx < str.length) {
+    nodes.push(<React.Fragment key={`${keyPrefix}-end`}>{str.slice(lastIdx)}</React.Fragment>);
+  }
+  return nodes;
 }
 
-export function RichMessageText({ text }: { text: string }) {
+export function RichMessageText({
+  text,
+  onMentionClick,
+  onHashtagClick,
+}: {
+  text: string;
+  onMentionClick?: (username: string) => void;
+  onHashtagClick?: (tag: string) => void;
+}) {
   const lines = text.split('\n');
   const renderInline = (line: string, lineIdx: number) => {
     const tokens = line.split(/(\*\*[^*]+\*\*|`[^`]+`|_[^_]+_)/g);
@@ -144,7 +226,11 @@ export function RichMessageText({ text }: { text: string }) {
       if (tok.startsWith('_') && tok.endsWith('_') && tok.length > 2) {
         return <em key={i} className="opacity-85">{tok.slice(1, -1)}</em>;
       }
-      return <React.Fragment key={i}>{renderTextWithShiningLinks(tok, `${lineIdx}-${i}`)}</React.Fragment>;
+      return (
+        <React.Fragment key={i}>
+          {renderTextWithRichEntities(tok, `${lineIdx}-${i}`, onMentionClick, onHashtagClick)}
+        </React.Fragment>
+      );
     });
   };
 
