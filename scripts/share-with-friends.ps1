@@ -27,23 +27,46 @@ if (-not $healthOk) {
   Start-Sleep -Seconds 3
 }
 
-# 2. Prefer cloudflared if installed, otherwise use zero-download Windows OpenSSH -> localhost.run!
+# 2. Prefer official Cloudflare Quick Tunnel (zero bandwidth throttling, free HTTPS + WebSockets)
 $rootDir = Split-Path $PSScriptRoot -Parent
-$localCf = Join-Path $rootDir "tools\cloudflared.exe"
+$candidates = @(
+  (Join-Path $rootDir "tools\cloudflared.exe"),
+  "C:\Program Files (x86)\cloudflared\cloudflared.exe",
+  "C:\Program Files\cloudflared\cloudflared.exe",
+  "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cloudflared.exe"
+)
 $cfExe = $null
-if (Test-Path $localCf) {
-  $cfExe = $localCf
-} else {
+foreach ($c in $candidates) {
+  if (Test-Path $c) { $cfExe = $c; break }
+}
+if (-not $cfExe) {
   $sysCf = Get-Command cloudflared -ErrorAction SilentlyContinue
   if ($sysCf) { $cfExe = $sysCf.Source }
 }
 
+if (-not $cfExe) {
+  Write-Host "  [2/3] Installing portable Cloudflare Tunnel (tools\cloudflared.exe, ~19 MB)..." -ForegroundColor Yellow
+  New-Item -ItemType Directory -Force -Path (Join-Path $rootDir "tools") | Out-Null
+  $msiPath = Join-Path $rootDir "tools\cloudflared.msi"
+  $extractDir = Join-Path $rootDir "tools\cf_extract"
+  & curl.exe -L --fail --progress-bar -o $msiPath "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi"
+  New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+  Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msiPath`" /qn TARGETDIR=`"$extractDir`"" -Wait -NoNewWindow
+  $extracted = Get-ChildItem -Path $extractDir -Recurse -Filter "cloudflared.exe" | Select-Object -First 1
+  if ($extracted) {
+    Copy-Item $extracted.FullName -Destination (Join-Path $rootDir "tools\cloudflared.exe") -Force
+    $cfExe = Join-Path $rootDir "tools\cloudflared.exe"
+  }
+  Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+  Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($cfExe) {
-  Write-Host "  [2/2] Opening FREE Cloudflare HTTPS tunnel to http://127.0.0.1:$Port ..." -ForegroundColor Green
-  & $cfExe tunnel --url "http://127.0.0.1:$Port"
-} else {
-  Write-Host "  [2/2] Opening FREE instant HTTPS + WebSocket tunnel (localhost.run) to http://127.0.0.1:$Port ..." -ForegroundColor Green
-  Write-Host "        Copy the https://*.lhr.life link below and send it to your friends!" -ForegroundColor Yellow
+  Write-Host "  [READY] Opening FREE unthrottled Cloudflare HTTPS + WebSocket tunnel to http://127.0.0.1:$Port ..." -ForegroundColor Green
+  Write-Host "          Copy the https://*.trycloudflare.com link below and send it to your friends!" -ForegroundColor Yellow
   Write-Host ""
-  & ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R "80:127.0.0.1:$Port" nokey@localhost.run
+  & $cfExe tunnel --url "http://127.0.0.1:$Port" --protocol http2 --no-autoupdate
+} else {
+  Write-Host "  [FALLBACK] Opening Pinggy HTTPS tunnel to http://127.0.0.1:$Port ..." -ForegroundColor Yellow
+  & ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R "0:127.0.0.1:$Port" a.pinggy.io
 }

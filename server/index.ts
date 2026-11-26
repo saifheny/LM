@@ -4,6 +4,8 @@ import cors from 'cors';
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import multer from 'multer';
@@ -49,10 +51,33 @@ app.use(
     credentials: true,
   })
 );
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+
+  // Lightweight zero-dependency gzip for JSON API responses (> 1 KB)
+  const acceptsGzip = /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+  if (acceptsGzip && req.method !== 'HEAD' && req.path.startsWith('/api/') && !req.path.includes('stream')) {
+    const origJson = res.json.bind(res);
+    res.json = ((body: unknown) => {
+      if (res.headersSent) return origJson(body);
+      try {
+        const raw = Buffer.from(JSON.stringify(body), 'utf8');
+        if (raw.length >= 1024) {
+          const gz = zlib.gzipSync(raw, { level: 6 });
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Content-Encoding', 'gzip');
+          res.setHeader('Vary', 'Accept-Encoding');
+          res.setHeader('Content-Length', String(gz.length));
+          return res.end(gz);
+        }
+      } catch {
+        // fallback to normal JSON response
+      }
+      return origJson(body);
+    }) as typeof res.json;
+  }
   next();
 });
 app.use(express.json({ limit: '16mb' }));
@@ -3980,7 +4005,77 @@ function buildDynamicOgMeta(req: express.Request): {
 
 const distDir = path.resolve(__dirname, '../dist');
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir, { index: false }));
+  const staticGzipCache = new Map<string, { gz: Buffer; contentType: string; etag: string }>();
+  const COMPRESSIBLE_TYPES: Record<string, string> = {
+    '.js': 'application/javascript; charset=utf-8',
+    '.mjs': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.webmanifest': 'application/manifest+json; charset=utf-8',
+  };
+
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const ext = path.extname(req.path).toLowerCase();
+    const contentType = COMPRESSIBLE_TYPES[ext];
+    const acceptsGzip = /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+    if (!contentType || !acceptsGzip) return next();
+
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(req.path);
+    } catch {
+      return next();
+    }
+    const safeRel = path.normalize(decodedPath).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
+    const fullPath = path.resolve(distDir, safeRel);
+    if (!fullPath.startsWith(distDir + path.sep) || !fs.existsSync(fullPath)) return next();
+
+    try {
+      const stat = fs.statSync(fullPath);
+      if (!stat.isFile() || stat.size > 4 * 1024 * 1024) return next();
+      const cacheKey = `${fullPath}:${stat.mtimeMs}:${stat.size}`;
+      let entry = staticGzipCache.get(cacheKey);
+      if (!entry) {
+        const raw = fs.readFileSync(fullPath);
+        const gz = zlib.gzipSync(raw, { level: 6 });
+        const etag = `W/"${crypto.createHash('sha1').update(gz).digest('hex').slice(0, 16)}"`;
+        entry = { gz, contentType, etag };
+        if (staticGzipCache.size > 80) staticGzipCache.clear();
+        staticGzipCache.set(cacheKey, entry);
+      }
+      res.setHeader('Content-Type', entry.contentType);
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.setHeader('ETag', entry.etag);
+      res.setHeader(
+        'Cache-Control',
+        req.path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'public, max-age=300'
+      );
+      if (req.headers['if-none-match'] === entry.etag) {
+        return res.status(304).end();
+      }
+      res.setHeader('Content-Length', String(entry.gz.length));
+      if (req.method === 'HEAD') return res.status(200).end();
+      return res.status(200).end(entry.gz);
+    } catch {
+      return next();
+    }
+  });
+
+  app.use(
+    express.static(distDir, {
+      index: false,
+      maxAge: '7d',
+      setHeaders: (res, filePath) => {
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    })
+  );
+
   app.get('*', (req, res) => {
     const indexPath = path.join(distDir, 'index.html');
     try {
@@ -4002,6 +4097,17 @@ if (fs.existsSync(distDir)) {
         .replace(/<meta name="description" content="[^"]*"\s*\/?>/i, `<meta name="description" content="${escapeHtmlAttr(og.description)}" />`)
         .replace('</head>', `${ogTags}\n  </head>`);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      const acceptsGzip = /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+      if (acceptsGzip) {
+        const gz = zlib.gzipSync(Buffer.from(html, 'utf8'), { level: 6 });
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Vary', 'Accept-Encoding');
+        res.setHeader('Content-Length', String(gz.length));
+        if (req.method === 'HEAD') return res.status(200).end();
+        return res.status(200).end(gz);
+      }
+      if (req.method === 'HEAD') return res.status(200).end();
       res.send(html);
     } catch {
       res.sendFile(indexPath);
