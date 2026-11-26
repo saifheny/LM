@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Link2, Send, Share2, X } from 'lucide-react';
+import { Check, Link2, Send, Share2 } from 'lucide-react';
 import { ConversationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar } from './LmBrandMark';
 import { SharePlatformIcons } from './Icons2026Pro';
+import { CloseOrbButton, StudioModalOverlay } from './ModalChrome2026';
 import { apiGet, apiPost } from '../../lib/api';
 
 export interface SharePayload {
@@ -134,27 +135,15 @@ export function ShareSheetModal({
   ];
 
   return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-[75] bg-black/78 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4"
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        className="w-full md:max-w-[440px] rounded-t-[28px] md:rounded-[28px] bg-[#111116]/98 backdrop-blur-2xl border-t md:border border-white/[0.12] p-5 space-y-4 text-start shadow-2xl"
-      >
+    <StudioModalOverlay zClass="z-[75]" onClose={onClose}>
+      <div className="p-5 space-y-4">
         {/* Top Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.08]">
           <div className="flex items-center gap-2 text-sm font-bold text-white">
             <Share2 className="w-4 h-4 text-[#E4E4E7]" />
             <span>مشاركة {badgeLabel}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <CloseOrbButton onClick={onClose} />
         </div>
 
         {/* Rich Live Link Preview Card (Shows EXACT Post / Profile / Video / Live / App being shared!) */}
@@ -282,6 +271,6 @@ export function ShareSheetModal({
           <div className="text-center text-xs text-[#6EE7B7] font-medium pt-0.5">{toast}</div>
         )}
       </div>
-    </div>
+    </StudioModalOverlay>
   );
 }

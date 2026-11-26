@@ -82,7 +82,7 @@ export function extractKeywordsAndTopics(text: string): string[] {
 
 export function recordUserInteraction(params: {
   userId?: string | null;
-  targetType: 'post' | 'video' | 'live' | 'user';
+  targetType: 'post' | 'video' | 'live' | 'user' | 'story';
   targetId: string;
   authorId?: string | null;
   action: 'like' | 'react' | 'comment' | 'save' | 'share' | 'follow' | 'watch' | 'report' | 'not_interested';

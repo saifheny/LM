@@ -372,6 +372,7 @@ export function App() {
               onSelectHashtag={setActiveHashtag}
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
+              onMessageUser={openDirectChatWithUser}
               onOpenVideo={vidId => {
                 setFocusedVideoId(vidId);
                 setActiveTab('videos');

@@ -13,14 +13,12 @@ import {
   Plus,
   KeyRound,
   ExternalLink,
-  X,
-  FileText,
+  Image as ImageIcon,
   History,
   Pencil,
   RefreshCw,
   Search,
   Mic,
-  Paperclip,
 } from 'lucide-react';
 
 import { Lang, UserProfile } from '../../types';
@@ -28,6 +26,7 @@ import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { MARKDOWN_LINK_COMPONENTS, RichMessageText } from '../shared/LmBrandMark';
 import { QuickRemovePill } from '../shared/ActionOrb2026';
+import { CloseOrbButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { AI_COMPANIES, AiCompanyDef, AiCompanyModel, shortenModelLabel } from './AiProvidersCatalog';
@@ -84,6 +83,7 @@ export function AiView({ user, lang }: AiViewProps) {
     }
   });
   const [attachedFile, setAttachedFile] = useState<{ name: string; url: string } | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -226,6 +226,7 @@ export function AiView({ user, lang }: AiViewProps) {
           content: string;
           audio_url?: string | null;
           transcript?: string | null;
+          attachment_url?: string | null;
           company_id?: string;
           model_label?: string;
         }>;
@@ -239,6 +240,7 @@ export function AiView({ user, lang }: AiViewProps) {
                 content: m.content,
                 audioUrl: m.audio_url || null,
                 transcript: m.transcript || null,
+                attachmentUrl: m.attachment_url || null,
                 companyId: m.company_id || selectedCompanyId,
                 modelLabel: m.model_label ? shortenModelLabel(m.model_label) : undefined,
                 feedback: null,
@@ -302,6 +304,7 @@ export function AiView({ user, lang }: AiViewProps) {
           content: string;
           audio_url?: string | null;
           transcript?: string | null;
+          attachment_url?: string | null;
           company_id?: string;
           model_label?: string;
         }>;
@@ -313,6 +316,7 @@ export function AiView({ user, lang }: AiViewProps) {
           content: m.content,
           audioUrl: m.audio_url || null,
           transcript: m.transcript || null,
+          attachmentUrl: m.attachment_url || null,
           companyId: m.company_id || sess.company_id,
           modelLabel: m.model_label ? shortenModelLabel(m.model_label) : undefined,
           feedback: null,
@@ -333,12 +337,27 @@ export function AiView({ user, lang }: AiViewProps) {
     }
   }
 
+  function showUploadNotice(msg: string) {
+    setUploadNotice(msg);
+    setTimeout(() => setUploadNotice(cur => (cur === msg ? null : cur)), 3400);
+  }
+
   async function handleAttach(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
-    if (!f) return;
-    const up = await apiUploadFile(f);
-    setAttachedFile({ name: f.name, url: up.url });
     e.target.value = '';
+    if (!f) return;
+    if (!/^image\/(jpeg|png|webp|gif)$/i.test(f.type)) {
+      showUploadNotice('يمكن إرفاق صورة واحدة فقط (JPG / PNG / WebP / GIF) بحد أقصى 8MB.');
+      return;
+    }
+    try {
+      const up = await apiUploadFile(f, 'ai_image');
+      // Strictly 1 image per message — selecting a new image replaces the previous one
+      setAttachedFile({ name: f.name, url: up.url });
+      setUploadNotice(null);
+    } catch (err) {
+      showUploadNotice(err instanceof Error ? err.message : 'تعذر رفع الصورة.');
+    }
   }
 
   async function streamAiIntoTurn(
@@ -435,7 +454,7 @@ export function AiView({ user, lang }: AiViewProps) {
     setComposerFocused(false);
     setAttachedFile(null);
 
-    const effectiveText = clean || (currentAttachment ? `حلّل المرفق: ${currentAttachment.name}` : '');
+    const apiPrompt = clean || (currentAttachment ? 'حلّل هذه الصورة بالتفصيل' : '');
     const assistantId = `a_${Date.now()}`;
 
     if (!reuseLastUser) {
@@ -444,7 +463,7 @@ export function AiView({ user, lang }: AiViewProps) {
         {
           id: `u_${Date.now()}`,
           role: 'user',
-          content: effectiveText,
+          content: clean,
           attachmentUrl: currentAttachment?.url || null,
           attachmentName: currentAttachment?.name || null,
         },
@@ -479,7 +498,7 @@ export function AiView({ user, lang }: AiViewProps) {
         assistantId,
         {
           userId: user.id,
-          prompt: effectiveText,
+          prompt: apiPrompt,
           attachmentUrl: currentAttachment?.url || null,
           attachmentName: currentAttachment?.name || null,
           provider: activeCompany.id,
@@ -523,7 +542,7 @@ export function AiView({ user, lang }: AiViewProps) {
     const tempUserId = `u_voice_${Date.now()}`;
     const assistantId = `a_${Date.now() + 1}`;
     try {
-      const up = await apiUploadFile(file);
+      const up = await apiUploadFile(file, 'voice');
       setTurns(prev => [
         ...prev,
         {
@@ -937,13 +956,24 @@ export function AiView({ user, lang }: AiViewProps) {
 
               {/* ChatGPT-Style Centered Floating Desktop Composer Card when Stage is Empty! */}
               <div onClick={e => e.stopPropagation()} className="hidden md:block w-full max-w-[720px] pt-2 text-start">
+                {uploadNotice && (
+                  <div className="mb-2 px-3.5 py-2 rounded-2xl bg-[#EF4444]/14 border border-[#FB7185]/35 text-xs text-[#FDA4AF]">
+                    {uploadNotice}
+                  </div>
+                )}
                 {attachedFile && (
-                  <div className="mb-2 w-fit px-3 py-1 rounded-full bg-[#15151C] border border-white/[0.12] flex items-center gap-2 text-xs text-white">
-                    <FileText className="w-3.5 h-3.5 text-[#A1A1AA]" />
-                    <span className="max-w-[220px] truncate">{attachedFile.name}</span>
-                    <button type="button" onClick={() => setAttachedFile(null)} className="text-[#7A7A85] hover:text-white cursor-pointer">
-                      <X className="w-3 h-3" />
-                    </button>
+                  <div className="mb-2.5 relative w-fit">
+                    <img
+                      src={attachedFile.url}
+                      alt=""
+                      className="w-20 h-20 rounded-2xl object-cover shadow-lg block"
+                    />
+                    <CloseOrbButton
+                      size="xs"
+                      title="إزالة الصورة"
+                      onClick={() => setAttachedFile(null)}
+                      className="!absolute -top-2 -end-2 !bg-black/85"
+                    />
                   </div>
                 )}
 
@@ -965,7 +995,7 @@ export function AiView({ user, lang }: AiViewProps) {
                       onKeyDown={e => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
-                          if (prompt.trim() && !loading) sendPrompt(prompt);
+                          if ((prompt.trim() || attachedFile) && !loading) sendPrompt(prompt);
                         }
                       }}
                       placeholder={lang === 'ar' ? 'اكتب رسالتك أو اسأل أي شيء...' : 'Message anything...'}
@@ -976,14 +1006,14 @@ export function AiView({ user, lang }: AiViewProps) {
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
-                          title="إرفاق ملف"
+                          title="إرفاق صورة واحدة (حتى 8MB)"
                           className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.12] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                         >
-                          <Paperclip className="w-[17px] h-[17px]" strokeWidth={1.85} />
+                          <ImageIcon className="w-[17px] h-[17px]" strokeWidth={1.85} />
                         </button>
                       </div>
 
-                      {prompt.trim() ? (
+                      {prompt.trim() || attachedFile ? (
                         <ChromeArrowButton type="submit" disabled={loading} size={38} />
                       ) : (
                         <button
@@ -1007,8 +1037,8 @@ export function AiView({ user, lang }: AiViewProps) {
               {turns.map((t, idx) => {
                 const turnCompany = AI_COMPANIES.find(c => c.id === t.companyId) || activeCompany;
                 return t.role === 'user' ? (
-                  /* User Turn with Voice Support + Shining Links + Hover Actions */
-                  <div key={t.id} className="group flex flex-col items-end gap-1">
+                  /* User Turn: Borderless Floating Image + Borderless Text Underneath when image is attached! */
+                  <div key={t.id} className="group flex flex-col items-end gap-1.5">
                     {t.audioUrl ? (
                       <div
                         onClick={e => e.stopPropagation()}
@@ -1022,6 +1052,20 @@ export function AiView({ user, lang }: AiViewProps) {
                           isMine
                         />
                       </div>
+                    ) : t.attachmentUrl ? (
+                      /* ZERO Container around the image AND ZERO Container around the text written underneath! */
+                      <div onClick={e => e.stopPropagation()} className="max-w-[82%] flex flex-col items-end gap-2">
+                        <img
+                          src={t.attachmentUrl}
+                          alt=""
+                          className="max-w-[280px] sm:max-w-[320px] max-h-[340px] rounded-2xl object-cover block shadow-[0_14px_38px_rgba(0,0,0,0.45)]"
+                        />
+                        {t.content && (
+                          <div className="text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap text-start">
+                            <RichMessageText text={t.content} />
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div
                         onClick={e => {
@@ -1030,21 +1074,8 @@ export function AiView({ user, lang }: AiViewProps) {
                           loadSessions();
                         }}
                         title="اضغط لعرض المحادثات السابقة"
-                        className="max-w-[82%] rounded-3xl rounded-ee-md bg-[#1B1B22] px-4 py-2.5 text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap cursor-pointer hover:bg-[#22222B] transition-colors space-y-2"
+                        className="max-w-[82%] rounded-3xl rounded-ee-md bg-[#1B1B22] px-4 py-2.5 text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap cursor-pointer hover:bg-[#22222B] transition-colors"
                       >
-                        {t.attachmentUrl && /\.(jpg|jpeg|png|webp|gif)$/i.test(t.attachmentUrl) && (
-                          <img
-                            src={t.attachmentUrl}
-                            alt={t.attachmentName || ''}
-                            className="max-h-[220px] rounded-2xl object-cover border border-white/[0.1]"
-                          />
-                        )}
-                        {t.attachmentName && (!t.attachmentUrl || !/\.(jpg|jpeg|png|webp|gif)$/i.test(t.attachmentUrl)) && (
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.08] text-[11px] text-[#FDE68A]">
-                            <FileText className="w-3 h-3" />
-                            <span className="truncate max-w-[200px]">{t.attachmentName}</span>
-                          </div>
-                        )}
                         <RichMessageText text={t.content} />
                       </div>
                     )}
@@ -1186,7 +1217,14 @@ export function AiView({ user, lang }: AiViewProps) {
         </div>
       </div>
 
-      <input ref={fileInputRef} type="file" onChange={handleAttach} className="hidden" />
+      {/* Strictly Single Image Attachment ONLY (No PDFs, No scripts, No multiple files) */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        onChange={handleAttach}
+        className="hidden"
+      />
 
       {/* FLOATING COMPOSER: Desktop ChatGPT 2-Row Card (when chatting) + Mobile Floating Split Pill (always) */}
       {!mobileNavExpanded && (
@@ -1197,13 +1235,24 @@ export function AiView({ user, lang }: AiViewProps) {
           }`}
         >
           <div className="pointer-events-auto w-full max-w-[740px] space-y-2">
+            {uploadNotice && (
+              <div className="px-3.5 py-2 rounded-2xl bg-[#EF4444]/14 border border-[#FB7185]/35 text-xs text-[#FDA4AF]">
+                {uploadNotice}
+              </div>
+            )}
             {attachedFile && (
-              <div className="w-fit px-3 py-1 rounded-full bg-[#15151C] border border-white/[0.12] flex items-center gap-2 text-xs text-white">
-                <FileText className="w-3.5 h-3.5 text-[#A1A1AA]" />
-                <span className="max-w-[200px] truncate">{attachedFile.name}</span>
-                <button type="button" onClick={() => setAttachedFile(null)} className="text-[#7A7A85] hover:text-white cursor-pointer">
-                  <X className="w-3 h-3" />
-                </button>
+              <div className="relative w-fit">
+                <img
+                  src={attachedFile.url}
+                  alt=""
+                  className="w-16 h-16 rounded-2xl object-cover shadow-lg block"
+                />
+                <CloseOrbButton
+                  size="xs"
+                  title="إزالة الصورة"
+                  onClick={() => setAttachedFile(null)}
+                  className="!absolute -top-2 -end-2 !bg-black/85"
+                />
               </div>
             )}
 
@@ -1227,7 +1276,7 @@ export function AiView({ user, lang }: AiViewProps) {
                     onKeyDown={e => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        if (prompt.trim() && !loading) sendPrompt(prompt);
+                        if ((prompt.trim() || attachedFile) && !loading) sendPrompt(prompt);
                       }
                     }}
                     placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Message...'}
@@ -1237,13 +1286,13 @@ export function AiView({ user, lang }: AiViewProps) {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      title="إرفاق ملف"
+                      title="إرفاق صورة واحدة (حتى 8MB)"
                       className="w-8 h-8 rounded-full bg-white/[0.05] hover:bg-white/[0.12] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                     >
-                      <Paperclip className="w-[16px] h-[16px]" strokeWidth={1.85} />
+                      <ImageIcon className="w-[16px] h-[16px]" strokeWidth={1.85} />
                     </button>
 
-                    {prompt.trim() ? (
+                    {prompt.trim() || attachedFile ? (
                       <ChromeArrowButton type="submit" disabled={loading} size={36} />
                     ) : (
                       <button
@@ -1280,9 +1329,9 @@ export function AiView({ user, lang }: AiViewProps) {
                     onFocus={() => setComposerFocused(true)}
                     onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
                     placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Message...'}
-                    disabled={!prompt.trim() || loading}
+                    disabled={(!prompt.trim() && !attachedFile) || loading}
                     customAction={
-                      prompt.trim() ? (
+                      prompt.trim() || attachedFile ? (
                         <ChromeArrowButton type="submit" disabled={loading} size={38} />
                       ) : (
                         <button
@@ -1307,27 +1356,14 @@ export function AiView({ user, lang }: AiViewProps) {
 
       {/* IN-PLACE COMPANY API KEY SETUP GUIDE */}
       {setupCompany && (
-        <div
-          onClick={() => setSetupCompany(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-        >
-          <form
-            onClick={e => e.stopPropagation()}
-            onSubmit={saveInlineApiKey}
-            className="w-full max-w-[440px] rounded-2xl bg-[#131319] border border-white/[0.14] p-5 space-y-4 text-start"
-          >
-            <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.08]">
+        <StudioModalOverlay onClose={() => setSetupCompany(null)}>
+          <form onSubmit={saveInlineApiKey} className="p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
               <div className="flex items-center gap-2.5 text-sm font-semibold text-white">
                 {setupCompany.renderLogo(20)}
                 <span>ربط {setupCompany.name}</span>
               </div>
-              <button
-                type="button"
-                onClick={() => setSetupCompany(null)}
-                className="text-[#7A7A85] hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <CloseOrbButton onClick={() => setSetupCompany(null)} />
             </div>
 
             <ol className="space-y-2 text-xs text-[#D4D4D8] list-decimal list-inside leading-relaxed">
@@ -1360,7 +1396,7 @@ export function AiView({ user, lang }: AiViewProps) {
 
             {setupFeedback && <div className="text-xs text-[#22C55E] px-2">{setupFeedback}</div>}
           </form>
-        </div>
+        </StudioModalOverlay>
       )}
     </div>
   );

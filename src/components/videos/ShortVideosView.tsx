@@ -35,6 +35,7 @@ import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { NavAiIcon, PulsePlayGlyph, SharePlatformIcons, StylusEditIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
+import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
@@ -571,7 +572,7 @@ export function ShortVideosView({
     if (shouldInvokeAi) setAiTyping(true);
 
     try {
-      const up = await apiUploadFile(file);
+      const up = await apiUploadFile(file, 'voice');
       await apiPost(`/api/videos/${vidId}/comments`, {
         userId: user.id,
         content: '',
@@ -637,12 +638,14 @@ export function ShortVideosView({
     setUploadingVideo(true);
     setGeneratingThumb(true);
     try {
-      const [upVideo, thumbFile] = await Promise.all([apiUploadFile(f), generateVideoThumbnail(f)]);
+      const [upVideo, thumbFile] = await Promise.all([apiUploadFile(f, 'pulse_video'), generateVideoThumbnail(f)]);
       setUploadedVideoUrl(upVideo.url);
       if (thumbFile) {
-        const upThumb = await apiUploadFile(thumbFile);
+        const upThumb = await apiUploadFile(thumbFile, 'pulse_poster');
         setUploadedPosterUrl(upThumb.url);
       }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'تعذر رفع الفيديو.');
     } finally {
       setUploadingVideo(false);
       setGeneratingThumb(false);
@@ -655,8 +658,10 @@ export function ShortVideosView({
     if (!f) return;
     setGeneratingThumb(true);
     try {
-      const up = await apiUploadFile(f);
+      const up = await apiUploadFile(f, 'pulse_poster');
       setUploadedPosterUrl(up.url);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'تعذر رفع صورة الغلاف.');
     } finally {
       setGeneratingThumb(false);
       e.target.value = '';
@@ -1706,23 +1711,13 @@ export function ShortVideosView({
       )}
       </div>
 
-      {/* Upload Pulse Modal with Automatic Thumbnail Generation Preview */}
+      {/* 2026 Upload Pulse Modal with Automatic Thumbnail Generation Preview */}
       {uploadOpen && (
-        <div onClick={() => setUploadOpen(false)} className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-center justify-center p-4">
-          <form
-            onClick={e => e.stopPropagation()}
-            onSubmit={publishPulse}
-            className="w-full max-w-[420px] rounded-[28px] bg-[#13131A]/98 border border-white/[0.13] p-5 space-y-3.5 text-start shadow-2xl"
-          >
-            <div className="pb-2.5 border-b border-white/[0.08] flex items-center justify-between">
+        <StudioModalOverlay onClose={() => setUploadOpen(false)}>
+          <form onSubmit={publishPulse} className="p-5 space-y-3.5">
+            <div className="pb-3 border-b border-white/[0.08] flex items-center justify-between">
               <span className="text-sm font-bold text-white">نشر نبض جديد</span>
-              <button
-                type="button"
-                onClick={() => setUploadOpen(false)}
-                className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <CloseOrbButton onClick={() => setUploadOpen(false)} />
             </div>
 
             {/* Auto-Generated Thumbnail Preview Card */}
@@ -1778,45 +1773,37 @@ export function ShortVideosView({
               placeholder="الوسوم (مثال: #LM #إبداع)..."
               className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
             />
-            <input ref={fileRef} type="file" accept="video/*" onChange={handleVideoUploadFile} className="hidden" />
-            <input ref={posterFileRef} type="file" accept="image/*" onChange={handleManualPosterFile} className="hidden" />
+            <input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime" onChange={handleVideoUploadFile} className="hidden" />
+            <input ref={posterFileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleManualPosterFile} className="hidden" />
             <div className="flex items-center justify-between pt-2">
               <button
                 type="button"
                 disabled={uploadingVideo}
                 onClick={() => fileRef.current?.click()}
-                className="px-4 py-2 rounded-full bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.1] text-xs font-medium text-[#E4E4E7] cursor-pointer transition-colors disabled:opacity-50"
+                className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.1] text-xs font-medium text-[#E4E4E7] cursor-pointer transition-colors disabled:opacity-50"
               >
-                {uploadingVideo ? 'جارٍ الرفع وتوليد الغلاف...' : uploadedVideoUrl ? 'تغيير الفيديو ✓' : 'اختيار فيديو'}
+                {uploadingVideo ? 'جارٍ الفحص والرفع...' : uploadedVideoUrl ? 'تغيير الفيديو ✓' : 'اختيار فيديو (حتى 60MB)'}
               </button>
-              <ChromeArrowButton type="submit" disabled={!newTitle.trim() || uploadingVideo} size={38} />
+              <PublishActionButton
+                type="submit"
+                variant="rose"
+                disabled={!newTitle.trim() || uploadingVideo}
+                label="نشر النبض"
+              />
             </div>
           </form>
-        </div>
+        </StudioModalOverlay>
       )}
-      {/* Edit Own Pulse Video Modal */}
+      {/* 2026 Edit Own Pulse Video Modal */}
       {editingVideo && (
-        <div
-          onClick={() => setEditingVideo(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
-        >
-          <form
-            onClick={e => e.stopPropagation()}
-            onSubmit={saveEditedVideo}
-            className="w-full max-w-[430px] rounded-[28px] bg-[#13131A]/96 border border-white/[0.13] overflow-hidden shadow-2xl text-start"
-          >
+        <StudioModalOverlay onClose={() => setEditingVideo(null)}>
+          <form onSubmit={saveEditedVideo}>
             <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-bold text-white">
                 <StylusEditIcon className="w-4 h-4 text-[#FBBF24]" />
                 <span>تعديل فيديو نبض</span>
               </div>
-              <button
-                type="button"
-                onClick={() => setEditingVideo(null)}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <CloseOrbButton onClick={() => setEditingVideo(null)} />
             </div>
 
             <div className="p-5 space-y-3.5">
@@ -1858,18 +1845,19 @@ export function ShortVideosView({
                 >
                   إلغاء
                 </button>
-                <button
+                <PublishActionButton
                   type="submit"
-                  disabled={savingEdit || !editTitle.trim()}
-                  className="px-5 py-2 rounded-full bg-gradient-to-tr from-[#FF2D55] via-[#FB7185] to-[#F59E0B] text-white text-xs font-bold disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>{savingEdit ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}</span>
-                </button>
+                  variant="rose"
+                  loading={savingEdit}
+                  disabled={!editTitle.trim()}
+                  label="حفظ التعديلات"
+                  loadingLabel="جارٍ الحفظ..."
+                  icon={<Check className="w-3.5 h-3.5" />}
+                />
               </div>
             </div>
           </form>
-        </div>
+        </StudioModalOverlay>
       )}
 
       {/* Universal Sensitive Content Reporting Modal */}

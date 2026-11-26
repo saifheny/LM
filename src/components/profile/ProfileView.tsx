@@ -24,6 +24,7 @@ import {
   StylusEditIcon,
 } from '../shared/Icons2026Pro';
 import { ActionMenuOrb } from '../shared/ActionOrb2026';
+import { CloseOrbButton, PublishActionButton } from '../shared/ModalChrome2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface ProfileViewProps {
@@ -83,6 +84,7 @@ export function ProfileView({
   const [editCover, setEditCover] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingKind, setUploadingKind] = useState<'avatar' | 'cover' | null>(null);
+  const [profileUploadError, setProfileUploadError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -151,10 +153,13 @@ export function ProfileView({
     const f = e.target.files?.[0];
     if (!f) return;
     setUploadingKind(kind);
+    setProfileUploadError(null);
     try {
-      const up = await apiUploadFile(f);
+      const up = await apiUploadFile(f, kind === 'avatar' ? 'avatar' : 'cover');
       if (kind === 'avatar') setEditAvatar(up.url);
       else setEditCover(up.url);
+    } catch (err) {
+      setProfileUploadError(err instanceof Error ? err.message : 'تعذر رفع الصورة.');
     } finally {
       setUploadingKind(null);
       e.target.value = '';
@@ -816,8 +821,8 @@ export function ProfileView({
               onSubmit={saveProfile}
               className="w-full max-w-[490px] max-h-[90vh] overflow-y-auto rounded-[28px] bg-[#131319] border border-white/[0.13] shadow-2xl"
             >
-              <input ref={avatarInputRef} type="file" accept="image/*" onChange={e => handleImageUpload('avatar', e)} className="hidden" />
-              <input ref={coverInputRef} type="file" accept="image/*" onChange={e => handleImageUpload('cover', e)} className="hidden" />
+              <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => handleImageUpload('avatar', e)} className="hidden" />
+              <input ref={coverInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => handleImageUpload('cover', e)} className="hidden" />
 
               {/* Live Visual Preview Header inside Studio */}
               <div className="relative h-32 w-full bg-[#191922] overflow-hidden">
@@ -839,17 +844,16 @@ export function ProfileView({
                     <span>{uploadingKind === 'cover' ? 'جارٍ الرفع...' : 'صورة الغلاف'}</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setEditOpen(false)}
-                    className="w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white/80 hover:text-white flex items-center justify-center cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                  <CloseOrbButton onClick={() => setEditOpen(false)} />
                 </div>
               </div>
 
               <div className="px-5 pb-5 -mt-10 relative z-10 space-y-4">
+                {profileUploadError && (
+                  <div className="px-3.5 py-2 rounded-2xl bg-[#EF4444]/15 border border-[#FB7185]/35 text-xs text-[#FDA4AF]">
+                    {profileUploadError}
+                  </div>
+                )}
                 {/* Overlapping Live Avatar Editor */}
                 <div className="flex items-end gap-3.5">
                   <div className="relative">
@@ -923,11 +927,19 @@ export function ProfileView({
                   <button
                     type="button"
                     onClick={() => setEditOpen(false)}
-                    className="px-4 py-2 rounded-full bg-white/[0.06] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
+                    className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer"
                   >
                     إلغاء
                   </button>
-                  <ChromeArrowButton type="submit" disabled={savingProfile || !editName.trim()} size={40} title="حفظ التغييرات" />
+                  <PublishActionButton
+                    type="submit"
+                    variant="luminous"
+                    loading={savingProfile}
+                    disabled={!editName.trim()}
+                    label="حفظ التغييرات"
+                    loadingLabel="جارٍ الحفظ..."
+                    icon={<Check className="w-3.5 h-3.5" />}
+                  />
                 </div>
               </div>
             </motion.form>
@@ -953,14 +965,12 @@ export function ProfileView({
               onSubmit={saveEditedVideo}
               className="w-full max-w-[430px] rounded-[26px] bg-[#131319] border border-white/[0.13] p-5 space-y-3.5 shadow-2xl"
             >
-              <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+              <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.08]">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <StylusEditIcon className="w-4 h-4" />
                   <span>تعديل فيديو نبض</span>
                 </div>
-                <button type="button" onClick={() => setEditingVideo(null)} className="text-[#7A7A85] hover:text-white cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
+                <CloseOrbButton onClick={() => setEditingVideo(null)} />
               </div>
 
               <div className="space-y-1">
@@ -996,11 +1006,19 @@ export function ProfileView({
                 <button
                   type="button"
                   onClick={() => setEditingVideo(null)}
-                  className="px-4 py-2 rounded-full bg-white/[0.06] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
+                  className="h-9 px-4 rounded-full bg-white/[0.07] text-xs text-[#C4C4CC] hover:text-white cursor-pointer"
                 >
                   إلغاء
                 </button>
-                <ChromeArrowButton type="submit" disabled={savingVideo || !editVidTitle.trim()} size={38} title="حفظ" />
+                <PublishActionButton
+                  type="submit"
+                  variant="rose"
+                  loading={savingVideo}
+                  disabled={!editVidTitle.trim()}
+                  label="حفظ"
+                  loadingLabel="جارٍ الحفظ..."
+                  icon={<Check className="w-3.5 h-3.5" />}
+                />
               </div>
             </motion.form>
           </motion.div>
@@ -1022,15 +1040,13 @@ export function ProfileView({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.94 }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-[380px] max-h-[65vh] rounded-[24px] bg-[#131319] border border-white/[0.13] overflow-hidden shadow-2xl flex flex-col"
+              className="w-full max-w-[380px] max-h-[65vh] rounded-[26px] bg-[#131319] border border-white/[0.13] overflow-hidden shadow-2xl flex flex-col"
             >
               <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
                 <span className="text-xs font-semibold text-white">
                   {peopleSheet === 'followers' ? 'المتابِعون' : 'يتابع'}
                 </span>
-                <button type="button" onClick={() => setPeopleSheet(null)} className="text-[#7A7A85] hover:text-white cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
+                <CloseOrbButton size="sm" onClick={() => setPeopleSheet(null)} />
               </div>
               <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
                 {(peopleSheet === 'followers' ? followersList : followingList).length === 0 ? (

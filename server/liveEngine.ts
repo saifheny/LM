@@ -18,7 +18,49 @@ export interface RoomRuntimeState {
   platformCutPct: number;
   totalGiftsEgp: number;
   viewersCount: number;
+  likesCount: number;
 }
+
+const ROOM_SEED_CHATS: Record<
+  string,
+  {
+    initialLikes: number;
+    messages: Array<{ userId: string; displayName: string; username: string; initials: string; text: string }>;
+  }
+> = {
+  live_1: {
+    initialLikes: 1420,
+    messages: [
+      { userId: 'u_nour', displayName: 'نور حسن', username: 'nour', initials: 'نح', text: 'الأجواء من الزمالك الليلة هادية وجميلة جدًا' },
+      { userId: 'u_omar', displayName: 'عمر طارق', username: 'omar', initials: 'عط', text: 'الإضاءة الليلية في الكادر طالعة سينمائية بجد' },
+      { userId: 'u_karim', displayName: 'كريم فؤاد', username: 'karim', initials: 'كف', text: 'متابعين معاكي أول بأول يا مريم، بالتوفيق' },
+    ],
+  },
+  live_2: {
+    initialLikes: 980,
+    messages: [
+      { userId: 'u_mariam', displayName: 'مريم الشريف', username: 'mariam', initials: 'مش', text: 'عزف العود مع هدوء الليل مريح جدًا للأعصاب' },
+      { userId: 'u_youssef', displayName: 'يوسف المنصوري', username: 'youssef', initials: 'يم', text: 'ممكن مقطوعة هادية تاني بعد دي؟ الصوت نقي أوي' },
+      { userId: 'u_nour', displayName: 'نور حسن', username: 'nour', initials: 'نح', text: 'أحلى جلسة موسيقية على المنصة النهارده' },
+    ],
+  },
+  live_3: {
+    initialLikes: 1860,
+    messages: [
+      { userId: 'u_youssef', displayName: 'يوسف المنصوري', username: 'youssef', initials: 'يم', text: 'مقارنة نماذج 2026 المفتوحة والمغلقة ممتازة جدًا يا كريم' },
+      { userId: 'u_omar', displayName: 'عمر طارق', username: 'omar', initials: 'عط', text: 'هل أداء WebRTC المحلي هيكفي مع الضغط العالي ولا نحتاج LiveKit؟' },
+      { userId: 'u_mariam', displayName: 'مريم الشريف', username: 'mariam', initials: 'مش', text: 'يا ريت تتكلم كمان عن تحسين سرعة تحميل تطبيقات الويب على الموبايل' },
+    ],
+  },
+  live_4: {
+    initialLikes: 740,
+    messages: [
+      { userId: 'u_karim', displayName: 'كريم فؤاد', username: 'karim', initials: 'كف', text: 'العدسة المستخدمة في تصوير الكورنيش دي كام ملّي يا نور؟' },
+      { userId: 'u_omar', displayName: 'عمر طارق', username: 'omar', initials: 'عط', text: 'انعكاس الأنوار على النيل في اللقطة الأخيرة خيالي' },
+      { userId: 'u_youssef', displayName: 'يوسف المنصوري', username: 'youssef', initials: 'يم', text: 'جولة ممتعة جدًا، استمري في التصوير الليلي ده' },
+    ],
+  },
+};
 
 class LiveBroadcastEngine {
   private states = new Map<string, {
@@ -32,6 +74,7 @@ class LiveBroadcastEngine {
     platformCutPct: number;
     totalGiftsEgp: number;
     viewersCount: number;
+    likesCount: number;
   }>();
 
   private broadcaster: ((event: string, payload: unknown) => void) | null = null;
@@ -59,52 +102,32 @@ class LiveBroadcastEngine {
     if (this.states.has(roomId)) return this.states.get(roomId)!;
     const row = db.prepare('SELECT * FROM live_rooms WHERE id = ?').get(roomId) as Record<string, unknown> | undefined;
     const isUserCustomLive = row?.scene_preset === 'webrtc_live';
+    const seed = ROOM_SEED_CHATS[roomId];
+    const now = Date.now();
+    const initialMessages: LiveChatMessage[] = isUserCustomLive
+      ? []
+      : seed
+        ? seed.messages.map((m, idx) => ({
+            id: uuid(),
+            roomId,
+            userId: m.userId,
+            displayName: m.displayName,
+            username: m.username,
+            vipTier: 0 as const,
+            rankId: 'soldier' as const,
+            avatarColor: '#27272A',
+            avatarInitials: m.initials,
+            text: m.text,
+            createdAt: now - (seed.messages.length - idx) * 18000,
+          }))
+        : [];
+    const dbLikes = Number(row?.likes_count || 0);
+    const initialLikes = dbLikes > 0 ? dbLikes : isUserCustomLive ? 0 : (seed?.initialLikes ?? 320);
+
     const state = {
       activeHighlight: null as HighlightComment | null,
       highlightQueue: [] as HighlightComment[],
-      recentMessages: (isUserCustomLive
-        ? []
-        : [
-            {
-              id: uuid(),
-              roomId,
-              userId: 'u_nour',
-              displayName: 'نور حسن',
-              username: 'nour',
-              vipTier: 0 as const,
-              rankId: 'soldier' as const,
-              avatarColor: '#27272A',
-              avatarInitials: 'نح',
-              text: 'جودة الصوت والصورة نقية جدًا الليلة 🔥',
-              createdAt: Date.now() - 45000,
-            },
-            {
-              id: uuid(),
-              roomId,
-              userId: 'u_omar',
-              displayName: 'عمر طارق',
-              username: 'omar',
-              vipTier: 0 as const,
-              rankId: 'soldier' as const,
-              avatarColor: '#27272A',
-              avatarInitials: 'عط',
-              text: 'منورين البث يا شباب ✨🎙️',
-              createdAt: Date.now() - 25000,
-            },
-            {
-              id: uuid(),
-              roomId,
-              userId: 'u_karim',
-              displayName: 'كريم فؤاد',
-              username: 'karim',
-              vipTier: 0 as const,
-              rankId: 'soldier' as const,
-              avatarColor: '#27272A',
-              avatarInitials: 'كف',
-              text: 'متابعين معاكم من القاهرة ⚡',
-              createdAt: Date.now() - 10000,
-            },
-          ]) as LiveChatMessage[],
+      recentMessages: initialMessages,
       lastHighlightByUser: new Map<string, number>(),
       bannedUsers: new Set<string>(),
       highlightsEnabled: row ? Boolean(row.highlights_enabled) : true,
@@ -112,6 +135,7 @@ class LiveBroadcastEngine {
       platformCutPct: row ? Number(row.platform_cut_pct || 25) : 25,
       totalGiftsEgp: row ? Number(row.total_gifts_egp || 0) : 0,
       viewersCount: row ? Number(row.viewers_count ?? (isUserCustomLive ? 1 : 4200)) : 4200,
+      likesCount: initialLikes,
     };
     this.states.set(roomId, state);
     return state;
@@ -123,14 +147,28 @@ class LiveBroadcastEngine {
       roomId,
       activeHighlight: st.activeHighlight,
       highlightQueue: st.highlightQueue,
-      recentMessages: st.recentMessages.slice(-60),
+      recentMessages: st.recentMessages.slice(-250),
       highlightsEnabled: st.highlightsEnabled,
       cooldownSec: st.cooldownSec,
       bannedUserIds: Array.from(st.bannedUsers),
       platformCutPct: st.platformCutPct,
       totalGiftsEgp: st.totalGiftsEgp,
       viewersCount: st.viewersCount,
+      likesCount: st.likesCount,
     };
+  }
+
+  addLikes(roomId: string, count: number) {
+    const st = this.ensureRoom(roomId);
+    const delta = Math.max(1, Math.min(50, Math.floor(count || 1)));
+    st.likesCount += delta;
+    try {
+      db.prepare('UPDATE live_rooms SET likes_count = ? WHERE id = ?').run(st.likesCount, roomId);
+    } catch {
+      // ignore if room was transient
+    }
+    this.emitRoomState(roomId);
+    return { ok: true, likesCount: st.likesCount };
   }
 
   private emitRoomState(roomId: string) {
@@ -184,7 +222,7 @@ class LiveBroadcastEngine {
       createdAt: Date.now(),
     };
     st.recentMessages.push(msg);
-    if (st.recentMessages.length > 100) st.recentMessages.shift();
+    if (st.recentMessages.length > 250) st.recentMessages.shift();
     this.emitRoomState(roomId);
     return { ok: true, message: msg };
   }

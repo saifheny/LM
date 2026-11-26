@@ -346,9 +346,18 @@ export function initDatabase() {
       created_at TEXT DEFAULT (datetime('now')),
       UNIQUE(target_type, target_id, reporter_id)
     );
+
+    CREATE TABLE IF NOT EXISTS story_reactions (
+      id TEXT PRIMARY KEY,
+      story_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      reaction TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(story_id, user_id)
+    );
   `);
 
-  // Safe non-destructive migrations for V15/V19 columns on existing databases
+  // Safe non-destructive migrations for V15/V19/V20 columns on existing databases
   try {
     db.exec('ALTER TABLE video_comments ADD COLUMN is_edited INTEGER DEFAULT 0;');
   } catch {
@@ -361,6 +370,16 @@ export function initDatabase() {
   }
   try {
     db.exec('ALTER TABLE posts ADD COLUMN music_title TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE live_rooms ADD COLUMN likes_count INTEGER DEFAULT 0;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE ai_messages ADD COLUMN attachment_url TEXT;');
   } catch {
     // column already exists
   }

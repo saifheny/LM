@@ -42,6 +42,8 @@ export interface StoryItem {
   avatarUrl: string | null;
   mediaUrl: string;
   caption: string;
+  reactions?: Record<string, number>;
+  myReaction?: string | null;
   createdAt: string;
 }
 
@@ -268,6 +270,7 @@ export interface LiveRoomItem {
   videoUrl: string | null;
   scenePreset: string;
   viewersCount: number;
+  likesCount?: number;
   totalGiftsEgp: number;
   highlightsEnabled: boolean;
   cooldownSec: number;
@@ -287,6 +290,7 @@ export interface LiveRoomState {
   platformCutPct: number;
   totalGiftsEgp: number;
   viewersCount: number;
+  likesCount?: number;
 }
 
 export interface NotificationItem {

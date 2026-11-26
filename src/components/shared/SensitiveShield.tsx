@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Flag, ShieldAlert, X } from 'lucide-react';
+import { Check, Flag, ShieldAlert } from 'lucide-react';
 import { apiPost } from '../../lib/api';
+import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from './ModalChrome2026';
 
 export type ReportTargetType = 'post' | 'post_comment' | 'video' | 'video_comment' | 'live';
 
@@ -238,26 +239,14 @@ export function ReportContentModal({
   }
 
   return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-[85] bg-black/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4"
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        className="w-full md:max-w-[400px] rounded-t-[26px] md:rounded-[26px] bg-[#13131A]/98 border-t md:border border-white/[0.13] p-5 space-y-4 text-start shadow-2xl"
-      >
-        <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+    <StudioModalOverlay zClass="z-[85]" onClose={onClose}>
+      <div className="p-5 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
           <div className="flex items-center gap-2 text-sm font-bold text-white">
             <ShieldAlert className="w-4 h-4 text-[#FB7185]" />
             <span>إبلاغ عن {active.label || 'محتوى حساس'}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <CloseOrbButton onClick={onClose} />
         </div>
 
         {doneMsg ? (
@@ -301,23 +290,23 @@ export function ReportContentModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-full bg-white/[0.07] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
+                className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer transition-colors"
               >
                 إلغاء
               </button>
-              <button
+              <PublishActionButton
                 type="button"
-                disabled={submitting}
+                variant="rose"
+                loading={submitting}
                 onClick={submitReport}
-                className="px-5 py-2 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#FB7185] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
-              >
-                <Flag className="w-3.5 h-3.5" />
-                <span>{submitting ? 'جارٍ الإرسال...' : 'تأكيد الإبلاغ'}</span>
-              </button>
+                label="تأكيد الإبلاغ"
+                loadingLabel="جارٍ الإرسال..."
+                icon={<Flag className="w-3.5 h-3.5" />}
+              />
             </div>
           </>
         )}
       </div>
-    </div>
+    </StudioModalOverlay>
   );
 }

@@ -28,7 +28,9 @@ import {
   Upload,
   Volume2,
   VolumeX,
+  Send,
 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination } from 'swiper/modules';
 import 'swiper/css';
@@ -38,9 +40,10 @@ import { Lang, LicensedMusicTrack, PostCommentItem, PostPoll, ShortVideoItem, So
 import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
-import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReactions';
+import { FacebookReactionButton, REACTION_LIST, resolveReaction } from '../shared/TelegramReactions';
 import { NavAiIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
+import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import type { SharePayload } from '../shared/ShareSheetModal';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
@@ -56,6 +59,7 @@ interface SocialViewProps {
   onSelectHashtag?: (tag: string | null) => void;
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
+  onMessageUser?: (userId: string) => void;
   onOpenVideo?: (videoId: string) => void;
   onShare?: (payload: SharePayload) => void;
 }
@@ -81,6 +85,7 @@ export function SocialView({
   onSelectHashtag,
   onOpenProfile,
   onOpenProfileByUsername,
+  onMessageUser,
   onOpenVideo,
   onShare,
 }: SocialViewProps) {
@@ -90,6 +95,11 @@ export function SocialView({
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [myActiveStory, setMyActiveStory] = useState(false);
   const [activeStory, setActiveStory] = useState<StoryItem | null>(null);
+  const [storyReplyText, setStoryReplyText] = useState('');
+  const [sendingStoryReply, setSendingStoryReply] = useState(false);
+  const [storyFeedback, setStoryFeedback] = useState<string | null>(null);
+  const [storyBurstRx, setStoryBurstRx] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Unified Hashtag Hub (Returns BOTH Community Posts + Pulse Videos!)
   const [hashtagVideos, setHashtagVideos] = useState<ShortVideoItem[]>([]);
@@ -322,16 +332,63 @@ export function SocialView({
     setPlayingPostMusicId(postId);
   }
 
+  function notifyUploadError(err: unknown) {
+    const msg = err instanceof Error ? err.message : 'تعذر رفع الملف.';
+    setUploadError(msg);
+    setTimeout(() => setUploadError(cur => (cur === msg ? null : cur)), 3800);
+  }
+
+  async function handleStoryReact(storyId: string, reactionId: string) {
+    setStoryBurstRx(reactionId);
+    setTimeout(() => setStoryBurstRx(cur => (cur === reactionId ? null : cur)), 650);
+    try {
+      const res = await apiPost<{ ok: boolean; reactions: Record<string, number>; myReaction: string | null }>(
+        `/api/stories/${storyId}/react`,
+        { userId: user.id, reaction: reactionId }
+      );
+      setStories(prev =>
+        prev.map(s => (s.id === storyId ? { ...s, reactions: res.reactions, myReaction: res.myReaction } : s))
+      );
+      setActiveStory(prev =>
+        prev && prev.id === storyId ? { ...prev, reactions: res.reactions, myReaction: res.myReaction } : prev
+      );
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleStoryReplySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeStory || !storyReplyText.trim() || sendingStoryReply) return;
+    setSendingStoryReply(true);
+    try {
+      await apiPost(`/api/stories/${activeStory.id}/reply`, {
+        userId: user.id,
+        text: storyReplyText.trim(),
+      });
+      setStoryReplyText('');
+      setStoryFeedback('تم إرسال ردك في المحادثة');
+      setTimeout(() => setStoryFeedback(null), 2600);
+    } catch (err) {
+      setStoryFeedback(err instanceof Error ? err.message : 'تعذر إرسال الرد');
+      setTimeout(() => setStoryFeedback(null), 2600);
+    } finally {
+      setSendingStoryReply(false);
+    }
+  }
+
   async function handleCustomAudioSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
     setUploadingCustomAudio(true);
     try {
-      const up = await apiUploadFile(f);
+      const up = await apiUploadFile(f, 'music');
       const cleanTitle = f.name.replace(/\.[^.]+$/, '').slice(0, 48) || 'مقطع صوتي مخصص';
       setSelectedMusic({ url: up.url, title: cleanTitle });
       setMusicPickerOpen(false);
       stopPreviewMusic();
+    } catch (err) {
+      notifyUploadError(err);
     } finally {
       setUploadingCustomAudio(false);
       e.target.value = '';
@@ -343,8 +400,10 @@ export function SocialView({
     if (!f) return;
     setUploadingStory(true);
     try {
-      const up = await apiUploadFile(f);
+      const up = await apiUploadFile(f, 'story');
       setStoryMediaUrl(up.url);
+    } catch (err) {
+      notifyUploadError(err);
     } finally {
       setUploadingStory(false);
       e.target.value = '';
@@ -393,8 +452,12 @@ export function SocialView({
     const slice = files.slice(0, remainingSlots);
     const urls: string[] = [];
     for (const f of slice) {
-      const up = await apiUploadFile(f);
-      urls.push(up.url);
+      try {
+        const up = await apiUploadFile(f, 'post_image');
+        urls.push(up.url);
+      } catch (err) {
+        notifyUploadError(err);
+      }
     }
     if (urls.length > 0) {
       setUploadedMediaUrls(prev => [...prev, ...urls].slice(0, 4));
@@ -640,7 +703,7 @@ export function SocialView({
     if (invokeAi) setAiTypingPostId(postId);
 
     try {
-      const up = await apiUploadFile(file);
+      const up = await apiUploadFile(file, 'voice');
       await apiPost(`/api/posts/${postId}/comments`, {
         userId: user.id,
         content: '',
@@ -829,9 +892,16 @@ export function SocialView({
         )}
 
         {/* Hidden Multi-Image, Story & Custom Audio File Inputs */}
-        <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" />
-        <input ref={storyFileRef} type="file" accept="image/*,video/*" onChange={handleStoryFile} className="hidden" />
-        <input ref={customAudioRef} type="file" accept="audio/*" onChange={handleCustomAudioSelect} className="hidden" />
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={handleFileSelect} className="hidden" />
+        <input ref={storyFileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm" onChange={handleStoryFile} className="hidden" />
+        <input ref={customAudioRef} type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/webm" onChange={handleCustomAudioSelect} className="hidden" />
+
+        {uploadError && (
+          <div className="mx-4 mt-3 px-3.5 py-2.5 rounded-2xl bg-[#EF4444]/14 border border-[#FB7185]/35 text-xs text-[#FDA4AF] flex items-center justify-between gap-2">
+            <span>{uploadError}</span>
+            <CloseOrbButton size="xs" onClick={() => setUploadError(null)} />
+          </div>
+        )}
 
         {/* Inline Post Composer with Expand-to-Full-Page Trigger & Licensed Music Picker */}
         <form onSubmit={submitPost} className="px-4 py-4 border-b border-white/[0.07] flex gap-3 relative">
@@ -1015,10 +1085,13 @@ export function SocialView({
                 </button>
               </div>
 
-              <ChromeArrowButton
+              <PublishActionButton
                 type="submit"
-                disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0)}
-                size={36}
+                variant="luminous"
+                loading={publishing}
+                disabled={!draft.trim() && uploadedMediaUrls.length === 0}
+                label={lang === 'ar' ? 'نشر' : 'Post'}
+                loadingLabel="جارٍ النشر..."
               />
             </div>
           </div>
@@ -1762,11 +1835,13 @@ export function SocialView({
               </div>
             </div>
 
-            <ChromeArrowButton
+            <PublishActionButton
               type="submit"
-              disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0)}
-              size={40}
-              title="نشر"
+              variant="luminous"
+              loading={publishing}
+              disabled={!draft.trim() && uploadedMediaUrls.length === 0}
+              label="نشر المنشور"
+              loadingLabel="جارٍ النشر..."
             />
           </div>
 
@@ -1920,16 +1995,12 @@ export function SocialView({
               >
                 <Download className="w-4 h-4" />
               </a>
-              <button
-                type="button"
+              <CloseOrbButton
                 onClick={() => {
                   setLightbox(null);
                   setLightboxZoomed(false);
                 }}
-                className="w-9 h-9 rounded-full bg-white/[0.08] hover:bg-white/[0.16] text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              />
             </div>
           </div>
 
@@ -1983,19 +2054,41 @@ export function SocialView({
         </div>
       )}
 
-      {/* Story Viewer (Supports Image & Video Stories + Own Story Removal) */}
+      {/* Story Viewer (Image & Video Stories + Interactive Reactions + Direct DM Reply!) */}
       {activeStory && (
-        <div onClick={() => setActiveStory(null)} className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
+        <div
+          onClick={() => {
+            setActiveStory(null);
+            setStoryReplyText('');
+            setStoryFeedback(null);
+          }}
+          className="fixed inset-0 z-[70] bg-black/94 backdrop-blur-md flex items-center justify-center p-3 sm:p-4"
+        >
           <div
             onClick={e => e.stopPropagation()}
-            className="relative w-full max-w-[400px] h-[82vh] rounded-3xl overflow-hidden border border-white/[0.12] bg-black"
+            className="relative w-full max-w-[420px] h-[86vh] rounded-[30px] overflow-hidden border border-white/[0.14] bg-black shadow-[0_32px_90px_rgba(0,0,0,0.9)]"
           >
             {isVideoMediaUrl(activeStory.mediaUrl) ? (
               <video src={activeStory.mediaUrl} autoPlay loop playsInline className="w-full h-full object-cover" />
             ) : (
               <img src={activeStory.mediaUrl} alt="" className="w-full h-full object-cover" />
             )}
-            <div className="absolute inset-x-0 top-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between gap-2">
+
+            {/* Floating Story Reaction Burst Animation */}
+            {storyBurstRx && (
+              <motion.div
+                key={`sburst_${storyBurstRx}_${Date.now()}`}
+                initial={{ opacity: 0, scale: 0.4, y: 24 }}
+                animate={{ opacity: [0, 1, 1, 0], scale: [0.4, 1.45, 1.2, 1.5], y: [24, -18, -45, -80] }}
+                transition={{ duration: 0.65 }}
+                className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
+              >
+                {resolveReaction(storyBurstRx).renderIcon(56)}
+              </motion.div>
+            )}
+
+            {/* Top Header */}
+            <div className="absolute inset-x-0 top-0 z-20 p-4 bg-gradient-to-b from-black/82 via-black/35 to-transparent flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -2017,59 +2110,132 @@ export function SocialView({
                     <QuickRemovePill onRemove={() => deleteStory(activeStory.id)} />
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setActiveStory(null)}
-                  className="w-8 h-8 rounded-full bg-black/55 border border-white/15 text-white flex items-center justify-center cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            {activeStory.caption && (
-              <div className="absolute inset-x-0 bottom-0 p-5 bg-gradient-to-t from-black/90 to-transparent text-sm text-white">
-                <RichMessageText
-                  text={activeStory.caption}
-                  onMentionClick={handle => {
+                <CloseOrbButton
+                  onClick={() => {
                     setActiveStory(null);
-                    onOpenProfileByUsername?.(handle);
-                  }}
-                  onHashtagClick={tag => {
-                    setActiveStory(null);
-                    onSelectHashtag?.(tag);
+                    setStoryReplyText('');
+                    setStoryFeedback(null);
                   }}
                 />
               </div>
-            )}
+            </div>
+
+            {/* Bottom Interactive Stage: Caption + Sculpted Reaction Strip + Direct DM Reply Composer */}
+            <div className="absolute inset-x-0 bottom-0 z-20 p-4 pt-12 bg-gradient-to-t from-black/95 via-black/75 to-transparent space-y-3">
+              {activeStory.caption && (
+                <div className="text-sm text-white leading-relaxed drop-shadow">
+                  <RichMessageText
+                    text={activeStory.caption}
+                    onMentionClick={handle => {
+                      setActiveStory(null);
+                      onOpenProfileByUsername?.(handle);
+                    }}
+                    onHashtagClick={tag => {
+                      setActiveStory(null);
+                      onSelectHashtag?.(tag);
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Sculpted Floating Story Reactions Strip (Like, Love, Fire, Haha, Wow, etc.) */}
+              <div className="flex items-center justify-between gap-1 px-2 py-1.5 rounded-full bg-black/55 backdrop-blur-xl border border-white/[0.12]">
+                {REACTION_LIST.slice(0, 6).map(rx => {
+                  const chosen = activeStory.myReaction === rx.id;
+                  const count = activeStory.reactions?.[rx.id] || 0;
+                  return (
+                    <motion.button
+                      key={rx.id}
+                      type="button"
+                      whileHover={{ scale: 1.18, y: -2 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => handleStoryReact(activeStory.id, rx.id)}
+                      title={rx.label}
+                      className={`px-2 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-colors ${
+                        chosen ? 'bg-white/[0.18] ring-1 ring-white/35' : 'hover:bg-white/[0.08]'
+                      }`}
+                    >
+                      {rx.renderIcon(22)}
+                      {count > 0 && (
+                        <span className="text-[10.5px] font-mono-num font-semibold text-white">{count}</span>
+                      )}
+                    </motion.button>
+                  );
+                })}
+              </div>
+
+              {storyFeedback && (
+                <div className="px-3 py-1.5 rounded-full bg-[#10B981]/20 border border-[#34D399]/40 text-[11px] text-[#6EE7B7] flex items-center justify-between gap-2">
+                  <span>{storyFeedback}</span>
+                  {activeStory.userId !== user.id && onMessageUser && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetUid = activeStory.userId;
+                        setActiveStory(null);
+                        onMessageUser(targetUid);
+                      }}
+                      className="font-bold text-white underline cursor-pointer"
+                    >
+                      فتح المحادثة
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Direct Reply to Story Author (Sends straight to real 1-on-1 DM!) */}
+              {activeStory.userId !== user.id && (
+                <form onSubmit={handleStoryReplySubmit} className="flex items-center gap-2">
+                  <input
+                    value={storyReplyText}
+                    onChange={e => setStoryReplyText(e.target.value)}
+                    placeholder={`رد على قصة ${activeStory.displayName.split(' ')[0]}...`}
+                    className="flex-1 h-10 rounded-full bg-black/60 backdrop-blur-xl border border-white/[0.18] focus:border-white/40 px-4 text-xs text-white placeholder:text-white/55 outline-none transition-colors"
+                  />
+                  {storyReplyText.trim() ? (
+                    <button
+                      type="submit"
+                      disabled={sendingStoryReply}
+                      title="إرسال الرد"
+                      className="w-10 h-10 rounded-full bg-white text-black hover:opacity-90 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-40 transition-opacity"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    onMessageUser && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetUid = activeStory.userId;
+                          setActiveStory(null);
+                          onMessageUser(targetUid);
+                        }}
+                        title={`مراسلة ${activeStory.displayName}`}
+                        className="w-10 h-10 rounded-full bg-white/[0.1] hover:bg-white/[0.2] border border-white/[0.18] text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                      </button>
+                    )
+                  )}
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Story Studio Upload Modal */}
+      {/* 2026 Story Studio Upload Modal */}
       {storyStudioOpen && (
-        <div
-          onClick={() => setStoryStudioOpen(false)}
-          className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-center justify-center p-4"
-        >
-          <form
-            onClick={e => e.stopPropagation()}
-            onSubmit={publishStory}
-            className="w-full max-w-[400px] rounded-[28px] bg-[#13131A]/98 border border-white/[0.13] overflow-hidden shadow-2xl text-start"
-          >
+        <StudioModalOverlay onClose={() => setStoryStudioOpen(false)}>
+          <form onSubmit={publishStory}>
             <div className="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
               <span className="text-sm font-bold text-white">إنشاء قصة جديدة</span>
-              <button
-                type="button"
-                onClick={() => setStoryStudioOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <CloseOrbButton onClick={() => setStoryStudioOpen(false)} />
             </div>
 
             <div className="p-4 space-y-3.5">
               {storyMediaUrl ? (
-                <div className="relative aspect-[9/13] max-h-[52vh] mx-auto rounded-2xl overflow-hidden border border-white/[0.12] bg-black">
+                <div className="relative aspect-[9/13] max-h-[50vh] mx-auto rounded-2xl overflow-hidden border border-white/[0.12] bg-black">
                   {isVideoMediaUrl(storyMediaUrl) ? (
                     <video src={storyMediaUrl} autoPlay loop muted playsInline className="w-full h-full object-cover" />
                   ) : (
@@ -2093,16 +2259,16 @@ export function SocialView({
                   type="button"
                   disabled={uploadingStory}
                   onClick={() => storyFileRef.current?.click()}
-                  className="w-full aspect-[9/11] max-h-[44vh] rounded-2xl border border-dashed border-white/[0.18] hover:border-[#FB7185]/60 bg-[#0B0B0F] flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors group"
+                  className="w-full aspect-[9/11] max-h-[42vh] rounded-2xl border border-dashed border-white/[0.18] hover:border-[#FB7185]/60 bg-[#0B0B0F] flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors group"
                 >
                   <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#F59E0B]/20 via-[#FB7185]/20 to-[#FF2D55]/20 border border-[#FB7185]/35 flex items-center justify-center text-[#FB7185] group-hover:scale-105 transition-transform">
                     <ImageIcon className="w-6 h-6" />
                   </div>
                   <div className="text-center space-y-1">
                     <div className="text-xs font-semibold text-white">
-                      {uploadingStory ? 'جارٍ الرفع...' : 'اختر صورة أو فيديو قصير لقصتك'}
+                      {uploadingStory ? 'جارٍ الفحص والرفع...' : 'اختر صورة أو فيديو قصير لقصتك'}
                     </div>
-                    <div className="text-[11px] text-[#7A7A85]">JPG · PNG · MP4 · WEBM</div>
+                    <div className="text-[11px] text-[#7A7A85]">JPG · PNG · WebP (10MB) · MP4 · WEBM (35MB)</div>
                   </div>
                 </button>
               )}
@@ -2118,51 +2284,45 @@ export function SocialView({
                 <button
                   type="button"
                   onClick={() => setStoryStudioOpen(false)}
-                  className="px-4 py-2 rounded-full bg-white/[0.07] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
+                  className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer transition-colors"
                 >
                   إلغاء
                 </button>
-                <button
+                <PublishActionButton
                   type="submit"
-                  disabled={!storyMediaUrl || publishingStory}
-                  className="px-5 py-2 rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] text-white text-xs font-bold disabled:opacity-35 cursor-pointer shadow-lg"
-                >
-                  {publishingStory ? 'جارٍ النشر...' : 'نشر القصة'}
-                </button>
+                  variant="rose"
+                  loading={publishingStory}
+                  disabled={!storyMediaUrl}
+                  label="نشر القصة"
+                  loadingLabel="جارٍ النشر..."
+                />
               </div>
             </div>
           </form>
-        </div>
+        </StudioModalOverlay>
       )}
 
       {/* Licensed Royalty-Free Studio Music Library Modal (CC0 + Custom Audio Upload) */}
       {musicPickerOpen && (
-        <div
-          onClick={() => {
+        <StudioModalOverlay
+          zClass="z-[75]"
+          onClose={() => {
             stopPreviewMusic();
             setMusicPickerOpen(false);
           }}
-          className="fixed inset-0 z-[75] bg-black/82 backdrop-blur-md flex items-end md:items-center justify-center p-0 md:p-4"
         >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="w-full md:max-w-[440px] max-h-[82vh] rounded-t-[28px] md:rounded-[28px] bg-[#13131A]/98 border-t md:border border-white/[0.13] overflow-hidden flex flex-col text-start shadow-2xl"
-          >
+          <div className="max-h-[82vh] flex flex-col">
             <div className="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Music className="w-4 h-4 text-[#34D399]" />
                 <span className="text-sm font-bold text-white">مكتبة الموسيقى المجانية المرخّصة</span>
               </div>
-              <button
-                type="button"
+              <CloseOrbButton
                 onClick={() => {
                   stopPreviewMusic();
                   setMusicPickerOpen(false);
                 }}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              />
             </div>
 
             <div className="p-4 space-y-2.5 overflow-y-auto">
@@ -2241,7 +2401,7 @@ export function SocialView({
               </div>
             </div>
           </div>
-        </div>
+        </StudioModalOverlay>
       )}
 
       {/* Universal Sensitive Content Reporting Modal */}

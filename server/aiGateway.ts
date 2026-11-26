@@ -19,43 +19,34 @@ export interface AiChatRequest {
   attachmentName?: string | null;
 }
 
-const MIME_BY_EXT: Record<string, string> = {
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
-  '.pdf': 'application/pdf',
 };
 
-const TEXT_EXTS = new Set([
-  '.txt', '.md', '.json', '.csv', '.ts', '.tsx', '.js', '.jsx', '.py', '.html', '.css', '.sql', '.xml', '.yml', '.yaml', '.log',
-]);
-
-function resolveAttachmentPayload(attachmentUrl?: string | null, attachmentName?: string | null): {
+function resolveAttachmentPayload(attachmentUrl?: string | null, _attachmentName?: string | null): {
   inlineData?: { mimeType: string; data: string };
   extractedText?: string;
 } {
   if (!attachmentUrl || !attachmentUrl.startsWith('/uploads/')) return {};
   const rel = attachmentUrl.replace(/^\/uploads\//, '').replace(/\.\./g, '');
-  const fullPath = path.join(UPLOADS_DIR, rel);
-  if (!fs.existsSync(fullPath)) return {};
+  const fullPath = path.resolve(UPLOADS_DIR, rel);
+  if (!fullPath.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(fullPath)) return {};
   const ext = path.extname(fullPath).toLowerCase();
+  // LM AI strictly accepts verified images only (max 8MB)
+  const mime = IMAGE_MIME_BY_EXT[ext];
+  if (!mime) return {};
   try {
     const stat = fs.statSync(fullPath);
-    if (stat.size > 14 * 1024 * 1024) return {};
-    if (MIME_BY_EXT[ext]) {
-      const b64 = fs.readFileSync(fullPath).toString('base64');
-      return { inlineData: { mimeType: MIME_BY_EXT[ext], data: b64 } };
-    }
-    if (TEXT_EXTS.has(ext) && stat.size < 250_000) {
-      const raw = fs.readFileSync(fullPath, 'utf-8').slice(0, 22_000);
-      return { extractedText: `[محتوى الملف المرفق (${attachmentName || path.basename(fullPath)})]:\n${raw}` };
-    }
+    if (stat.size <= 0 || stat.size > 8 * 1024 * 1024) return {};
+    const b64 = fs.readFileSync(fullPath).toString('base64');
+    return { inlineData: { mimeType: mime, data: b64 } };
   } catch {
-    // ignore unreadable file
+    return {};
   }
-  return {};
 }
 
 export interface AiChatResponse {

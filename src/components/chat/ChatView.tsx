@@ -25,6 +25,7 @@ import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramR
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { NavAiIcon, TelegramVideoNoteIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb } from '../shared/ActionOrb2026';
+import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import type { CallLaunchRequest } from '../shared/WebRtcCallModal';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
@@ -356,7 +357,7 @@ export function ChatView({
             const actualType = mimeType || rec.mimeType || 'video/webm';
             const blob = new Blob(noteChunksRef.current, { type: actualType });
             const file = new File([blob], `videonote-${Date.now()}.${ext}`, { type: actualType });
-            const up = await apiUploadFile(file);
+            const up = await apiUploadFile(file, 'chat_media');
             await apiPost(`/api/conversations/${activeConvId}/messages`, {
               senderId: user.id,
               content: 'رسالة فيديو دائرية',
@@ -583,18 +584,24 @@ export function ChatView({
 
   async function handleAttachFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
-    if (!f || !activeConvId) return;
-    const up = await apiUploadFile(f);
-    const isVideo = f.type.startsWith('video/');
-    const isImage = f.type.startsWith('image/');
-    await apiPost(`/api/conversations/${activeConvId}/messages`, {
-      senderId: user.id,
-      content: isImage ? 'صورة' : isVideo ? 'فيديو' : f.name,
-      msgType: isImage ? 'image' : isVideo ? 'video_note' : 'file',
-      mediaUrl: up.url,
-    });
     e.target.value = '';
-    loadMessages(activeConvId);
+    if (!f || !activeConvId) return;
+    try {
+      const up = await apiUploadFile(f, 'chat_media');
+      const isVideo = up.category === 'video' || f.type.startsWith('video/');
+      const isImage = up.category === 'image' || f.type.startsWith('image/');
+      const isAudio = up.category === 'audio' || f.type.startsWith('audio/');
+      await apiPost(`/api/conversations/${activeConvId}/messages`, {
+        senderId: user.id,
+        content: isImage ? 'صورة' : isVideo ? 'فيديو' : isAudio ? 'ملف صوتي' : f.name,
+        msgType: isImage ? 'image' : isVideo ? 'video_note' : isAudio ? 'audio' : 'file',
+        mediaUrl: up.url,
+      });
+      loadMessages(activeConvId);
+    } catch (err) {
+      setVideoNoteError(err instanceof Error ? err.message : 'تعذر رفع هذا الملف لأسباب أمنية أو تجاوز الحجم.');
+      setTimeout(() => setVideoNoteError(null), 4000);
+    }
   }
 
   async function handleSendVoice(file: File, _durationSec: number, liveTranscript?: string | null) {
@@ -612,7 +619,7 @@ export function ChatView({
 
     if (shouldInvokeAi) setAiTypingConvId(convTargetId);
     try {
-      const up = await apiUploadFile(file);
+      const up = await apiUploadFile(file, 'voice');
       const contextSnippet = explicitShared
         ? `${explicitShared.displayName}: ${explicitShared.transcript || explicitShared.content}`
         : activeReply && shouldInvokeAi
@@ -1360,7 +1367,20 @@ export function ChatView({
                 </div>
               )}
 
-              <input ref={fileInputRef} type="file" onChange={handleAttachFile} className="hidden" />
+              {videoNoteError && !recordingVideoNote && (
+                <div className="px-3.5 py-2 rounded-2xl bg-[#EF4444]/15 border border-[#FB7185]/35 text-xs text-[#FDA4AF] flex items-center justify-between gap-2">
+                  <span>{videoNoteError}</span>
+                  <CloseOrbButton size="xs" onClick={() => setVideoNoteError(null)} />
+                </div>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,audio/mpeg,audio/wav,audio/ogg,audio/mp4,application/pdf"
+                onChange={handleAttachFile}
+                className="hidden"
+              />
 
               <div className="flex items-end gap-2">
                 {/* Split Orb: Expands upward into "إرفاق ملف" + "الشريط السفلي"! */}
@@ -1448,18 +1468,13 @@ export function ChatView({
         )}
       </section>
 
-      {/* New Chat Modal: Real 1-on-1 DM User Search + Group + Community */}
+      {/* 2026 New Chat Modal: Real 1-on-1 DM User Search + Group + Community */}
       {newChatOpen && (
-        <div onClick={() => setNewChatOpen(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div
-            onClick={e => e.stopPropagation()}
-            className="w-full max-w-[400px] rounded-[24px] bg-[#131318] border border-white/[0.12] p-5 space-y-3.5 shadow-2xl"
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
-              <span className="text-sm font-semibold text-white">محادثة جديدة</span>
-              <button type="button" onClick={() => setNewChatOpen(false)} className="text-[#7A7A85] hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
+        <StudioModalOverlay onClose={() => setNewChatOpen(false)}>
+          <div className="p-5 space-y-3.5">
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+              <span className="text-sm font-bold text-white">محادثة جديدة</span>
+              <CloseOrbButton onClick={() => setNewChatOpen(false)} />
             </div>
 
             <div className="flex items-center gap-1.5 text-xs">
@@ -1528,12 +1543,12 @@ export function ChatView({
                   value={newChatTitle}
                   onChange={e => setNewChatTitle(e.target.value)}
                   placeholder={newChatType === 'group' ? 'اسم المجموعة...' : 'اسم المجتمع...'}
-                  className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
+                  className="w-full h-11 rounded-2xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
                 />
                 <button
                   type="button"
                   onClick={() => setNewChatAiEnabled(v => !v)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                  className={`w-full px-3.5 py-2.5 rounded-2xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
                     newChatAiEnabled
                       ? 'bg-white/[0.08] border-white/25 text-white'
                       : 'bg-[#0A0A0C] border-white/[0.08] text-[#8E8E93]'
@@ -1546,12 +1561,17 @@ export function ChatView({
                   <span className={`w-2.5 h-2.5 rounded-full ${newChatAiEnabled ? 'bg-[#22C55E]' : 'bg-[#585860]'}`} />
                 </button>
                 <div className="flex justify-end pt-1">
-                  <ChromeArrowButton type="submit" disabled={!newChatTitle.trim()} size={38} />
+                  <PublishActionButton
+                    type="submit"
+                    variant="luminous"
+                    disabled={!newChatTitle.trim()}
+                    label={newChatType === 'group' ? 'إنشاء المجموعة' : 'إنشاء المجتمع'}
+                  />
                 </div>
               </form>
             )}
           </div>
-        </div>
+        </StudioModalOverlay>
       )}
     </div>
   );

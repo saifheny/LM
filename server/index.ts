@@ -18,6 +18,7 @@ import {
   rankFeedItems,
   recordUserInteraction,
 } from './recommendEngine.ts';
+import { enforceCanonicalExtension, verifyUploadedFile } from './uploadSecurity.ts';
 import { CountryCode } from './types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,17 +26,26 @@ initDatabase();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
-app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.json({ limit: '16mb' }));
+app.use(
+  '/uploads',
+  (_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; sandbox");
+    next();
+  },
+  express.static(UPLOADS_DIR)
+);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').slice(0, 10) || '.bin';
-    cb(null, `${Date.now()}-${uuid().slice(0, 8)}${ext}`);
+  filename: (_req, _file, cb) => {
+    // Never trust user extension prior to binary magic-byte inspection!
+    cb(null, `${Date.now()}-${uuid().slice(0, 10)}.tmp`);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 80 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 65 * 1024 * 1024, files: 1 } });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -154,14 +164,51 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'LM Core v6', wsClients: wsClients.size });
 });
 
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ ok: false, error: 'لم يتم إرسال أي ملف.' });
-  res.json({
-    ok: true,
-    url: `/uploads/${req.file.filename}`,
-    originalName: req.file.originalname,
-    mimeType: req.file.mimetype,
-    size: req.file.size,
+app.post('/api/upload', (req, res) => {
+  upload.single('file')(req, res, err => {
+    if (err) {
+      const code = (err as { code?: string }).code;
+      if (code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ ok: false, error: 'حجم الملف يتجاوز الحد الأقصى المسموح على المنصة (65MB).' });
+      }
+      return res.status(400).json({ ok: false, error: 'تعذر استلام الملف المرفوع.' });
+    }
+    if (!req.file) return res.status(400).json({ ok: false, error: 'لم يتم إرسال أي ملف.' });
+
+    const uploadContext = String(req.query.context || req.body?.context || 'general');
+    const verdict = verifyUploadedFile(req.file.path, req.file.mimetype, uploadContext);
+    if (!verdict.ok) {
+      try {
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      } catch {
+        // ignore cleanup error
+      }
+      return res.status(400).json({ ok: false, error: verdict.error, code: verdict.code });
+    }
+
+    let finalPath = req.file.path;
+    try {
+      finalPath = enforceCanonicalExtension(req.file.path, verdict.extension);
+    } catch {
+      try {
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      } catch {
+        // ignore
+      }
+      return res.status(500).json({ ok: false, error: 'تعذر حفظ الملف بعد فحصه أمنيًا.' });
+    }
+
+    const safeFilename = path.basename(finalPath);
+    res.json({
+      ok: true,
+      url: `/uploads/${safeFilename}`,
+      originalName: path.basename(req.file.originalname || safeFilename).slice(0, 120),
+      mimeType: verdict.mimeType,
+      category: verdict.category,
+      size: verdict.size,
+      width: verdict.width,
+      height: verdict.height,
+    });
   });
 });
 
@@ -986,6 +1033,20 @@ app.get('/api/stories', (req, res) => {
 
   const myActiveStory = viewerId ? rows.some(r => String(r.user_id) === viewerId) : false;
 
+  const allStoryRx = db.prepare('SELECT story_id, user_id, reaction FROM story_reactions').all() as Array<{
+    story_id: string;
+    user_id: string;
+    reaction: string;
+  }>;
+  const rxByStory = new Map<string, Record<string, number>>();
+  const myStoryRx = new Map<string, string>();
+  for (const rx of allStoryRx) {
+    const bucket = rxByStory.get(rx.story_id) || {};
+    bucket[rx.reaction] = (bucket[rx.reaction] || 0) + 1;
+    rxByStory.set(rx.story_id, bucket);
+    if (viewerId && rx.user_id === viewerId) myStoryRx.set(rx.story_id, rx.reaction);
+  }
+
   res.json({
     ok: true,
     myActiveStory,
@@ -999,9 +1060,130 @@ app.get('/api/stories', (req, res) => {
       avatarUrl: r.avatar_url,
       mediaUrl: r.media_url,
       caption: r.caption,
+      reactions: rxByStory.get(String(r.id)) || {},
+      myReaction: myStoryRx.get(String(r.id)) || null,
       createdAt: r.created_at,
     })),
   });
+});
+
+app.post('/api/stories/:id/react', (req, res) => {
+  const storyId = req.params.id;
+  const { userId, reaction } = req.body as { userId?: string; reaction?: string };
+  if (!userId || !reaction) return res.status(400).json({ ok: false, error: 'بيانات التفاعل غير مكتملة.' });
+  const story = db.prepare('SELECT id, user_id, caption FROM stories WHERE id = ?').get(storyId) as
+    | { id: string; user_id: string; caption?: string }
+    | undefined;
+  if (!story) return res.status(404).json({ ok: false, error: 'القصة غير موجودة.' });
+
+  const existing = db.prepare('SELECT id, reaction FROM story_reactions WHERE story_id = ? AND user_id = ?').get(storyId, userId) as
+    | { id: string; reaction: string }
+    | undefined;
+
+  let myReaction: string | null = reaction;
+  if (existing && existing.reaction === reaction) {
+    db.prepare('DELETE FROM story_reactions WHERE id = ?').run(existing.id);
+    myReaction = null;
+  } else if (existing) {
+    db.prepare('UPDATE story_reactions SET reaction = ? WHERE id = ?').run(reaction, existing.id);
+  } else {
+    db.prepare('INSERT INTO story_reactions (id, story_id, user_id, reaction) VALUES (?, ?, ?, ?)').run(
+      `srx_${uuid().slice(0, 8)}`,
+      storyId,
+      userId,
+      reaction
+    );
+  }
+
+  const rxRows = db.prepare('SELECT reaction FROM story_reactions WHERE story_id = ?').all(storyId) as Array<{ reaction: string }>;
+  const reactions: Record<string, number> = {};
+  for (const r of rxRows) reactions[r.reaction] = (reactions[r.reaction] || 0) + 1;
+
+  if (myReaction) {
+    createNotification({
+      userId: story.user_id,
+      actorId: userId,
+      type: 'react',
+      text: 'تفاعل مع قصتك الآن',
+      refTab: 'social',
+      refId: storyId,
+    });
+    recordUserInteraction({
+      userId,
+      targetType: 'story',
+      targetId: storyId,
+      authorId: story.user_id,
+      text: story.caption || '',
+      action: 'react',
+      weight: 3,
+    });
+  }
+
+  broadcast('story:new', { id: storyId, reaction: myReaction });
+  res.json({ ok: true, reactions, myReaction });
+});
+
+app.post('/api/stories/:id/reply', (req, res) => {
+  const storyId = req.params.id;
+  const { userId, text } = req.body as { userId?: string; text?: string };
+  const cleanText = (text || '').trim();
+  if (!userId || !cleanText) return res.status(400).json({ ok: false, error: 'اكتب رسالتك للرد على القصة.' });
+
+  const story = db.prepare('SELECT id, user_id, media_url, caption FROM stories WHERE id = ?').get(storyId) as
+    | { id: string; user_id: string; media_url: string; caption?: string }
+    | undefined;
+  if (!story) return res.status(404).json({ ok: false, error: 'القصة غير موجودة.' });
+  if (story.user_id === userId) {
+    return res.status(400).json({ ok: false, error: 'لا يمكنك مراسلة نفسك من قصتك.' });
+  }
+  const author = getUserOrNull(story.user_id);
+  if (!author) return res.status(404).json({ ok: false, error: 'صاحب القصة غير موجود.' });
+
+  // Find or create real 1-on-1 DM conversation between viewer and story author
+  const dmKey = [userId, story.user_id].sort().join('::');
+  let conv = db.prepare("SELECT id FROM conversations WHERE type = 'dm' AND dm_key = ?").get(dmKey) as { id: string } | undefined;
+  if (!conv) {
+    const convId = `c_dm_${uuid().slice(0, 8)}`;
+    db.prepare(`
+      INSERT INTO conversations (
+        id, type, folder, title, description, avatar_color, avatar_url,
+        online_text, is_pinned, unread_count, is_encrypted, member_count, ai_enabled, creator_id, dm_key, peer_user_id
+      ) VALUES (?, 'dm', 'personal', ?, ?, '#27272A', ?, 'متصل الآن', 0, 0, 1, 2, 0, ?, ?, ?)
+    `).run(convId, author.displayName, author.bio || `@${author.username}`, author.avatarUrl, userId, dmKey, author.id);
+    conv = { id: convId };
+  }
+
+  const msgId = `m_${uuid().slice(0, 8)}`;
+  const storyPreviewText = story.caption ? `رد على قصتك (${story.caption.slice(0, 40)})` : 'رد على قصتك';
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  db.prepare(`
+    INSERT INTO messages (
+      id, conversation_id, sender_id, content, msg_type, media_url, reply_sender, reply_text, created_at
+    ) VALUES (?, ?, ?, ?, 'text', NULL, ?, ?, ?)
+  `).run(msgId, conv.id, userId, cleanText, author.displayName, storyPreviewText, timeStr);
+
+  db.prepare('UPDATE conversations SET unread_count = unread_count + 1 WHERE id = ?').run(conv.id);
+
+  createNotification({
+    userId: story.user_id,
+    actorId: userId,
+    type: 'message',
+    text: `ردّ على قصتك: ${cleanText.slice(0, 45)}`,
+    refTab: 'chat',
+    refId: conv.id,
+  });
+  recordUserInteraction({
+    userId,
+    targetType: 'story',
+    targetId: storyId,
+    authorId: story.user_id,
+    text: `${story.caption || ''} ${cleanText}`,
+    action: 'comment',
+    weight: 6,
+  });
+
+  broadcast('chat:message', { conversationId: conv.id, msgId });
+  res.json({ ok: true, conversationId: conv.id, messageId: msgId });
 });
 
 app.post('/api/stories', (req, res) => {
@@ -2307,17 +2489,18 @@ app.get('/api/live/rooms', (req, res) => {
       videoUrl: r.video_url,
       scenePreset: r.scene_preset,
       viewersCount: runtime.viewersCount,
+      likesCount: runtime.likesCount,
       totalGiftsEgp: runtime.totalGiftsEgp,
       highlightsEnabled: runtime.highlightsEnabled,
       cooldownSec: runtime.cooldownSec,
       hasActiveStory: storyUsers.has(String(r.host_id)),
       reportsCount: rCnt,
       isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
-      // ranking fields
+      // ranking fields: live popularity grows directly with taps/likes + active comments + viewers!
       authorId: String(r.host_id),
       text: `${String(r.title || '')} ${String(r.category || '')}`,
-      likes: runtime.viewersCount / 40,
-      comments: runtime.recentMessages.length,
+      likes: runtime.likesCount + runtime.viewersCount / 30,
+      comments: runtime.recentMessages.length * 4,
       views: runtime.viewersCount,
       recencyIndex: idx,
       isOwnFresh: r.scene_preset === 'webrtc_live',
@@ -2397,6 +2580,41 @@ app.post('/api/live/rooms/:id/comment', (req, res) => {
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
   const result = liveEngine.addNormalComment(req.params.id, user, text);
   if (!result.ok) return res.status(400).json(result);
+  const room = db.prepare('SELECT host_id, title, category FROM live_rooms WHERE id = ?').get(req.params.id) as
+    | { host_id: string; title: string; category: string }
+    | undefined;
+  if (room) {
+    recordUserInteraction({
+      userId,
+      targetType: 'live',
+      targetId: req.params.id,
+      authorId: room.host_id,
+      text: `${room.title} ${room.category}`,
+      action: 'comment',
+      weight: 4,
+    });
+  }
+  res.json(result);
+});
+
+app.post('/api/live/rooms/:id/like', (req, res) => {
+  const { userId, count } = req.body as { userId?: string; count?: number };
+  const room = db.prepare('SELECT id, host_id, title, category FROM live_rooms WHERE id = ?').get(req.params.id) as
+    | { id: string; host_id: string; title: string; category: string }
+    | undefined;
+  if (!room) return res.status(404).json({ ok: false, error: 'غرفة البث غير موجودة.' });
+  const result = liveEngine.addLikes(req.params.id, Number(count || 1));
+  if (userId) {
+    recordUserInteraction({
+      userId,
+      targetType: 'live',
+      targetId: req.params.id,
+      authorId: room.host_id,
+      text: `${room.title} ${room.category}`,
+      action: 'like',
+      weight: Math.min(6, Math.max(1, Number(count || 1) * 0.5)),
+    });
+  }
   res.json(result);
 });
 
@@ -2404,7 +2622,14 @@ app.post('/api/live/rooms/:id/highlight', (req, res) => {
   const { userId, text } = req.body as { userId: string; text: string };
   const user = getUserOrNull(userId);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
-  const result = liveEngine.submitHighlight(req.params.id, user, text);
+  const room = db.prepare('SELECT host_id FROM live_rooms WHERE id = ?').get(req.params.id) as
+    | { host_id: string }
+    | undefined;
+  if (!room) return res.status(404).json({ ok: false, error: 'غرفة البث غير موجودة.' });
+  if (room.host_id !== userId) {
+    return res.status(403).json({ ok: false, error: 'صاحب البث فقط يمكنه تثبيت التعليقات.' });
+  }
+  const result = liveEngine.submitHighlight(req.params.id, user, text, true);
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
 });
@@ -2557,7 +2782,9 @@ app.post('/api/ai/chat/stream', async (req, res) => {
       if (tr?.transcript) resolvedTranscript = tr.transcript;
     }
 
-    const effectivePrompt = (prompt || '').trim() || resolvedTranscript || (attachmentName ? `حلّل الملف المرفق: ${attachmentName}` : 'مرحبًا');
+    const safeAiImageUrl =
+      attachmentUrl && /^\/uploads\/[^/]+\.(jpg|jpeg|png|webp|gif)$/i.test(attachmentUrl) ? attachmentUrl : null;
+    const effectivePrompt = (prompt || '').trim() || resolvedTranscript || (safeAiImageUrl ? 'حلّل هذه الصورة بالتفصيل' : 'مرحبًا');
 
     let sessionHistoryContext: string | undefined;
     if (sessionId) {
@@ -2576,8 +2803,8 @@ app.post('/api/ai/chat/stream', async (req, res) => {
       {
         ...req.body,
         prompt: effectivePrompt,
-        attachmentUrl,
-        attachmentName,
+        attachmentUrl: safeAiImageUrl,
+        attachmentName: safeAiImageUrl ? attachmentName : null,
         sharedContext: sessionHistoryContext || req.body.sharedContext,
       },
       delta => {
@@ -2587,11 +2814,11 @@ app.post('/api/ai/chat/stream', async (req, res) => {
 
     let activeSessionId = sessionId || null;
     let userMsgId: string | null = null;
-    if (req.body.source === 'ai_tab' && userId && (effectivePrompt || audioUrl)) {
+    if (req.body.source === 'ai_tab' && userId && (effectivePrompt || audioUrl || safeAiImageUrl)) {
       const nowIso = new Date().toISOString();
       if (!activeSessionId) {
         activeSessionId = `ais_${uuid().slice(0, 8)}`;
-        const title = (resolvedTranscript || effectivePrompt || 'رسالة صوتية').trim().slice(0, 48);
+        const title = (resolvedTranscript || effectivePrompt || 'صورة').trim().slice(0, 48);
         db.prepare(
           'INSERT INTO ai_sessions (id, user_id, title, company_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
         ).run(activeSessionId, userId, title, provider || 'gemini', model || '', nowIso);
@@ -2603,14 +2830,15 @@ app.post('/api/ai/chat/stream', async (req, res) => {
 
       userMsgId = `aim_${uuid().slice(0, 8)}`;
       db.prepare(
-        'INSERT INTO ai_messages (id, session_id, role, content, audio_url, transcript, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO ai_messages (id, session_id, role, content, audio_url, transcript, attachment_url, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(
         userMsgId,
         activeSessionId,
         'user',
-        (prompt || '').trim() || (audioUrl ? 'رسالة صوتية' : effectivePrompt),
+        (prompt || '').trim(),
         audioUrl || null,
         resolvedTranscript,
+        safeAiImageUrl,
         provider || 'gemini',
         model || ''
       );
