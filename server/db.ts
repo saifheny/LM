@@ -324,13 +324,56 @@ export function initDatabase() {
       is_read INTEGER DEFAULT 0,
       created_at TEXT DEFAULT 'الآن'
     );
+
+    CREATE TABLE IF NOT EXISTS user_interactions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      author_id TEXT,
+      action TEXT NOT NULL,
+      keywords_json TEXT DEFAULT '[]',
+      weight REAL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS content_reports (
+      id TEXT PRIMARY KEY,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      reporter_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(target_type, target_id, reporter_id)
+    );
   `);
 
-  // Safe non-destructive migrations for V15 columns on existing databases
+  // Safe non-destructive migrations for V15/V19 columns on existing databases
   try {
     db.exec('ALTER TABLE video_comments ADD COLUMN is_edited INTEGER DEFAULT 0;');
   } catch {
     // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE posts ADD COLUMN music_url TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE posts ADD COLUMN music_title TEXT;');
+  } catch {
+    // column already exists
+  }
+
+  // Ensure vertical Live feed has at least 4 rich rooms to swipe through
+  const liveCount = (db.prepare('SELECT COUNT(*) as c FROM live_rooms WHERE is_active = 1').get() as { c: number }).c;
+  if (liveCount > 0 && liveCount < 4) {
+    db.prepare(`
+      INSERT OR IGNORE INTO live_rooms (id, host_id, title, category, video_url, scene_preset, viewers_count, is_active)
+      VALUES
+        ('live_3', 'u_karim', 'مراجعة أحدث تقنيات الذكاء الاصطناعي والبرمجة 2026', 'تقنية', '/uploads/seed/reel3.mp4', 'tech-studio', 3640, 1),
+        ('live_4', 'u_nour', 'جولة ليلية هادئة وتصوير سينمائي على الكورنيش', 'تصوير', '/uploads/seed/reel4.mp4', 'nile-night', 2190, 1)
+    `).run();
   }
 
   const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;

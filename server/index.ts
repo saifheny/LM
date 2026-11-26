@@ -12,6 +12,12 @@ import { v4 as uuid } from 'uuid';
 import { db, initDatabase, mapUserRow, loadProviderConfig, saveProviderConfig, UPLOADS_DIR } from './db.ts';
 import { liveEngine } from './liveEngine.ts';
 import { runLmAi, streamLmAi } from './aiGateway.ts';
+import {
+  buildUserInterestProfile,
+  LICENSED_MUSIC_LIBRARY,
+  rankFeedItems,
+  recordUserInteraction,
+} from './recommendEngine.ts';
 import { CountryCode } from './types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +115,22 @@ liveEngine.startTicker();
 function getUserOrNull(id: string) {
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   return row ? mapUserRow(row) : null;
+}
+
+const SENSITIVE_REPORT_THRESHOLD = 3;
+
+function getReportCountsMap(targetType: string): Map<string, number> {
+  const map = new Map<string, number>();
+  const rows = db.prepare(
+    'SELECT target_id, COUNT(*) as c FROM content_reports WHERE target_type = ? GROUP BY target_id'
+  ).all(targetType) as Array<{ target_id: string; c: number }>;
+  for (const r of rows) map.set(r.target_id, Number(r.c || 0));
+  return map;
+}
+
+function getActiveStoryUserSet(): Set<string> {
+  const rows = db.prepare('SELECT DISTINCT user_id FROM stories').all() as Array<{ user_id: string }>;
+  return new Set(rows.map(r => r.user_id));
 }
 
 function createNotification(params: {
@@ -611,7 +633,9 @@ app.get('/api/users/:id/profile', (req, res) => {
     WHERE f.follower_id = ? LIMIT 40
   `).all(targetId) as Array<Record<string, unknown>>).map(mapUserRow);
 
-  res.json({ ok: true, user, isFollowing, posts, videos, savedPosts, savedVideos, followersList, followingList });
+  const hasActiveStory = getActiveStoryUserSet().has(targetId);
+
+  res.json({ ok: true, user, isFollowing, hasActiveStory, posts, videos, savedPosts, savedVideos, followersList, followingList });
 });
 
 app.patch('/api/users/:id', (req, res) => {
@@ -676,6 +700,15 @@ app.post('/api/users/:id/follow', (req, res) => {
     db.prepare('UPDATE users SET followers_count = followers_count + 1 WHERE id = ?').run(targetId);
     db.prepare('UPDATE users SET following_count = following_count + 1 WHERE id = ?').run(followerId);
     following = true;
+    recordUserInteraction({
+      userId: followerId,
+      targetType: 'user',
+      targetId,
+      authorId: targetId,
+      text: `${target.displayName} ${target.bio || ''}`,
+      action: 'follow',
+      weight: 7,
+    });
     createNotification({
       userId: targetId,
       actorId: followerId,
@@ -764,17 +797,198 @@ app.get('/api/search', (req, res) => {
 });
 
 // ============================================================
+// LICENSED ROYALTY-FREE MUSIC, AI RECOMMENDATIONS, REPORTS & UNIFIED HASHTAGS
+// ============================================================
+app.get('/api/music/library', (_req, res) => {
+  res.json({ ok: true, tracks: LICENSED_MUSIC_LIBRARY });
+});
+
+app.get('/api/recommendations/profile', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const profile = buildUserInterestProfile(userId);
+  res.json({
+    ok: true,
+    followingCount: profile.followingSet.size,
+    topTopics: profile.topTopics,
+  });
+});
+
+app.post('/api/reports', (req, res) => {
+  const { targetType, targetId, reporterId, reason } = req.body as {
+    targetType?: 'post' | 'post_comment' | 'video' | 'video_comment' | 'live';
+    targetId?: string;
+    reporterId?: string;
+    reason?: string;
+  };
+  if (!targetType || !targetId || !reporterId) {
+    return res.status(400).json({ ok: false, error: 'بيانات الإبلاغ غير مكتملة.' });
+  }
+  const cleanReason = (reason || 'sensitive').trim();
+  db.prepare(`
+    INSERT OR IGNORE INTO content_reports (id, target_type, target_id, reporter_id, reason)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(`rep_${uuid().slice(0, 8)}`, targetType, targetId, reporterId, cleanReason);
+
+  const cntRow = db.prepare(
+    'SELECT COUNT(*) as c FROM content_reports WHERE target_type = ? AND target_id = ?'
+  ).get(targetType, targetId) as { c: number };
+  const reportsCount = Number(cntRow?.c || 0);
+  const isSensitive = reportsCount >= SENSITIVE_REPORT_THRESHOLD;
+
+  // Teach recommendation engine to show less of this reported item/author to reporter
+  if (targetType === 'post') {
+    const r = db.prepare('SELECT user_id, content FROM posts WHERE id = ?').get(targetId) as { user_id?: string; content?: string } | undefined;
+    recordUserInteraction({ userId: reporterId, targetType: 'post', targetId, authorId: r?.user_id, action: 'report', text: r?.content || '' });
+  } else if (targetType === 'video') {
+    const r = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(targetId) as { user_id?: string; title?: string; description?: string; tags?: string } | undefined;
+    recordUserInteraction({ userId: reporterId, targetType: 'video', targetId, authorId: r?.user_id, action: 'report', text: `${r?.title || ''} ${r?.description || ''} ${r?.tags || ''}` });
+  } else if (targetType === 'live') {
+    const r = db.prepare('SELECT host_id, title, category FROM live_rooms WHERE id = ?').get(targetId) as { host_id?: string; title?: string; category?: string } | undefined;
+    recordUserInteraction({ userId: reporterId, targetType: 'live', targetId, authorId: r?.host_id, action: 'report', text: `${r?.title || ''} ${r?.category || ''}` });
+  }
+
+  broadcast('content:reported', { targetType, targetId, reportsCount, isSensitive });
+  res.json({ ok: true, reportsCount, isSensitive, threshold: SENSITIVE_REPORT_THRESHOLD });
+});
+
+app.get('/api/hashtags/:tag', (req, res) => {
+  const viewerId = String(req.query.userId || '');
+  const cleanTag = decodeURIComponent(req.params.tag || '').replace(/^#/, '').trim();
+  const likeTag = `%#${cleanTag.toLowerCase()}%`;
+  const likePlain = `%${cleanTag.toLowerCase()}%`;
+
+  const postReports = getReportCountsMap('post');
+  const videoReports = getReportCountsMap('video');
+  const storyUsers = getActiveStoryUserSet();
+
+  const savedSet = new Set(
+    (viewerId ? (db.prepare('SELECT post_id FROM post_saves WHERE user_id = ?').all(viewerId) as Array<{ post_id: string }>) : []).map(r => r.post_id)
+  );
+  const allRx = db.prepare('SELECT post_id, user_id, reaction FROM post_reactions').all() as Array<{ post_id: string; user_id: string; reaction: string }>;
+  const rxByPost = new Map<string, Record<string, number>>();
+  const myRxMap = new Map<string, string>();
+  for (const rx of allRx) {
+    const b = rxByPost.get(rx.post_id) || {};
+    b[rx.reaction] = (b[rx.reaction] || 0) + 1;
+    rxByPost.set(rx.post_id, b);
+    if (viewerId && rx.user_id === viewerId) myRxMap.set(rx.post_id, rx.reaction);
+  }
+
+  const postRows = db.prepare(`
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM posts p JOIN users u ON p.user_id = u.id
+    WHERE LOWER(p.content) LIKE ?
+    ORDER BY p.rowid DESC
+  `).all(likeTag) as Array<Record<string, unknown>>;
+
+  const posts = postRows.map(r => {
+    let mediaUrls: string[] = [];
+    try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
+    if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    const rCnt = postReports.get(String(r.id)) || 0;
+    return {
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      verified: Boolean(r.verified),
+      hasActiveStory: storyUsers.has(String(r.user_id)),
+      topic: r.topic || 'عام',
+      content: r.content,
+      mediaUrl: r.media_url,
+      mediaUrls,
+      musicUrl: r.music_url ? String(r.music_url) : null,
+      musicTitle: r.music_title ? String(r.music_title) : null,
+      location: r.location || 'القاهرة',
+      poll: null,
+      score: Number(r.score ?? r.likes_count ?? 0),
+      myVote: 0,
+      reactions: rxByPost.get(String(r.id)) || {},
+      myReaction: myRxMap.get(String(r.id)) || null,
+      likesCount: Number(r.likes_count || 0),
+      commentsCount: Number(r.comments_count || 0),
+      sharesCount: Number(r.shares_count || 0),
+      likedByMe: myRxMap.has(String(r.id)),
+      savedByMe: savedSet.has(String(r.id)),
+      isEdited: Boolean(r.is_edited),
+      reportsCount: rCnt,
+      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      createdAt: r.created_at,
+    };
+  });
+
+  const videoRows = db.prepare(`
+    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM short_videos v JOIN users u ON v.user_id = u.id
+    WHERE LOWER(v.tags) LIKE ? OR LOWER(v.title) LIKE ? OR LOWER(v.description) LIKE ?
+    ORDER BY v.likes_count DESC, v.rowid DESC
+  `).all(likePlain, likeTag, likeTag) as Array<Record<string, unknown>>;
+
+  const videos = videoRows.map(r => {
+    const rCnt = videoReports.get(String(r.id)) || 0;
+    return {
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      verified: Boolean(r.verified),
+      hasActiveStory: storyUsers.has(String(r.user_id)),
+      title: r.title,
+      description: r.description,
+      tags: r.tags,
+      audioTitle: r.audio_title || 'الصوت الأصلي',
+      videoUrl: r.video_url,
+      posterUrl: r.poster_url,
+      scenePreset: r.scene_preset,
+      durationSec: Number(r.duration_sec),
+      likesCount: Number(r.likes_count),
+      commentsCount: Number(r.comments_count),
+      savesCount: Number(r.saves_count),
+      sharesCount: Number(r.shares_count || 0),
+      viewsCount: Number(r.views_count),
+      likedByMe: false,
+      savedByMe: false,
+      reportsCount: rCnt,
+      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      createdAt: r.created_at,
+    };
+  });
+
+  res.json({ ok: true, tag: cleanTag, posts, videos, totalCount: posts.length + videos.length });
+});
+
+// ============================================================
 // COMMUNITY FEED (Instagram Clean Flow + Voice & @LM AI Comments)
 // ============================================================
-app.get('/api/stories', (_req, res) => {
-  const rows = db.prepare(`
-    SELECT s.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url
-    FROM stories s JOIN users u ON s.user_id = u.id
-    ORDER BY s.rowid DESC
-  `).all() as Array<Record<string, unknown>>;
+app.get('/api/stories', (req, res) => {
+  const viewerId = String(req.query.userId || '');
+  const rows = (
+    viewerId
+      ? db.prepare(`
+          SELECT s.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url
+          FROM stories s JOIN users u ON s.user_id = u.id
+          WHERE s.user_id = ?
+             OR s.user_id IN (SELECT following_id FROM user_follows WHERE follower_id = ?)
+          ORDER BY CASE WHEN s.user_id = ? THEN 0 ELSE 1 END, s.rowid DESC
+        `).all(viewerId, viewerId, viewerId)
+      : db.prepare(`
+          SELECT s.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url
+          FROM stories s JOIN users u ON s.user_id = u.id
+          ORDER BY s.rowid DESC
+        `).all()
+  ) as Array<Record<string, unknown>>;
+
+  const myActiveStory = viewerId ? rows.some(r => String(r.user_id) === viewerId) : false;
 
   res.json({
     ok: true,
+    myActiveStory,
     stories: rows.map(r => ({
       id: r.id,
       userId: r.user_id,
@@ -869,7 +1083,10 @@ app.get('/api/posts', (req, res) => {
     for (const sr of sRows) savedSet.add(sr.post_id);
   }
 
-  const posts = rows.map(r => {
+  const postReports = getReportCountsMap('post');
+  const storyUsers = getActiveStoryUserSet();
+
+  const rawPosts = rows.map((r, idx) => {
     let mediaUrls: string[] = [];
     try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
     if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
@@ -884,19 +1101,25 @@ app.get('/api/posts', (req, res) => {
       }
     }
 
+    const rCnt = postReports.get(String(r.id)) || 0;
+    const isSensitive = rCnt >= SENSITIVE_REPORT_THRESHOLD;
+
     return {
-      id: r.id,
-      userId: r.user_id,
+      id: String(r.id),
+      userId: String(r.user_id),
       displayName: r.display_name,
       username: r.username,
       avatarColor: r.avatar_color,
       avatarInitials: r.avatar_initials,
       avatarUrl: r.avatar_url,
       verified: Boolean(r.verified),
+      hasActiveStory: storyUsers.has(String(r.user_id)),
       topic: r.topic || 'عام',
-      content: r.content,
+      content: String(r.content || ''),
       mediaUrl: r.media_url,
       mediaUrls,
+      musicUrl: r.music_url ? String(r.music_url) : null,
+      musicTitle: r.music_title ? String(r.music_title) : null,
       location: r.location || 'القاهرة',
       poll,
       score: Number(r.score ?? r.likes_count ?? 0),
@@ -909,19 +1132,34 @@ app.get('/api/posts', (req, res) => {
       likedByMe: likedSet.has(String(r.id)) || myReactionMap.has(String(r.id)),
       savedByMe: savedSet.has(String(r.id)),
       isEdited: Boolean(r.is_edited),
+      reportsCount: rCnt,
+      isSensitive,
       createdAt: r.created_at,
+      // fields for ranking engine
+      authorId: String(r.user_id),
+      text: `${String(r.content || '')} ${String(r.topic || '')}`,
+      likes: Number(r.score ?? r.likes_count ?? 0),
+      comments: Number(r.comments_count || 0),
+      shares: Number(r.shares_count || 0),
+      recencyIndex: idx,
+      isOwnFresh: viewerId === String(r.user_id) && String(r.created_at) === 'الآن',
     };
   });
+
+  const ranked = rawTag ? rawPosts : rankFeedItems(rawPosts, viewerId);
+  const posts = ranked.map(({ authorId: _a, text: _t, likes: _l, comments: _c, shares: _s, recencyIndex: _ri, isOwnFresh: _iof, ...pub }) => pub);
 
   res.json({ ok: true, posts });
 });
 
 app.post('/api/posts', (req, res) => {
-  const { userId, content, mediaUrl, mediaUrls, poll } = req.body as {
+  const { userId, content, mediaUrl, mediaUrls, musicUrl, musicTitle, poll } = req.body as {
     userId: string;
     content: string;
     mediaUrl?: string;
     mediaUrls?: string[];
+    musicUrl?: string | null;
+    musicTitle?: string | null;
     poll?: { question: string; options: string[] } | null;
   };
   const cleanMedia = Array.isArray(mediaUrls)
@@ -949,9 +1187,9 @@ app.post('/api/posts', (req, res) => {
   }
 
   db.prepare(`
-    INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, poll_json, score, likes_count, created_at)
-    VALUES (?, ?, 'عام', ?, ?, ?, ?, 1, 1, 'الآن')
-  `).run(id, userId, (content || '').trim(), firstMedia, urlsJson, pollJson);
+    INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, music_url, music_title, poll_json, score, likes_count, created_at)
+    VALUES (?, ?, 'عام', ?, ?, ?, ?, ?, ?, 1, 1, 'الآن')
+  `).run(id, userId, (content || '').trim(), firstMedia, urlsJson, musicUrl || null, musicTitle || null, pollJson);
 
   db.prepare('INSERT OR REPLACE INTO post_votes (post_id, user_id, vote) VALUES (?, ?, 1)').run(id, userId);
   broadcast('social:new_post', { id });
@@ -989,6 +1227,20 @@ app.post('/api/posts/:id/save', (req, res) => {
     res.json({ ok: true, saved: false });
   } else {
     db.prepare('INSERT OR IGNORE INTO post_saves (post_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
+    const pRow = db.prepare('SELECT user_id, content FROM posts WHERE id = ?').get(req.params.id) as
+      | { user_id: string; content: string }
+      | undefined;
+    if (pRow?.user_id) {
+      recordUserInteraction({
+        userId,
+        targetType: 'post',
+        targetId: req.params.id,
+        authorId: pRow.user_id,
+        text: pRow.content || '',
+        action: 'save',
+        weight: 5,
+      });
+    }
     res.json({ ok: true, saved: true });
   }
 });
@@ -1069,11 +1321,19 @@ app.post('/api/posts/:id/react', (req, res) => {
   const rxRows = db.prepare('SELECT reaction FROM post_reactions WHERE post_id = ?').all(postId) as Array<{ reaction: string }>;
   const reactions: Record<string, number> = {};
   for (const r of rxRows) reactions[r.reaction] = (reactions[r.reaction] || 0) + 1;
-  const postRow = db.prepare('SELECT user_id, score, likes_count FROM posts WHERE id = ?').get(postId) as
-    | { user_id: string; score: number; likes_count: number }
+  const postRow = db.prepare('SELECT user_id, content, score, likes_count FROM posts WHERE id = ?').get(postId) as
+    | { user_id: string; content: string; score: number; likes_count: number }
     | undefined;
 
   if (myReaction && postRow?.user_id) {
+    recordUserInteraction({
+      userId,
+      targetType: 'post',
+      targetId: postId,
+      authorId: postRow.user_id,
+      action: 'react',
+      text: postRow.content,
+    });
     createNotification({
       userId: postRow.user_id,
       actorId: userId,
@@ -1129,10 +1389,12 @@ app.get('/api/posts/:id/comments', (req, res) => {
     WHERE c.post_id = ? ORDER BY c.rowid ASC
   `).all(req.params.id) as Array<Record<string, unknown>>;
 
+  const commentReports = getReportCountsMap('post_comment');
   res.json({
     ok: true,
     comments: rows.map(r => {
       const isAi = r.user_id === 'lm_ai';
+      const rCnt = commentReports.get(String(r.id)) || 0;
       return {
         id: r.id,
         postId: r.post_id,
@@ -1150,6 +1412,8 @@ app.get('/api/posts/:id/comments', (req, res) => {
         audioUrl: r.audio_url ? String(r.audio_url) : null,
         audioDurationSec: Number(r.audio_duration_sec || 6),
         transcript: r.transcript ? String(r.transcript) : null,
+        reportsCount: rCnt,
+        isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
         createdAt: r.created_at,
       };
     }),
@@ -1277,26 +1541,32 @@ app.get('/api/videos', (req, res) => {
   const rows = db.prepare(`
     SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
     FROM short_videos v JOIN users u ON v.user_id = u.id
-    ORDER BY v.rowid ASC
+    ORDER BY v.rowid DESC
   `).all() as Array<Record<string, unknown>>;
 
   const likes = new Set((viewerId ? db.prepare('SELECT video_id FROM video_likes WHERE user_id = ?').all(viewerId) as Array<{ video_id: string }> : []).map(r => r.video_id));
   const saves = new Set((viewerId ? db.prepare('SELECT video_id FROM video_saves WHERE user_id = ?').all(viewerId) as Array<{ video_id: string }> : []).map(r => r.video_id));
+  const following = new Set((viewerId ? db.prepare('SELECT following_id FROM user_follows WHERE follower_id = ?').all(viewerId) as Array<{ following_id: string }> : []).map(r => r.following_id));
+  const storyUsers = getActiveStoryUserSet();
+  const videoReports = getReportCountsMap('video');
 
-  res.json({
-    ok: true,
-    videos: rows.map(r => ({
-      id: r.id,
-      userId: r.user_id,
+  const rawVideos = rows.map((r, idx) => {
+    const rCnt = videoReports.get(String(r.id)) || 0;
+    const isSensitive = rCnt >= SENSITIVE_REPORT_THRESHOLD;
+    return {
+      id: String(r.id),
+      userId: String(r.user_id),
       displayName: r.display_name,
       username: r.username,
       avatarColor: r.avatar_color,
       avatarInitials: r.avatar_initials,
       avatarUrl: r.avatar_url,
       verified: Boolean(r.verified),
-      title: r.title,
-      description: r.description,
-      tags: r.tags,
+      hasActiveStory: storyUsers.has(String(r.user_id)),
+      isFollowingAuthor: following.has(String(r.user_id)),
+      title: String(r.title || ''),
+      description: String(r.description || ''),
+      tags: String(r.tags || ''),
       audioTitle: r.audio_title || 'الصوت الأصلي',
       videoUrl: r.video_url,
       posterUrl: r.poster_url,
@@ -1309,9 +1579,24 @@ app.get('/api/videos', (req, res) => {
       viewsCount: Number(r.views_count),
       likedByMe: likes.has(String(r.id)),
       savedByMe: saves.has(String(r.id)),
+      reportsCount: rCnt,
+      isSensitive,
       createdAt: r.created_at,
-    })),
+      // ranking metadata
+      authorId: String(r.user_id),
+      text: `${String(r.title || '')} ${String(r.description || '')} ${String(r.tags || '')}`,
+      likes: Number(r.likes_count || 0),
+      comments: Number(r.comments_count || 0),
+      saves: Number(r.saves_count || 0),
+      shares: Number(r.shares_count || 0),
+      views: Number(r.views_count || 0),
+      recencyIndex: idx,
+    };
   });
+
+  const ranked = rankFeedItems(rawVideos, viewerId);
+  const videos = ranked.map(({ authorId: _a, text: _t, likes: _l, comments: _c, saves: _sv, shares: _sh, views: _v, recencyIndex: _ri, ...pub }) => pub);
+  res.json({ ok: true, videos });
 });
 
 app.post('/api/videos', (req, res) => {
@@ -1381,6 +1666,9 @@ app.delete('/api/videos/:id', (req, res) => {
 app.post('/api/videos/:id/like', (req, res) => {
   const { userId, forceLike } = req.body as { userId: string; forceLike?: boolean };
   const exists = db.prepare('SELECT 1 FROM video_likes WHERE video_id = ? AND user_id = ?').get(req.params.id, userId);
+  const vMeta = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
+    | { user_id: string; title: string; description: string; tags: string }
+    | undefined;
   if (exists && !forceLike) {
     db.prepare('DELETE FROM video_likes WHERE video_id = ? AND user_id = ?').run(req.params.id, userId);
     db.prepare('UPDATE short_videos SET likes_count = MAX(0, likes_count - 1) WHERE id = ?').run(req.params.id);
@@ -1388,6 +1676,16 @@ app.post('/api/videos/:id/like', (req, res) => {
   } else if (!exists) {
     db.prepare('INSERT INTO video_likes (video_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
     db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
+    if (vMeta) {
+      recordUserInteraction({
+        userId,
+        targetType: 'video',
+        targetId: req.params.id,
+        authorId: vMeta.user_id,
+        action: 'like',
+        text: `${vMeta.title} ${vMeta.description} ${vMeta.tags}`,
+      });
+    }
     res.json({ ok: true, liked: true });
   } else {
     db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
@@ -1398,6 +1696,9 @@ app.post('/api/videos/:id/like', (req, res) => {
 app.post('/api/videos/:id/save', (req, res) => {
   const { userId } = req.body as { userId: string };
   const exists = db.prepare('SELECT 1 FROM video_saves WHERE video_id = ? AND user_id = ?').get(req.params.id, userId);
+  const vMeta = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
+    | { user_id: string; title: string; description: string; tags: string }
+    | undefined;
   if (exists) {
     db.prepare('DELETE FROM video_saves WHERE video_id = ? AND user_id = ?').run(req.params.id, userId);
     db.prepare('UPDATE short_videos SET saves_count = MAX(0, saves_count - 1) WHERE id = ?').run(req.params.id);
@@ -1405,6 +1706,16 @@ app.post('/api/videos/:id/save', (req, res) => {
   } else {
     db.prepare('INSERT INTO video_saves (video_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
     db.prepare('UPDATE short_videos SET saves_count = saves_count + 1 WHERE id = ?').run(req.params.id);
+    if (vMeta) {
+      recordUserInteraction({
+        userId,
+        targetType: 'video',
+        targetId: req.params.id,
+        authorId: vMeta.user_id,
+        action: 'save',
+        text: `${vMeta.title} ${vMeta.description} ${vMeta.tags}`,
+      });
+    }
     res.json({ ok: true, saved: true });
   }
 });
@@ -1417,10 +1728,12 @@ app.get('/api/videos/:id/comments', (req, res) => {
     WHERE c.video_id = ? ORDER BY c.rowid ASC
   `).all(req.params.id) as Array<Record<string, unknown>>;
 
+  const vcReports = getReportCountsMap('video_comment');
   const comments = rows.map(r => {
     const isAi = r.user_id === 'lm_ai';
     let likedBy: string[] = [];
     try { likedBy = JSON.parse(String(r.liked_by_json || '[]')); } catch { likedBy = []; }
+    const rCnt = vcReports.get(String(r.id)) || 0;
     return {
       id: r.id,
       videoId: r.video_id,
@@ -1441,6 +1754,8 @@ app.get('/api/videos/:id/comments', (req, res) => {
       likesCount: Number(r.likes_count || 0),
       likedByMe: viewerId ? likedBy.includes(viewerId) : false,
       isEdited: Boolean(r.is_edited),
+      reportsCount: rCnt,
+      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
       createdAt: r.created_at || 'الآن',
     };
   });
@@ -1964,7 +2279,8 @@ app.delete('/api/messages/:id', (req, res) => {
 // ============================================================
 // TIKTOK LIVE STREAMING ENGINE
 // ============================================================
-app.get('/api/live/rooms', (_req, res) => {
+app.get('/api/live/rooms', (req, res) => {
+  const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
     SELECT r.*, u.display_name as host_name, u.username as host_username, u.avatar_color as host_color, u.avatar_initials as host_initials, u.avatar_url as host_avatar
     FROM live_rooms r JOIN users u ON r.host_id = u.id
@@ -1972,28 +2288,46 @@ app.get('/api/live/rooms', (_req, res) => {
     ORDER BY CASE WHEN r.video_url IS NULL THEN 0 ELSE 1 END, r.rowid DESC
   `).all() as Array<Record<string, unknown>>;
 
+  const storyUsers = getActiveStoryUserSet();
+  const liveReports = getReportCountsMap('live');
+
+  const mapped = rows.map((r, idx) => {
+    const runtime = liveEngine.getPublicState(String(r.id));
+    const rCnt = liveReports.get(String(r.id)) || 0;
+    return {
+      id: String(r.id),
+      hostId: String(r.host_id),
+      hostName: r.host_name,
+      hostUsername: r.host_username,
+      hostColor: r.host_color,
+      hostInitials: r.host_initials,
+      hostAvatarUrl: r.host_avatar,
+      title: String(r.title || ''),
+      category: String(r.category || 'عام'),
+      videoUrl: r.video_url,
+      scenePreset: r.scene_preset,
+      viewersCount: runtime.viewersCount,
+      totalGiftsEgp: runtime.totalGiftsEgp,
+      highlightsEnabled: runtime.highlightsEnabled,
+      cooldownSec: runtime.cooldownSec,
+      hasActiveStory: storyUsers.has(String(r.host_id)),
+      reportsCount: rCnt,
+      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      // ranking fields
+      authorId: String(r.host_id),
+      text: `${String(r.title || '')} ${String(r.category || '')}`,
+      likes: runtime.viewersCount / 40,
+      comments: runtime.recentMessages.length,
+      views: runtime.viewersCount,
+      recencyIndex: idx,
+      isOwnFresh: r.scene_preset === 'webrtc_live',
+    };
+  });
+
+  const ranked = rankFeedItems(mapped, viewerId);
   res.json({
     ok: true,
-    rooms: rows.map(r => {
-      const runtime = liveEngine.getPublicState(String(r.id));
-      return {
-        id: r.id,
-        hostId: r.host_id,
-        hostName: r.host_name,
-        hostUsername: r.host_username,
-        hostColor: r.host_color,
-        hostInitials: r.host_initials,
-        hostAvatarUrl: r.host_avatar,
-        title: r.title,
-        category: r.category,
-        videoUrl: r.video_url,
-        scenePreset: r.scene_preset,
-        viewersCount: runtime.viewersCount,
-        totalGiftsEgp: runtime.totalGiftsEgp,
-        highlightsEnabled: runtime.highlightsEnabled,
-        cooldownSec: runtime.cooldownSec,
-      };
-    }),
+    rooms: ranked.map(({ authorId: _a, text: _t, likes: _l, comments: _c, views: _v, recencyIndex: _ri, isOwnFresh: _iof, ...pub }) => pub),
   });
 });
 

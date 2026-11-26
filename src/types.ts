@@ -57,6 +57,16 @@ export interface PostPoll {
   votedOptionId?: string | null;
 }
 
+export interface LicensedMusicTrack {
+  id: string;
+  title: string;
+  artist: string;
+  mood: string;
+  durationSec: number;
+  license: string;
+  url: string;
+}
+
 export interface SocialPost {
   id: string;
   userId: string;
@@ -66,10 +76,13 @@ export interface SocialPost {
   avatarInitials: string;
   avatarUrl: string | null;
   verified: boolean;
+  hasActiveStory?: boolean;
   topic: string;
   content: string;
   mediaUrl: string | null;
   mediaUrls: string[];
+  musicUrl?: string | null;
+  musicTitle?: string | null;
   location: string;
   poll: PostPoll | null;
   score: number;
@@ -82,6 +95,8 @@ export interface SocialPost {
   likedByMe: boolean;
   savedByMe?: boolean;
   isEdited?: boolean;
+  reportsCount?: number;
+  isSensitive?: boolean;
   createdAt: string;
 }
 
@@ -102,6 +117,8 @@ export interface PostCommentItem {
   audioUrl: string | null;
   audioDurationSec: number;
   transcript: string | null;
+  reportsCount?: number;
+  isSensitive?: boolean;
   createdAt: string;
 }
 
@@ -114,6 +131,8 @@ export interface ShortVideoItem {
   avatarInitials: string;
   avatarUrl: string | null;
   verified: boolean;
+  hasActiveStory?: boolean;
+  isFollowingAuthor?: boolean;
   title: string;
   description: string;
   tags: string;
@@ -129,6 +148,8 @@ export interface ShortVideoItem {
   viewsCount: number;
   likedByMe: boolean;
   savedByMe: boolean;
+  reportsCount?: number;
+  isSensitive?: boolean;
   createdAt: string;
 }
 
@@ -199,6 +220,8 @@ export interface VideoCommentItem {
   likesCount: number;
   likedByMe: boolean;
   isEdited?: boolean;
+  reportsCount?: number;
+  isSensitive?: boolean;
   createdAt: string;
 }
 
@@ -248,6 +271,9 @@ export interface LiveRoomItem {
   totalGiftsEgp: number;
   highlightsEnabled: boolean;
   cooldownSec: number;
+  hasActiveStory?: boolean;
+  reportsCount?: number;
+  isSensitive?: boolean;
 }
 
 export interface LiveRoomState {

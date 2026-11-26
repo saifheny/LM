@@ -372,6 +372,10 @@ export function App() {
               onSelectHashtag={setActiveHashtag}
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
+              onOpenVideo={vidId => {
+                setFocusedVideoId(vidId);
+                setActiveTab('videos');
+              }}
               onShare={setSharePayload}
             />
           )}

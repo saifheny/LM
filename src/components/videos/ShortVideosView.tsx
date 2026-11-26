@@ -35,6 +35,7 @@ import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { NavAiIcon, PulsePlayGlyph, SharePlatformIcons, StylusEditIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
+import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
@@ -203,7 +204,7 @@ export function ShortVideosView({
    * Eliminates double-skipping caused by Windows Precision Touchpad momentum!
    */
   function handleSingleVideoWheel(e: React.WheelEvent<HTMLDivElement>) {
-    if (drawerVideo || shareVideo || uploadOpen || editingVideo) return;
+    if (drawerVideo || shareVideo || uploadOpen || editingVideo || reportRequest) return;
     if (Math.abs(e.deltaY) < 16) return;
     const now = Date.now();
     if (now < wheelLockUntilRef.current) return;
@@ -283,10 +284,33 @@ export function ShortVideosView({
   const [editTags, setEditTags] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Sensitive Content Blur & Universal Reporting
+  const [reportRequest, setReportRequest] = useState<ReportRequest | null>(null);
+  const [revealedVideos, setRevealedVideos] = useState<Record<string, boolean>>({});
+  const [revealedComments, setRevealedComments] = useState<Record<string, boolean>>({});
+
   const loadVideos = useCallback(async () => {
     const res = await apiGet<{ ok: boolean; videos: ShortVideoItem[] }>(`/api/videos?userId=${user.id}`);
     setVideos(res.videos);
   }, [user.id]);
+
+  async function followCreator(creatorId: string) {
+    if (creatorId === user.id) return;
+    setVideos(prev =>
+      prev.map(item => (item.userId === creatorId ? { ...item, isFollowingAuthor: true } : item))
+    );
+    try {
+      const res = await apiPost<{ ok: boolean; following: boolean }>(`/api/users/${creatorId}/follow`, {
+        followerId: user.id,
+      });
+      setVideos(prev =>
+        prev.map(item => (item.userId === creatorId ? { ...item, isFollowingAuthor: res.following } : item))
+      );
+      if (res.following) showToast('تمت المتابعة');
+    } catch {
+      loadVideos();
+    }
+  }
 
   useEffect(() => {
     loadVideos();
@@ -294,10 +318,13 @@ export function ShortVideosView({
   }, [loadVideos, setBottomDockHidden]);
 
   const orderedVideos = React.useMemo(() => {
-    if (feedTab === 'following') return [...videos].reverse();
+    if (feedTab === 'following') {
+      const followed = videos.filter(v => v.isFollowingAuthor || v.userId === user.id);
+      return followed.length > 0 ? followed : [...videos].reverse();
+    }
     if (feedTab === 'friends') return videos.slice(1).concat(videos.slice(0, 1));
     return videos;
-  }, [videos, feedTab]);
+  }, [videos, feedTab, user.id]);
 
   // Deep-link jump when opened via /pulse/:id
   useEffect(() => {
@@ -816,8 +843,16 @@ export function ShortVideosView({
 
                   {idx === activeIndex && <TapBurstOverlay items={bursts} />}
 
+                  {/* Telegram-Style Animated Particle Sensitive Blur (z-10 so z-20 Comments & Actions remain accessible!) */}
+                  {v.isSensitive && !revealedVideos[v.id] && (
+                    <SensitiveMediaShield
+                      revealed={false}
+                      onReveal={() => setRevealedVideos(prev => ({ ...prev, [v.id]: true }))}
+                    />
+                  )}
+
                   {/* Modern Organic Curved Translucent Play Icon (Zero old sharp triangle!) */}
-                  {idx === activeIndex && paused && (
+                  {idx === activeIndex && paused && (!v.isSensitive || revealedVideos[v.id]) && (
                     <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
                       <PulsePlayGlyph className="w-[72px] h-[72px] drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]" />
                     </div>
@@ -825,13 +860,13 @@ export function ShortVideosView({
 
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
 
-                  {/* Bottom Metadata with Expandable "المزيد / أقل" */}
+                  {/* Bottom Metadata with TikTok Inline Follow Pill + Expandable "المزيد / أقل" */}
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
                     className="absolute bottom-24 md:bottom-10 start-4 end-16 z-20 text-start space-y-1"
                   >
-                    <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-white flex-wrap">
                       <button
                         type="button"
                         onClick={() => onOpenProfile?.(v.userId)}
@@ -840,6 +875,16 @@ export function ShortVideosView({
                         @{v.username}
                       </button>
                       {v.verified && <VerifiedIcon />}
+                      {v.userId !== user.id && !v.isFollowingAuthor && (
+                        <button
+                          type="button"
+                          onClick={() => followCreator(v.userId)}
+                          className="ms-1 px-2.5 py-0.5 rounded-full bg-[#FF2D55] hover:bg-[#FB7185] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors shadow-md"
+                        >
+                          <Plus className="w-3 h-3" strokeWidth={2.8} />
+                          <span>متابعة</span>
+                        </button>
+                      )}
                     </div>
 
                     <div className="text-[13.5px] text-white/95 leading-snug">
@@ -886,22 +931,39 @@ export function ShortVideosView({
                     </div>
                   </div>
 
-                  {/* Right Action Rail (Static Audio Icon + Universal Profile Click + Own Video 2026 Orb Menu!) */}
+                  {/* Right Action Rail (Active-Story-Only Ring + TikTok Under-Avatar Follow '+' + Report!) */}
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
                     className="absolute bottom-24 md:bottom-10 end-3 z-20 flex flex-col items-center gap-4"
                   >
-                    <button
-                      type="button"
-                      onClick={() => onOpenProfile?.(v.userId)}
-                      title={v.displayName}
-                      className="p-[2px] rounded-full bg-gradient-to-tr from-[#FF2D55] via-[#FB7185] to-[#F59E0B] cursor-pointer hover:scale-105 transition-transform"
-                    >
-                      <div className="p-[1.5px] rounded-full bg-black">
-                        <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={40} />
-                      </div>
-                    </button>
+                    <div className="relative mb-1">
+                      <button
+                        type="button"
+                        onClick={() => onOpenProfile?.(v.userId)}
+                        title={v.displayName}
+                        className={`block p-[2px] rounded-full cursor-pointer hover:scale-105 transition-transform ${
+                          v.hasActiveStory
+                            ? 'bg-gradient-to-tr from-[#FF2D55] via-[#FB7185] to-[#F59E0B]'
+                            : 'border border-white/30'
+                        }`}
+                      >
+                        <div className="p-[1.5px] rounded-full bg-black">
+                          <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={40} />
+                        </div>
+                      </button>
+
+                      {v.userId !== user.id && !v.isFollowingAuthor && (
+                        <button
+                          type="button"
+                          onClick={() => followCreator(v.userId)}
+                          title={`متابعة ${v.displayName}`}
+                          className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-[#FF2D55] hover:bg-[#FB7185] text-white border-2 border-black flex items-center justify-center cursor-pointer hover:scale-110 transition-transform shadow-md"
+                        >
+                          <Plus className="w-3 h-3" strokeWidth={3} />
+                        </button>
+                      )}
+                    </div>
 
                     <button type="button" onClick={() => toggleLike(v)} className="flex flex-col items-center gap-1 cursor-pointer">
                       <Heart
@@ -927,6 +989,17 @@ export function ShortVideosView({
                     <button type="button" onClick={() => openShareSheet(v)} className="flex flex-col items-center gap-1 cursor-pointer">
                       <Share2 className="w-6 h-6 text-white" strokeWidth={1.9} />
                       <span className="text-[11px] font-mono-num text-white">{compactNum(v.sharesCount)}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setReportRequest({ targetType: 'video', targetId: v.id, label: 'فيديو نبض' })
+                      }
+                      title="إبلاغ عن محتوى حساس"
+                      className="flex flex-col items-center gap-0.5 text-white/80 hover:text-[#FB7185] cursor-pointer transition-colors"
+                    >
+                      <Flag className="w-5 h-5" strokeWidth={1.85} />
                     </button>
 
                     {v.userId === user.id && (
@@ -1163,8 +1236,9 @@ export function ShortVideosView({
                   label: 'إبلاغ',
                   icon: Flag,
                   action: () => {
-                    showToast('تم استلام البلاغ للمراجعة');
+                    const vidId = shareVideo.id;
                     setShareVideo(null);
+                    setReportRequest({ targetType: 'video', targetId: vidId, label: 'فيديو نبض' });
                   },
                 },
               ].map(act => {
@@ -1248,6 +1322,10 @@ export function ShortVideosView({
                           <span className="text-[#7A7A85]">{c.createdAt}</span>
                           {c.isEdited && <span className="text-[10px] text-[#FBBF24]/80">(معدّل)</span>}
                         </div>
+                        <SensitiveCommentShield
+                          revealed={!c.isSensitive || Boolean(revealedComments[c.id])}
+                          onReveal={() => setRevealedComments(prev => ({ ...prev, [c.id]: true }))}
+                        >
                         {c.audioUrl ? (
                           <div
                             className={`mt-1.5 p-2.5 rounded-2xl border ${
@@ -1311,6 +1389,7 @@ export function ShortVideosView({
                             />
                           </div>
                         )}
+                        </SensitiveCommentShield>
                         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                           <button
                             type="button"
@@ -1328,6 +1407,22 @@ export function ShortVideosView({
                             <CornerDownLeft className="w-3 h-3" />
                             <span>{c.isAi ? 'الرد على AI' : 'رد'}</span>
                           </button>
+                          {!c.isAi && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setReportRequest({
+                                  targetType: 'video_comment',
+                                  targetId: c.id,
+                                  label: 'هذا التعليق',
+                                })
+                              }
+                              className="text-[11px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
+                            >
+                              <Flag className="w-2.5 h-2.5" />
+                              <span>إبلاغ</span>
+                            </button>
+                          )}
                           {c.userId === user.id && !c.audioUrl && (
                             <button
                               type="button"
@@ -1395,6 +1490,10 @@ export function ShortVideosView({
                                 <span className="text-[#7A7A85]">{rep.createdAt}</span>
                                 {rep.isEdited && <span className="text-[10px] text-[#FBBF24]/80">(معدّل)</span>}
                               </div>
+                              <SensitiveCommentShield
+                                revealed={!rep.isSensitive || Boolean(revealedComments[rep.id])}
+                                onReveal={() => setRevealedComments(prev => ({ ...prev, [rep.id]: true }))}
+                              >
                               {rep.audioUrl ? (
                                 <div
                                   className={`mt-1 p-2 rounded-xl border ${
@@ -1458,6 +1557,7 @@ export function ShortVideosView({
                                   />
                                 </div>
                               )}
+                              </SensitiveCommentShield>
                               <div className="mt-1 flex items-center gap-3 flex-wrap">
                                 <button
                                   type="button"
@@ -1475,6 +1575,22 @@ export function ShortVideosView({
                                   <CornerDownLeft className="w-2.5 h-2.5" />
                                   <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
                                 </button>
+                                {!rep.isAi && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setReportRequest({
+                                        targetType: 'video_comment',
+                                        targetId: rep.id,
+                                        label: 'هذا الرد',
+                                      })
+                                    }
+                                    className="text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Flag className="w-2.5 h-2.5" />
+                                    <span>إبلاغ</span>
+                                  </button>
+                                )}
                                 {rep.userId === user.id && !rep.audioUrl && (
                                   <button
                                     type="button"
@@ -1755,6 +1871,32 @@ export function ShortVideosView({
           </form>
         </div>
       )}
+
+      {/* Universal Sensitive Content Reporting Modal */}
+      <ReportContentModal
+        request={reportRequest}
+        reporterId={user.id}
+        onClose={() => setReportRequest(null)}
+        onReported={res => {
+          if (res.targetType === 'video') {
+            setVideos(prev =>
+              prev.map(v =>
+                v.id === res.targetId
+                  ? { ...v, reportsCount: res.reportsCount, isSensitive: res.isSensitive }
+                  : v
+              )
+            );
+          } else if (res.targetType === 'video_comment') {
+            setComments(prev =>
+              prev.map(c =>
+                c.id === res.targetId
+                  ? { ...c, reportsCount: res.reportsCount, isSensitive: res.isSensitive }
+                  : c
+              )
+            );
+          }
+        }}
+      />
     </div>
   );
 }

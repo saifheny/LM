@@ -21,13 +21,20 @@ import {
   Plus,
   Sparkles,
   Check,
+  Flag,
+  Music,
+  Play,
+  Pause,
+  Upload,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination } from 'swiper/modules';
 import 'swiper/css';
 import 'swiper/css/pagination';
 
-import { Lang, PostCommentItem, PostPoll, SocialPost, StoryItem, UserProfile } from '../../types';
+import { Lang, LicensedMusicTrack, PostCommentItem, PostPoll, ShortVideoItem, SocialPost, StoryItem, UserProfile } from '../../types';
 import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
@@ -35,6 +42,7 @@ import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReact
 import { NavAiIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import type { SharePayload } from '../shared/ShareSheetModal';
+import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface SocialViewProps {
@@ -48,6 +56,7 @@ interface SocialViewProps {
   onSelectHashtag?: (tag: string | null) => void;
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
+  onOpenVideo?: (videoId: string) => void;
   onShare?: (payload: SharePayload) => void;
 }
 
@@ -72,13 +81,36 @@ export function SocialView({
   onSelectHashtag,
   onOpenProfile,
   onOpenProfileByUsername,
+  onOpenVideo,
   onShare,
 }: SocialViewProps) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingPostText, setEditingPostText] = useState('');
   const [stories, setStories] = useState<StoryItem[]>([]);
+  const [myActiveStory, setMyActiveStory] = useState(false);
   const [activeStory, setActiveStory] = useState<StoryItem | null>(null);
+
+  // Unified Hashtag Hub (Returns BOTH Community Posts + Pulse Videos!)
+  const [hashtagVideos, setHashtagVideos] = useState<ShortVideoItem[]>([]);
+  const [hashtagFilter, setHashtagFilter] = useState<'all' | 'posts' | 'videos'>('all');
+
+  // Licensed Royalty-Free Studio Music Library + Photo Post Audio Player
+  const [musicLibrary, setMusicLibrary] = useState<LicensedMusicTrack[]>([]);
+  const [musicPickerOpen, setMusicPickerOpen] = useState(false);
+  const [selectedMusic, setSelectedMusic] = useState<{ url: string; title: string } | null>(null);
+  const [uploadingCustomAudio, setUploadingCustomAudio] = useState(false);
+  const [previewingMusicUrl, setPreviewingMusicUrl] = useState<string | null>(null);
+  const [playingPostMusicId, setPlayingPostMusicId] = useState<string | null>(null);
+  const customAudioRef = useRef<HTMLInputElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const postMusicAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Sensitive Content Blur & Universal Reporting
+  const [reportRequest, setReportRequest] = useState<ReportRequest | null>(null);
+  const [revealedPosts, setRevealedPosts] = useState<Record<string, boolean>>({});
+  const [revealedComments, setRevealedComments] = useState<Record<string, boolean>>({});
+  const [revealedTagVideos, setRevealedTagVideos] = useState<Record<string, boolean>>({});
 
   // Story Studio Upload Modal State
   const [storyStudioOpen, setStoryStudioOpen] = useState(false);
@@ -153,21 +185,86 @@ export function SocialView({
   }, []);
 
   const loadFeed = useCallback(async () => {
-    const tagQs = activeHashtag ? `&tag=${encodeURIComponent(activeHashtag)}` : '';
+    const sPromise = apiGet<{ ok: boolean; stories: StoryItem[]; myActiveStory?: boolean }>(
+      `/api/stories?userId=${user.id}`
+    );
+    if (activeHashtag) {
+      const [hRes, sRes] = await Promise.all([
+        apiGet<{ ok: boolean; posts: SocialPost[]; videos: ShortVideoItem[] }>(
+          `/api/hashtags/${encodeURIComponent(activeHashtag)}?userId=${user.id}`
+        ),
+        sPromise,
+      ]);
+      setPosts(hRes.posts || []);
+      setHashtagVideos(hRes.videos || []);
+      setStories(sRes.stories || []);
+      setMyActiveStory(Boolean(sRes.myActiveStory));
+      return;
+    }
+
     const [pRes, sRes] = await Promise.all([
-      apiGet<{ ok: boolean; posts: SocialPost[] }>(`/api/posts?userId=${user.id}${tagQs}`),
-      apiGet<{ ok: boolean; stories: StoryItem[] }>('/api/stories'),
+      apiGet<{ ok: boolean; posts: SocialPost[] }>(`/api/posts?userId=${user.id}`),
+      sPromise,
     ]);
-    setPosts(pRes.posts);
-    setStories(sRes.stories);
+    setPosts(pRes.posts || []);
+    setHashtagVideos([]);
+    setStories(sRes.stories || []);
+    setMyActiveStory(Boolean(sRes.myActiveStory));
   }, [user.id, activeHashtag]);
 
   useEffect(() => {
+    setHashtagFilter('all');
     loadFeed();
   }, [loadFeed]);
 
   useEffect(() => {
-    if (lastWsEvent?.event === 'social:new_post' || lastWsEvent?.event === 'story:new') loadFeed();
+    apiGet<{ ok: boolean; tracks: LicensedMusicTrack[] }>('/api/music/library')
+      .then(res => setMusicLibrary(res.tracks || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      previewAudioRef.current?.pause();
+      postMusicAudioRef.current?.pause();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!lastWsEvent) return;
+    if (lastWsEvent.event === 'social:new_post' || lastWsEvent.event === 'story:new') {
+      loadFeed();
+      return;
+    }
+    if (lastWsEvent.event === 'content:reported') {
+      const payload = lastWsEvent.payload as {
+        targetType?: string;
+        targetId?: string;
+        reportsCount?: number;
+        isSensitive?: boolean;
+      };
+      if (payload.targetType === 'post' && payload.targetId) {
+        setPosts(prev =>
+          prev.map(p =>
+            p.id === payload.targetId
+              ? { ...p, reportsCount: payload.reportsCount, isSensitive: payload.isSensitive }
+              : p
+          )
+        );
+      } else if (payload.targetType === 'post_comment' && payload.targetId) {
+        setCommentsByPost(prev => {
+          const next = { ...prev };
+          for (const pid of Object.keys(next)) {
+            next[pid] = next[pid].map(c =>
+              c.id === payload.targetId
+                ? { ...c, reportsCount: payload.reportsCount, isSensitive: payload.isSensitive }
+                : c
+            );
+          }
+          return next;
+        });
+      }
+    }
   }, [lastWsEvent, loadFeed]);
 
   useEffect(() => {
@@ -178,11 +275,68 @@ export function SocialView({
         setActiveStory(null);
         setStoryStudioOpen(false);
         setComposerExpanded(false);
+        setMusicPickerOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  function stopPreviewMusic() {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current.currentTime = 0;
+    }
+    setPreviewingMusicUrl(null);
+  }
+
+  function togglePreviewTrack(url: string) {
+    if (previewingMusicUrl === url) {
+      stopPreviewMusic();
+      return;
+    }
+    postMusicAudioRef.current?.pause();
+    setPlayingPostMusicId(null);
+    if (!previewAudioRef.current) {
+      previewAudioRef.current = new Audio();
+      previewAudioRef.current.loop = true;
+    }
+    previewAudioRef.current.src = url;
+    previewAudioRef.current.play().catch(() => {});
+    setPreviewingMusicUrl(url);
+  }
+
+  function togglePostMusic(postId: string, musicUrl: string) {
+    stopPreviewMusic();
+    if (playingPostMusicId === postId) {
+      postMusicAudioRef.current?.pause();
+      setPlayingPostMusicId(null);
+      return;
+    }
+    if (!postMusicAudioRef.current) {
+      postMusicAudioRef.current = new Audio();
+      postMusicAudioRef.current.loop = true;
+    }
+    postMusicAudioRef.current.src = musicUrl;
+    postMusicAudioRef.current.play().catch(() => {});
+    setPlayingPostMusicId(postId);
+  }
+
+  async function handleCustomAudioSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploadingCustomAudio(true);
+    try {
+      const up = await apiUploadFile(f);
+      const cleanTitle = f.name.replace(/\.[^.]+$/, '').slice(0, 48) || 'مقطع صوتي مخصص';
+      setSelectedMusic({ url: up.url, title: cleanTitle });
+      setMusicPickerOpen(false);
+      stopPreviewMusic();
+    } finally {
+      setUploadingCustomAudio(false);
+      e.target.value = '';
+    }
+  }
 
   async function handleStoryFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -219,7 +373,7 @@ export function SocialView({
   async function deleteStory(storyId: string) {
     await api(`/api/stories/${storyId}?userId=${user.id}`, { method: 'DELETE' });
     setActiveStory(null);
-    setStories(prev => prev.filter(s => s.id !== storyId));
+    loadFeed();
   }
 
   async function toggleSavePost(postId: string) {
@@ -268,9 +422,14 @@ export function SocialView({
         content: draft.trim() || pollQuestion.trim(),
         mediaUrls: uploadedMediaUrls,
         poll: validPoll,
+        musicUrl: selectedMusic?.url || null,
+        musicTitle: selectedMusic?.title || null,
       });
       setDraft('');
       setUploadedMediaUrls([]);
+      setSelectedMusic(null);
+      setMusicPickerOpen(false);
+      stopPreviewMusic();
       setShowPollBuilder(false);
       setPollQuestion('');
       setPollOpts(['', '']);
@@ -500,6 +659,8 @@ export function SocialView({
   }
 
   const showExpandIcon = composerActive || draft.length > 0 || uploadedMediaUrls.length > 0;
+  const myLatestStory = stories.find(s => s.userId === user.id) || null;
+  const followedStories = stories.filter(s => s.userId !== user.id);
 
   return (
     <div
@@ -514,32 +675,52 @@ export function SocialView({
     >
       {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop!) */}
       <div className="max-w-[620px] mx-auto min-h-screen px-2 sm:px-0">
-        {/* Stories Strip with Direct Upload Story Tile */}
+        {/* Stories Strip: ONLY User + Followed Creators' Active Stories; Ring ONLY when Active Story exists! */}
         <div className="px-4 py-4 border-b border-white/[0.07] flex items-center gap-4 overflow-x-auto no-scrollbar">
-          {/* Add Story Tile */}
-          <button
-            type="button"
-            onClick={() => {
-              setStoryMediaUrl(null);
-              setStoryCaption('');
-              setStoryStudioOpen(true);
-            }}
-            className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
-          >
-            <div className="relative p-[2px] rounded-full border border-dashed border-[#F59E0B]/60 group-hover:border-[#FB7185] transition-colors">
-              <div className="p-[2px] rounded-full bg-[#0A0A0C]">
-                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={50} />
-              </div>
-              <span className="absolute -bottom-0.5 -end-0.5 w-5 h-5 rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] text-white border-2 border-[#0A0A0C] flex items-center justify-center shadow-md group-hover:scale-110 transition-transform">
+          {/* Your Story Tile (Colored Ring ONLY if you have an active story!) */}
+          <div className="flex flex-col items-center gap-1.5 shrink-0 group">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  if (myLatestStory) {
+                    setActiveStory(myLatestStory);
+                  } else {
+                    setStoryMediaUrl(null);
+                    setStoryCaption('');
+                    setStoryStudioOpen(true);
+                  }
+                }}
+                className={`block p-[2px] rounded-full cursor-pointer transition-transform group-hover:scale-[1.03] ${
+                  myActiveStory
+                    ? 'bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55]'
+                    : 'border border-white/[0.22]'
+                }`}
+              >
+                <div className="p-[2px] rounded-full bg-[#0A0A0C]">
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={50} />
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  setStoryMediaUrl(null);
+                  setStoryCaption('');
+                  setStoryStudioOpen(true);
+                }}
+                title="نشر قصة جديدة"
+                className="absolute -bottom-0.5 -end-0.5 w-5 h-5 rounded-full bg-white text-black border-2 border-[#0A0A0C] flex items-center justify-center shadow-md hover:scale-110 transition-transform cursor-pointer"
+              >
                 <Plus className="w-3 h-3" strokeWidth={2.8} />
-              </span>
+              </button>
             </div>
-            <span className="text-[11px] font-medium text-[#FBBF24] max-w-[64px] truncate">
+            <span className={`text-[11px] font-medium max-w-[64px] truncate ${myActiveStory ? 'text-white' : 'text-[#A1A1AA]'}`}>
               {lang === 'ar' ? 'قصتك' : 'Your Story'}
             </span>
-          </button>
+          </div>
 
-          {stories.map(st => (
+          {followedStories.map(st => (
             <button
               key={st.id}
               type="button"
@@ -558,31 +739,101 @@ export function SocialView({
           ))}
         </div>
 
-        {/* Active Hashtag Filter Banner (Appears when user clicks ANY #hashtag!) */}
+        {/* Unified Hashtag Hub Banner + Matching Pulse Videos Grid (Shows BOTH Community + Pulse!) */}
         {activeHashtag && (
-          <div className="px-4 py-2.5 border-b border-white/[0.07] bg-gradient-to-l from-[#FB7185]/10 to-transparent flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="px-2.5 py-1 rounded-full bg-[#FB7185]/18 border border-[#FB7185]/35 text-[#FDA4AF] font-semibold">
-                #{activeHashtag}
-              </span>
-              <span className="text-[#A1A1AA] font-mono-num">{posts.length} منشور</span>
+          <div className="border-b border-white/[0.08] bg-gradient-to-b from-[#FB7185]/[0.08] to-transparent">
+            <div className="px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 text-xs flex-wrap">
+                <span className="px-2.5 py-1 rounded-full bg-[#FB7185]/18 border border-[#FB7185]/35 text-[#FDA4AF] font-semibold">
+                  #{activeHashtag}
+                </span>
+                <span className="text-[#A1A1AA] font-mono-num">
+                  {posts.length} منشور · {hashtagVideos.length} نبض
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSelectHashtag?.(null)}
+                className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[11px] text-[#E4E4E7] flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <X className="w-3 h-3" />
+                <span>عرض الكل</span>
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => onSelectHashtag?.(null)}
-              className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[11px] text-[#E4E4E7] flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <X className="w-3 h-3" />
-              <span>عرض الكل</span>
-            </button>
+
+            {/* Unified Filter Pills */}
+            <div className="px-4 pb-3 flex items-center gap-1.5">
+              {[
+                { id: 'all' as const, label: `الكل (${posts.length + hashtagVideos.length})` },
+                { id: 'posts' as const, label: `المجتمع (${posts.length})` },
+                { id: 'videos' as const, label: `نبض (${hashtagVideos.length})` },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setHashtagFilter(tab.id)}
+                  className={`px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-colors ${
+                    hashtagFilter === tab.id
+                      ? 'bg-white text-black font-semibold'
+                      : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Matching Pulse Short Videos Grid */}
+            {(hashtagFilter === 'all' || hashtagFilter === 'videos') && hashtagVideos.length > 0 && (
+              <div className="px-4 pb-4 space-y-2">
+                <div className="text-[11px] font-semibold text-[#C4C4CC]">فيديوهات نبض في #{activeHashtag}</div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {hashtagVideos.map(v => (
+                    <div
+                      key={v.id}
+                      onClick={() => onOpenVideo?.(v.id)}
+                      className="group relative aspect-[9/14] rounded-2xl overflow-hidden bg-[#121217] border border-white/[0.09] cursor-pointer"
+                    >
+                      {v.posterUrl ? (
+                        <img
+                          src={v.posterUrl}
+                          alt=""
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <video src={v.videoUrl || ''} muted className="w-full h-full object-cover" />
+                      )}
+                      {v.isSensitive && (
+                        <SensitiveMediaShield
+                          compact
+                          revealed={Boolean(revealedTagVideos[v.id])}
+                          onReveal={() => setRevealedTagVideos(prev => ({ ...prev, [v.id]: true }))}
+                        />
+                      )}
+                      <div className="absolute inset-x-0 bottom-0 z-20 p-2 bg-gradient-to-t from-black/90 via-black/45 to-transparent space-y-0.5 pointer-events-none">
+                        <p className="text-[11px] font-medium text-white line-clamp-2 leading-snug">{v.title}</p>
+                        <div className="flex items-center justify-between text-[10px] text-white/75 font-mono-num">
+                          <span className="truncate">@{v.username}</span>
+                          <span className="flex items-center gap-0.5 shrink-0">
+                            <Play className="w-2.5 h-2.5 fill-current text-[#FF2D55]" />
+                            {formatCount(v.viewsCount)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Hidden Multi-Image File Input (Up to 4 Photos!) */}
+        {/* Hidden Multi-Image, Story & Custom Audio File Inputs */}
         <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" />
         <input ref={storyFileRef} type="file" accept="image/*,video/*" onChange={handleStoryFile} className="hidden" />
+        <input ref={customAudioRef} type="file" accept="audio/*" onChange={handleCustomAudioSelect} className="hidden" />
 
-        {/* Inline Post Composer with Expand-to-Full-Page Trigger */}
+        {/* Inline Post Composer with Expand-to-Full-Page Trigger & Licensed Music Picker */}
         <form onSubmit={submitPost} className="px-4 py-4 border-b border-white/[0.07] flex gap-3 relative">
           <button
             type="button"
@@ -638,6 +889,35 @@ export function SocialView({
                     </div>
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Selected Music Pill in Composer */}
+            {selectedMusic && (
+              <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#10B981]/12 border border-[#34D399]/35 text-xs text-[#6EE7B7]">
+                <Music className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate max-w-[200px] font-medium">{selectedMusic.title}</span>
+                <button
+                  type="button"
+                  onClick={() => togglePreviewTrack(selectedMusic.url)}
+                  className="w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer"
+                >
+                  {previewingMusicUrl === selectedMusic.url ? (
+                    <Pause className="w-2.5 h-2.5" />
+                  ) : (
+                    <Play className="w-2.5 h-2.5 fill-current" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopPreviewMusic();
+                    setSelectedMusic(null);
+                  }}
+                  className="text-white/60 hover:text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
 
@@ -716,6 +996,16 @@ export function SocialView({
                 )}
                 <button
                   type="button"
+                  onClick={() => setMusicPickerOpen(true)}
+                  title="إضافة موسيقى مجانية مرخّصة للصورة"
+                  className={`w-8 h-8 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
+                    selectedMusic ? 'text-[#34D399] bg-[#10B981]/15' : 'text-[#8E8E93] hover:text-white'
+                  }`}
+                >
+                  <Music className="w-4 h-4" strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowPollBuilder(v => !v)}
                   className={`w-8 h-8 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer ${
                     showPollBuilder ? 'text-white bg-white/[0.08]' : 'text-[#8E8E93] hover:text-white'
@@ -750,6 +1040,7 @@ export function SocialView({
         )}
 
         {/* Continuous Borderless Feed */}
+        {(!activeHashtag || hashtagFilter !== 'videos') && (
         <div className="divide-y divide-white/[0.07]">
           {(focusedPostId && posts.some(p => p.id === focusedPostId)
             ? [
@@ -766,6 +1057,8 @@ export function SocialView({
             const aiMode = Boolean(replyAiModeByPost[post.id]);
             const commentText = replyDrafts[post.id] || '';
             const hasCommentText = commentText.trim().length > 0;
+            const isPostMusicPlaying = playingPostMusicId === post.id;
+            const isPostSensitiveHidden = Boolean(post.isSensitive) && !revealedPosts[post.id];
 
             return (
               <article key={post.id} className="px-4 py-5">
@@ -777,9 +1070,15 @@ export function SocialView({
                         e.stopPropagation();
                         onOpenProfile?.(post.userId);
                       }}
-                      className="cursor-pointer rounded-full"
+                      className={`cursor-pointer rounded-full ${
+                        post.hasActiveStory
+                          ? 'p-[1.5px] bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55]'
+                          : ''
+                      }`}
                     >
-                      <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
+                      <div className={post.hasActiveStory ? 'p-[1.5px] rounded-full bg-[#0A0A0C]' : ''}>
+                        <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
+                      </div>
                     </button>
                     {isThreadOpen && <div className="w-[1.5px] flex-1 bg-white/[0.12] mt-2" />}
                   </div>
@@ -847,20 +1146,60 @@ export function SocialView({
                       </div>
                     ) : (
                       post.content && (
-                        <div
-                          onDoubleClick={() => handlePostReact(post.id, 'love', true)}
-                          className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
-                        >
-                          <RichMessageText
-                            text={post.content}
-                            onMentionClick={onOpenProfileByUsername}
-                            onHashtagClick={tag => onSelectHashtag?.(tag)}
-                          />
-                        </div>
+                        post.mediaUrls.length === 0 && isPostSensitiveHidden ? (
+                          <div className="relative mt-2 min-h-[124px] rounded-2xl overflow-hidden border border-white/[0.08] bg-[#121216] p-3">
+                            <div className="text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-none blur-md">
+                              {post.content}
+                            </div>
+                            <SensitiveMediaShield
+                              compact
+                              revealed={false}
+                              onReveal={() => setRevealedPosts(prev => ({ ...prev, [post.id]: true }))}
+                            />
+                          </div>
+                        ) : (
+                          <div
+                            onDoubleClick={() => handlePostReact(post.id, 'love', true)}
+                            className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
+                          >
+                            <RichMessageText
+                              text={post.content}
+                              onMentionClick={onOpenProfileByUsername}
+                              onHashtagClick={tag => onSelectHashtag?.(tag)}
+                            />
+                          </div>
+                        )
                       )
                     )}
 
-                    {/* Media: Single-Tap opens Lightbox | Double-Tap triggers Upvote + Pulse */}
+                    {/* Standalone Music Player Bar for Text-Only Posts with Attached Music */}
+                    {post.musicUrl && post.mediaUrls.length === 0 && (
+                      <div className="mt-2.5 px-3 py-2 rounded-2xl bg-[#14141B] border border-white/[0.1] flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Music className={`w-4 h-4 shrink-0 ${isPostMusicPlaying ? 'text-[#34D399] animate-pulse' : 'text-[#A1A1AA]'}`} />
+                          <span className="text-xs font-medium text-[#E4E4E7] truncate">
+                            {post.musicTitle || 'موسيقى مرفقة'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            togglePostMusic(post.id, post.musicUrl!);
+                          }}
+                          title={isPostMusicPlaying ? 'كتم الصوت' : 'تشغيل الموسيقى'}
+                          className={`w-8 h-8 rounded-full border flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+                            isPostMusicPlaying
+                              ? 'bg-[#34D399]/20 border-[#34D399]/50 text-[#6EE7B7]'
+                              : 'bg-white/[0.07] border-white/[0.15] text-white hover:bg-white/[0.14]'
+                          }`}
+                        >
+                          {isPostMusicPlaying ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Media: Single-Tap opens Lightbox | Double-Tap triggers Upvote + Pulse | Floating Speaker for Photo Music | Telegram Sensitive Blur */}
                     {post.mediaUrls.length > 0 && (
                       <div className="relative mt-3 rounded-2xl overflow-hidden border border-white/[0.08] bg-[#121216]">
                         {post.mediaUrls.length === 1 ? (
@@ -884,6 +1223,55 @@ export function SocialView({
                             ))}
                           </Swiper>
                         )}
+
+                        {/* Telegram-Style Animated Particle Sensitive Blur (Auto-Triggered at 3 Reports) */}
+                        {isPostSensitiveHidden && (
+                          <SensitiveMediaShield
+                            revealed={false}
+                            onReveal={() => setRevealedPosts(prev => ({ ...prev, [post.id]: true }))}
+                          />
+                        )}
+
+                        {/* Facebook-Style Floating Photo Music Bar + Speaker Toggle */}
+                        {post.musicUrl && !isPostSensitiveHidden && (
+                          <div
+                            onClick={e => e.stopPropagation()}
+                            className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex items-center justify-between gap-2"
+                          >
+                            <div className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 max-w-[75%]">
+                              <Music
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  isPostMusicPlaying ? 'text-[#34D399] animate-spin' : 'text-white/80'
+                                }`}
+                                style={isPostMusicPlaying ? { animationDuration: '4s' } : undefined}
+                              />
+                              <span className="text-[11.5px] font-medium text-white truncate">
+                                {post.musicTitle || 'موسيقى مرفقة'}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                togglePostMusic(post.id, post.musicUrl!);
+                              }}
+                              title={isPostMusicPlaying ? 'إيقاف الموسيقى' : 'تشغيل الموسيقى'}
+                              className={`pointer-events-auto w-9 h-9 rounded-full backdrop-blur-xl border flex items-center justify-center cursor-pointer shadow-lg transition-all ${
+                                isPostMusicPlaying
+                                  ? 'bg-[#10B981]/80 border-[#6EE7B7]/60 text-black scale-105'
+                                  : 'bg-black/72 border-white/25 text-white hover:bg-white hover:text-black'
+                              }`}
+                            >
+                              {isPostMusicPlaying ? (
+                                <Volume2 className="w-4 h-4" strokeWidth={2.1} />
+                              ) : (
+                                <VolumeX className="w-4 h-4" strokeWidth={2.1} />
+                              )}
+                            </button>
+                          </div>
+                        )}
+
                         {doubleTapPostId === post.id && (
                           <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20">
                             <div className="w-16 h-16 rounded-full bg-black/55 backdrop-blur-md border border-white/25 flex items-center justify-center animate-ping">
@@ -924,7 +1312,7 @@ export function SocialView({
                       </div>
                     )}
 
-                    {/* Action Row with Facebook-Style Floating Animated Multi-Effect Reactions */}
+                    {/* Action Row with Facebook-Style Floating Animated Multi-Effect Reactions + Report */}
                     <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
                       <div className="flex items-center gap-4">
                         <FacebookReactionButton
@@ -958,7 +1346,18 @@ export function SocialView({
                         </button>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setReportRequest({ targetType: 'post', targetId: post.id, label: 'هذا المنشور' });
+                          }}
+                          title="إبلاغ عن محتوى حساس"
+                          className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
+                        >
+                          <Flag className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        </button>
                         <button
                           type="button"
                           onClick={() => toggleSavePost(post.id)}
@@ -995,7 +1394,7 @@ export function SocialView({
                       </div>
                     </div>
 
-                    {/* Threaded Comments with In-Composer Voice Button + Luxury AI Summon + Persistent Drafts */}
+                    {/* Threaded Comments with In-Composer Voice Button + Luxury AI Summon + Sensitive Shield + Report */}
                     {isThreadOpen && (
                       <div
                         onClick={e => e.stopPropagation()}
@@ -1036,38 +1435,43 @@ export function SocialView({
                                     <span className="text-[#7A7A85]">· {c.createdAt}</span>
                                   </div>
 
-                                  {c.audioUrl ? (
-                                    <div
-                                      className={`mt-1.5 p-2.5 rounded-2xl border max-w-[300px] ${
-                                        c.aiSummoned
-                                          ? 'lm-ai-summon-ring'
-                                          : 'bg-[#15151B] border-white/[0.08]'
-                                      }`}
-                                    >
-                                      <SmartVoicePill
-                                        url={c.audioUrl}
-                                        transcript={c.transcript}
-                                        recordId={c.id}
-                                        table="post_comments"
-                                        accent={c.aiSummoned ? 'ai' : 'default'}
-                                        compact
-                                      />
-                                    </div>
-                                  ) : c.isAi ? (
-                                    <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
-                                        {c.content}
-                                      </ReactMarkdown>
-                                    </div>
-                                  ) : (
-                                    <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
-                                      <RichMessageText
-                                        text={c.content}
-                                        onMentionClick={onOpenProfileByUsername}
-                                        onHashtagClick={tag => onSelectHashtag?.(tag)}
-                                      />
-                                    </div>
-                                  )}
+                                  <SensitiveCommentShield
+                                    revealed={!c.isSensitive || Boolean(revealedComments[c.id])}
+                                    onReveal={() => setRevealedComments(prev => ({ ...prev, [c.id]: true }))}
+                                  >
+                                    {c.audioUrl ? (
+                                      <div
+                                        className={`mt-1.5 p-2.5 rounded-2xl border max-w-[300px] ${
+                                          c.aiSummoned
+                                            ? 'lm-ai-summon-ring'
+                                            : 'bg-[#15151B] border-white/[0.08]'
+                                        }`}
+                                      >
+                                        <SmartVoicePill
+                                          url={c.audioUrl}
+                                          transcript={c.transcript}
+                                          recordId={c.id}
+                                          table="post_comments"
+                                          accent={c.aiSummoned ? 'ai' : 'default'}
+                                          compact
+                                        />
+                                      </div>
+                                    ) : c.isAi ? (
+                                      <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                          {c.content}
+                                        </ReactMarkdown>
+                                      </div>
+                                    ) : (
+                                      <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
+                                        <RichMessageText
+                                          text={c.content}
+                                          onMentionClick={onOpenProfileByUsername}
+                                          onHashtagClick={tag => onSelectHashtag?.(tag)}
+                                        />
+                                      </div>
+                                    )}
+                                  </SensitiveCommentShield>
 
                                   <div className="mt-1 flex items-center gap-3">
                                     <button
@@ -1089,6 +1493,22 @@ export function SocialView({
                                       <CornerDownLeft className="w-3 h-3" />
                                       <span>رد</span>
                                     </button>
+                                    {!c.isAi && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setReportRequest({
+                                            targetType: 'post_comment',
+                                            targetId: c.id,
+                                            label: 'هذا التعليق',
+                                          })
+                                        }
+                                        className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#FB7185] cursor-pointer"
+                                      >
+                                        <Flag className="w-2.5 h-2.5" />
+                                        <span>إبلاغ</span>
+                                      </button>
+                                    )}
                                     {c.userId === user.id && (
                                       <QuickRemovePill onRemove={() => deleteComment(post.id, c.id)} />
                                     )}
@@ -1130,38 +1550,44 @@ export function SocialView({
                                           {!rep.isAi && rep.aiSummoned && <AiSummonBadge label="AI" compact />}
                                           <span className="text-[#7A7A85]">· {rep.createdAt}</span>
                                         </div>
-                                        {rep.audioUrl ? (
-                                          <div
-                                            className={`mt-1 p-2 rounded-2xl border max-w-[280px] ${
-                                              rep.aiSummoned
-                                                ? 'lm-ai-summon-ring'
-                                                : 'bg-[#15151B] border-white/[0.08]'
-                                            }`}
-                                          >
-                                            <SmartVoicePill
-                                              url={rep.audioUrl}
-                                              transcript={rep.transcript}
-                                              recordId={rep.id}
-                                              table="post_comments"
-                                              accent={rep.aiSummoned ? 'ai' : 'default'}
-                                              compact
-                                            />
-                                          </div>
-                                        ) : rep.isAi ? (
-                                          <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
-                                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
-                                              {rep.content}
-                                            </ReactMarkdown>
-                                          </div>
-                                        ) : (
-                                          <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
-                                            <RichMessageText
-                                              text={rep.content}
-                                              onMentionClick={onOpenProfileByUsername}
-                                              onHashtagClick={tag => onSelectHashtag?.(tag)}
-                                            />
-                                          </div>
-                                        )}
+
+                                        <SensitiveCommentShield
+                                          revealed={!rep.isSensitive || Boolean(revealedComments[rep.id])}
+                                          onReveal={() => setRevealedComments(prev => ({ ...prev, [rep.id]: true }))}
+                                        >
+                                          {rep.audioUrl ? (
+                                            <div
+                                              className={`mt-1 p-2 rounded-2xl border max-w-[280px] ${
+                                                rep.aiSummoned
+                                                  ? 'lm-ai-summon-ring'
+                                                  : 'bg-[#15151B] border-white/[0.08]'
+                                              }`}
+                                            >
+                                              <SmartVoicePill
+                                                url={rep.audioUrl}
+                                                transcript={rep.transcript}
+                                                recordId={rep.id}
+                                                table="post_comments"
+                                                accent={rep.aiSummoned ? 'ai' : 'default'}
+                                                compact
+                                              />
+                                            </div>
+                                          ) : rep.isAi ? (
+                                            <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
+                                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                                {rep.content}
+                                              </ReactMarkdown>
+                                            </div>
+                                          ) : (
+                                            <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
+                                              <RichMessageText
+                                                text={rep.content}
+                                                onMentionClick={onOpenProfileByUsername}
+                                                onHashtagClick={tag => onSelectHashtag?.(tag)}
+                                              />
+                                            </div>
+                                          )}
+                                        </SensitiveCommentShield>
 
                                         <div className="mt-1 flex items-center gap-3">
                                           <button
@@ -1183,6 +1609,22 @@ export function SocialView({
                                             <CornerDownLeft className="w-2.5 h-2.5" />
                                             <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
                                           </button>
+                                          {!rep.isAi && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setReportRequest({
+                                                  targetType: 'post_comment',
+                                                  targetId: rep.id,
+                                                  label: 'هذا الرد',
+                                                })
+                                              }
+                                              className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] cursor-pointer"
+                                            >
+                                              <Flag className="w-2.5 h-2.5" />
+                                              <span>إبلاغ</span>
+                                            </button>
+                                          )}
                                           {rep.userId === user.id && (
                                             <QuickRemovePill onRemove={() => deleteComment(post.id, rep.id)} />
                                           )}
@@ -1294,6 +1736,7 @@ export function SocialView({
             );
           })}
         </div>
+        )}
       </div>
 
       {/* FULL-PAGE EXPANDED COMPOSER (Keeps Typed Text + Bottom 1-4 Photos Shelf!) */}
@@ -1411,6 +1854,18 @@ export function SocialView({
                   >
                     <ImageIcon className="w-4 h-4" />
                     <span>صور ({uploadedMediaUrls.length}/4)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMusicPickerOpen(true)}
+                    className={`px-3.5 py-2 rounded-full text-xs flex items-center gap-2 cursor-pointer ${
+                      selectedMusic
+                        ? 'bg-[#10B981]/20 border border-[#34D399]/40 text-[#6EE7B7] font-semibold'
+                        : 'bg-white/[0.06] hover:bg-white/[0.12] text-[#E4E4E7]'
+                    }`}
+                  >
+                    <Music className="w-4 h-4" />
+                    <span>{selectedMusic ? selectedMusic.title : 'موسيقى'}</span>
                   </button>
                   <button
                     type="button"
@@ -1679,6 +2134,145 @@ export function SocialView({
           </form>
         </div>
       )}
+
+      {/* Licensed Royalty-Free Studio Music Library Modal (CC0 + Custom Audio Upload) */}
+      {musicPickerOpen && (
+        <div
+          onClick={() => {
+            stopPreviewMusic();
+            setMusicPickerOpen(false);
+          }}
+          className="fixed inset-0 z-[75] bg-black/82 backdrop-blur-md flex items-end md:items-center justify-center p-0 md:p-4"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full md:max-w-[440px] max-h-[82vh] rounded-t-[28px] md:rounded-[28px] bg-[#13131A]/98 border-t md:border border-white/[0.13] overflow-hidden flex flex-col text-start shadow-2xl"
+          >
+            <div className="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Music className="w-4 h-4 text-[#34D399]" />
+                <span className="text-sm font-bold text-white">مكتبة الموسيقى المجانية المرخّصة</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  stopPreviewMusic();
+                  setMusicPickerOpen(false);
+                }}
+                className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2.5 overflow-y-auto">
+              <p className="text-[11px] text-[#9E9EA8] leading-relaxed">
+                أضف مقطوعة موسيقية مرخّصة بدون حقوق (CC0) أو ارفع مقطعًا من جهازك ليظهر مع زر السماعة أسفل صورك.
+              </p>
+
+              <button
+                type="button"
+                disabled={uploadingCustomAudio}
+                onClick={() => customAudioRef.current?.click()}
+                className="w-full px-3.5 py-2.5 rounded-2xl border border-dashed border-white/[0.18] hover:border-[#34D399]/60 bg-[#0B0B0F] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                <Upload className="w-4 h-4 text-[#34D399]" />
+                <span>{uploadingCustomAudio ? 'جارٍ رفع الملف الصوتي...' : 'رفع مقطع صوتي من جهازك (MP3 / WAV)'}</span>
+              </button>
+
+              <div className="space-y-1.5 pt-1">
+                {musicLibrary.map(track => {
+                  const isPreviewing = previewingMusicUrl === track.url;
+                  const isChosen = selectedMusic?.url === track.url;
+                  return (
+                    <div
+                      key={track.id}
+                      className={`p-2.5 rounded-2xl border flex items-center justify-between gap-2.5 transition-colors ${
+                        isChosen
+                          ? 'bg-[#10B981]/14 border-[#34D399]/45'
+                          : 'bg-[#0C0C10] border-white/[0.08] hover:border-white/[0.16]'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => togglePreviewTrack(track.url)}
+                        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                          isPreviewing
+                            ? 'bg-[#34D399] text-black'
+                            : 'bg-white/[0.08] text-white hover:bg-white/[0.16]'
+                        }`}
+                      >
+                        {isPreviewing ? (
+                          <Pause className="w-4 h-4" />
+                        ) : (
+                          <Play className="w-4 h-4 fill-current" />
+                        )}
+                      </button>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-white truncate">{track.title}</div>
+                        <div className="text-[10.5px] text-[#8E8E93] flex items-center gap-1.5 truncate">
+                          <span>{track.artist}</span>
+                          <span>·</span>
+                          <span>{track.mood}</span>
+                          <span>·</span>
+                          <span className="text-[#34D399] font-mono-num">{track.license}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMusic({ url: track.url, title: `${track.title} — ${track.artist}` });
+                          stopPreviewMusic();
+                          setMusicPickerOpen(false);
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-[11px] font-semibold cursor-pointer shrink-0 transition-colors ${
+                          isChosen
+                            ? 'bg-[#34D399] text-black'
+                            : 'bg-white/[0.09] hover:bg-white hover:text-black text-white'
+                        }`}
+                      >
+                        {isChosen ? 'محدّد' : 'اختيار'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Universal Sensitive Content Reporting Modal */}
+      <ReportContentModal
+        request={reportRequest}
+        reporterId={user.id}
+        onClose={() => setReportRequest(null)}
+        onReported={res => {
+          if (res.targetType === 'post') {
+            setPosts(prev =>
+              prev.map(p =>
+                p.id === res.targetId
+                  ? { ...p, reportsCount: res.reportsCount, isSensitive: res.isSensitive }
+                  : p
+              )
+            );
+          } else if (res.targetType === 'post_comment') {
+            setCommentsByPost(prev => {
+              const next = { ...prev };
+              for (const pid of Object.keys(next)) {
+                next[pid] = next[pid].map(c =>
+                  c.id === res.targetId
+                    ? { ...c, reportsCount: res.reportsCount, isSensitive: res.isSensitive }
+                    : c
+                );
+              }
+              return next;
+            });
+          }
+        }}
+      />
     </div>
   );
 }

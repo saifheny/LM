@@ -59,6 +59,7 @@ export function ProfileView({
 }: ProfileViewProps) {
   const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
+  const [hasActiveStory, setHasActiveStory] = useState(false);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
   const [savedPosts, setSavedPosts] = useState<SocialPost[]>([]);
@@ -105,6 +106,7 @@ export function ProfileView({
         ok: boolean;
         user: UserProfile;
         isFollowing: boolean;
+        hasActiveStory?: boolean;
         posts: SocialPost[];
         videos: ShortVideoItem[];
         savedPosts?: SocialPost[];
@@ -114,6 +116,7 @@ export function ProfileView({
       }>(`/api/users/${profileUserId}/profile?viewerId=${currentUser.id}`);
       setProfileUser(res.user);
       setIsFollowing(res.isFollowing);
+      setHasActiveStory(Boolean(res.hasActiveStory));
       setPosts(res.posts);
       setVideos(res.videos);
       setSavedPosts(res.savedPosts || []);
@@ -320,7 +323,13 @@ export function ProfileView({
         <div className="px-4 sm:px-6 -mt-12 relative z-10 space-y-5">
           <div className="flex items-end justify-between gap-4 flex-wrap">
             <div className="relative">
-              <div className="p-[2.5px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#34D399]">
+              <div
+                className={`p-[2.5px] rounded-full ${
+                  hasActiveStory
+                    ? 'bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55]'
+                    : 'border-2 border-white/[0.18]'
+                }`}
+              >
                 <div className="p-[2.5px] rounded-full bg-[#0A0A0C]">
                   <UserAvatar
                     initials={profileUser.avatarInitials}
