@@ -38,6 +38,7 @@ import { NavAiIcon, PulsePlayGlyph, SharePlatformIcons, StylusEditIcon } from '.
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
+import { CommentListSkeleton, EmptyState2026 } from '../shared/EmptyState2026';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
@@ -193,7 +194,7 @@ export function ShortVideosView({
       // ignore
     }
   }, []);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [speed2x, setSpeed2x] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -230,9 +231,11 @@ export function ShortVideosView({
     }
   }
 
-  // Comments Sheet (Centered inside video stage like Live — NO X button, floating composer, AI summon + Voice-to-AI + persistent drafts!)
+  // Comments Sheet (Instant cache + loading skeleton — NEVER flashes 0 comments while loading!)
   const [drawerVideo, setDrawerVideo] = useState<ShortVideoItem | null>(null);
   const [comments, setComments] = useState<VideoCommentItem[]>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const commentsCacheRef = useRef<Record<string, VideoCommentItem[]>>({});
   const [commentDraftsByVideo, setCommentDraftsByVideo] = useState<Record<string, string>>(() => {
     try {
       const raw = localStorage.getItem('lm_draft_pulse_comments');
@@ -551,24 +554,55 @@ export function ShortVideosView({
   }
 
   async function toggleSave(v: ShortVideoItem) {
-    const res = await apiPost<{ ok: boolean; saved: boolean }>(`/api/videos/${v.id}/save`, { userId: user.id });
+    const nextSaved = !v.savedByMe;
     setVideos(prev =>
       prev.map(item =>
         item.id === v.id
           ? {
               ...item,
-              savedByMe: res.saved,
-              savesCount: res.saved ? item.savesCount + 1 : Math.max(0, item.savesCount - 1),
+              savedByMe: nextSaved,
+              savesCount: Math.max(0, item.savesCount + (nextSaved ? 1 : -1)),
             }
           : item
       )
     );
+    try {
+      const res = await apiPost<{ ok: boolean; saved: boolean }>(`/api/videos/${v.id}/save`, { userId: user.id });
+      if (res.saved !== nextSaved) {
+        setVideos(prev =>
+          prev.map(item =>
+            item.id === v.id
+              ? {
+                  ...item,
+                  savedByMe: res.saved,
+                  savesCount: Math.max(0, item.savesCount + (res.saved ? 1 : -1)),
+                }
+              : item
+          )
+        );
+      }
+    } catch {
+      loadVideos();
+    }
   }
 
   async function openComments(v: ShortVideoItem) {
     setDrawerVideo(v);
-    const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${v.id}/comments?userId=${user.id}`);
-    setComments(res.comments);
+    const cached = commentsCacheRef.current[v.id];
+    if (cached) {
+      setComments(cached);
+      setLoadingComments(false);
+    } else {
+      setComments([]);
+      setLoadingComments(true);
+    }
+    try {
+      const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${v.id}/comments?userId=${user.id}`);
+      commentsCacheRef.current[v.id] = res.comments;
+      setComments(res.comments);
+    } finally {
+      setLoadingComments(false);
+    }
   }
 
   async function openShareSheet(v: ShortVideoItem) {
@@ -684,10 +718,25 @@ export function ShortVideosView({
   }
 
   async function toggleCommentLike(commentId: string) {
-    const res = await apiPost<{ ok: boolean; likesCount: number; liked: boolean }>(`/api/video-comments/${commentId}/like`, {
-      userId: user.id,
-    });
-    setComments(prev => prev.map(c => (c.id === commentId ? { ...c, likesCount: res.likesCount, likedByMe: res.liked } : c)));
+    setComments(prev =>
+      prev.map(c =>
+        c.id === commentId
+          ? {
+              ...c,
+              likedByMe: !c.likedByMe,
+              likesCount: Math.max(0, c.likesCount + (c.likedByMe ? -1 : 1)),
+            }
+          : c
+      )
+    );
+    try {
+      const res = await apiPost<{ ok: boolean; likesCount: number; liked: boolean }>(`/api/video-comments/${commentId}/like`, {
+        userId: user.id,
+      });
+      setComments(prev => prev.map(c => (c.id === commentId ? { ...c, likesCount: res.likesCount, likedByMe: res.liked } : c)));
+    } catch {
+      // ignore
+    }
   }
 
   async function saveEditedComment(commentId: string) {
@@ -916,10 +965,12 @@ export function ShortVideosView({
                   onPointerUp={releaseLongPressSpeed}
                   onPointerLeave={releaseLongPressSpeed}
                   onPointerCancel={releaseLongPressSpeed}
+                  onContextMenu={e => e.preventDefault()}
                   onClick={e => handleStageClick(e, v)}
-                  className="w-full h-full relative cursor-pointer"
+                  style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+                  className="w-full h-full relative cursor-pointer select-none"
                 >
-                  {/* Mount active <video> ONLY on the visible slide — prevents concurrent multi-MB mobile freezing! */}
+                  {/* Mount active <video> ONLY on the visible slide — pointer-events-none blocks mobile contextmenu so 2x long-press NEVER breaks! */}
                   {idx === activeIndex ? (
                     <video
                       ref={el => {
@@ -932,6 +983,9 @@ export function ShortVideosView({
                       playsInline
                       preload="auto"
                       muted={muted}
+                      disablePictureInPicture
+                      controlsList="nodownload noplaybackrate"
+                      onContextMenu={e => e.preventDefault()}
                       onLoadStart={() => setVideoBuffering(true)}
                       onWaiting={() => setVideoBuffering(true)}
                       onCanPlay={() => setVideoBuffering(false)}
@@ -948,17 +1002,18 @@ export function ShortVideosView({
                           setDuration(e.currentTarget.duration);
                         }
                       }}
-                      className="w-full h-full object-cover bg-black"
+                      className="pointer-events-none w-full h-full object-cover bg-black select-none"
                     />
                   ) : v.posterUrl ? (
                     <img
                       src={v.posterUrl}
                       alt=""
                       loading="lazy"
-                      className="w-full h-full object-cover bg-black"
+                      draggable={false}
+                      className="pointer-events-none w-full h-full object-cover bg-black select-none"
                     />
                   ) : (
-                    <div className="w-full h-full bg-gradient-to-b from-[#14141A] via-[#09090D] to-black" />
+                    <div className="pointer-events-none w-full h-full bg-gradient-to-b from-[#14141A] via-[#09090D] to-black" />
                   )}
 
                   {idx === activeIndex && videoBuffering && !paused && (
@@ -997,23 +1052,25 @@ export function ShortVideosView({
                     }`}
                   >
                     <div
-                      className={`flex items-center gap-1.5 text-sm font-semibold text-white flex-wrap ${
+                      className={`flex items-center gap-2 text-sm font-semibold text-white flex-wrap ${
                         bottomDockHidden ? 'justify-center md:justify-start' : 'justify-start'
                       }`}
                     >
                       <button
                         type="button"
                         onClick={() => onOpenProfile?.(v.userId)}
-                        className="hover:underline cursor-pointer"
+                        className="inline-flex items-center gap-2 hover:underline cursor-pointer"
                       >
-                        @{v.username}
+                        <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={28} />
+                        <span>{v.displayName}</span>
                       </button>
                       {v.verified && <VerifiedIcon />}
+                      <span className="text-[11.5px] font-normal text-white/65 font-mono-num">@{v.username}</span>
                       {v.userId !== user.id && !v.isFollowingAuthor && (
                         <button
                           type="button"
                           onClick={() => followCreator(v.userId)}
-                          className="ms-1 px-2.5 py-0.5 rounded-full bg-[#FF2D55] hover:bg-[#FB7185] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors shadow-md"
+                          className="ms-0.5 px-2.5 py-0.5 rounded-full bg-[#FF2D55] hover:bg-[#FB7185] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors shadow-md"
                         >
                           <Plus className="w-3 h-3" strokeWidth={2.8} />
                           <span>متابعة</span>
@@ -1426,11 +1483,27 @@ export function ShortVideosView({
           >
             <div className="px-4 pt-2.5 pb-3 border-b border-white/[0.08] flex flex-col items-center gap-2 shrink-0">
               <div className="w-10 h-1 rounded-full bg-white/25" />
-              <span className="text-xs font-semibold text-white">{comments.length} تعليق</span>
+              <span className="text-xs font-semibold text-white">
+                {loadingComments ? drawerVideo.commentsCount : comments.length} تعليق
+              </span>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 pt-3 pb-28 space-y-4">
-              {rootComments.map(c => {
+              {loadingComments ? (
+                <CommentListSkeleton rows={4} />
+              ) : rootComments.length === 0 ? (
+                <EmptyState2026
+                  compact
+                  icon={<MessageCircle className="w-5 h-5" />}
+                  title={lang === 'en' ? 'No comments yet' : 'لا توجد تعليقات بعد'}
+                  subtitle={
+                    lang === 'en'
+                      ? 'Be the first to share your thoughts or summon LM AI.'
+                      : 'كن أول من يضيف تعليقًا أو يبدأ النقاش على هذا الفيديو.'
+                  }
+                />
+              ) : (
+              rootComments.map(c => {
                 const sub = repliesOf(c.id);
                 return (
                   <div key={c.id} className="space-y-2.5">
@@ -1876,7 +1949,8 @@ export function ShortVideosView({
                     )}
                   </div>
                 );
-              })}
+              })
+              )}
 
               {/* Live LM AI Typing Indicator inside Pulse Comments */}
               {aiTyping && (
@@ -1895,8 +1969,11 @@ export function ShortVideosView({
               )}
             </div>
 
-            {/* FLOATING Comment Composer + Side-Aligned Reply Card (ZERO Solid Bottom Bar!) */}
-            <div className="pointer-events-none absolute bottom-3 inset-x-3 z-20 flex flex-col gap-2">
+            {/* FLOATING Comment Composer + Side-Aligned Reply Card (Lifts ONLY composer above mobile keyboard!) */}
+            <div
+              style={{ bottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
+              className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2 transition-[bottom] duration-150"
+            >
               {replyTo && (
                 <div className="pointer-events-auto w-fit max-w-[280px] self-start rounded-2xl bg-[#16161D]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-1.5 flex items-center gap-2.5 shadow-xl">
                   <span className="w-[2.5px] self-stretch rounded-full shrink-0 bg-white/50" />

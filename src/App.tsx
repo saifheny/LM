@@ -3,6 +3,7 @@ import { Lang, NavTab, NotificationItem, UserProfile } from './types';
 import { apiGet, apiPost, setAuthToken } from './lib/api';
 import { registerWsUser, subscribeWs, subscribeWsStatus } from './lib/wsHub';
 import { LayoutProvider } from './context/LayoutContext';
+import { useMobileKeyboardInset } from './lib/useKeyboardInset';
 import { AppShell } from './components/layout/AppShell';
 import { CallLaunchRequest, WebRtcCallController } from './components/shared/WebRtcCallModal';
 import { SharePayload, ShareSheetModal } from './components/shared/ShareSheetModal';
@@ -52,6 +53,7 @@ function readInitialLang(): Lang {
 }
 
 export function App() {
+  useMobileKeyboardInset();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);

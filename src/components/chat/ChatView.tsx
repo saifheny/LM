@@ -38,6 +38,7 @@ import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shar
 import type { CallLaunchRequest } from '../shared/WebRtcCallModal';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
+import { MessageListSkeleton } from '../shared/EmptyState2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
@@ -157,6 +158,8 @@ export function ChatView({
 
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [openPickerMsgId, setOpenPickerMsgId] = useState<string | null>(null);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const messagesCacheRef = useRef<Record<string, ChatMessageItem[]>>({});
   const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
   const [expandedVideoNote, setExpandedVideoNote] = useState<string | null>(null);
 
@@ -247,9 +250,21 @@ export function ChatView({
     }
   }, [user.id]);
 
-  const loadMessages = useCallback(async (convId: string) => {
-    const res = await apiGet<{ ok: boolean; messages: ChatMessageItem[] }>(`/api/conversations/${convId}/messages`);
-    setMessages(res.messages);
+  const loadMessages = useCallback(async (convId: string, showLoader = false) => {
+    const cached = messagesCacheRef.current[convId];
+    if (showLoader && !cached) {
+      setMessages([]);
+      setLoadingMessages(true);
+    } else if (showLoader && cached) {
+      setMessages(cached);
+    }
+    try {
+      const res = await apiGet<{ ok: boolean; messages: ChatMessageItem[] }>(`/api/conversations/${convId}/messages`);
+      messagesCacheRef.current[convId] = res.messages;
+      setMessages(res.messages);
+    } finally {
+      setLoadingMessages(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -281,7 +296,7 @@ export function ChatView({
 
   useEffect(() => {
     if (activeConvId) {
-      loadMessages(activeConvId);
+      loadMessages(activeConvId, true);
       setMsgSearchOpen(false);
       setMsgSearchQ('');
       setSearchMatchIdx(0);
@@ -800,8 +815,40 @@ export function ChatView({
 
   async function toggleReaction(msgId: string, reactionKey: string) {
     setOpenPickerMsgId(null);
-    await apiPost(`/api/messages/${msgId}/react`, { userId: user.id, emoji: reactionKey });
-    loadMessages(activeConvId);
+    setHoveredMsgId(null);
+    // 0ms Instant Optimistic Strictly-Single-Reaction-Per-User Update!
+    setMessages(prev =>
+      prev.map(m => {
+        if (m.id !== msgId) return m;
+        const nextRx: Record<string, string[]> = {};
+        let alreadyHad = false;
+        for (const [k, usersArr] of Object.entries(m.reactions || {})) {
+          if (k === reactionKey && usersArr.includes(user.id)) alreadyHad = true;
+          const cleaned = usersArr.filter(uid => uid !== user.id);
+          if (cleaned.length > 0) nextRx[k] = cleaned;
+        }
+        if (!alreadyHad) {
+          nextRx[reactionKey] = [...(nextRx[reactionKey] || []), user.id];
+        }
+        return { ...m, reactions: nextRx };
+      })
+    );
+    try {
+      const res = await apiPost<{ ok: boolean; reactions?: Record<string, string[]> }>(
+        `/api/messages/${msgId}/react`,
+        { userId: user.id, emoji: reactionKey }
+      );
+      if (res.reactions) {
+        setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, reactions: res.reactions! } : m)));
+        if (activeConvId && messagesCacheRef.current[activeConvId]) {
+          messagesCacheRef.current[activeConvId] = messagesCacheRef.current[activeConvId].map(m =>
+            m.id === msgId ? { ...m, reactions: res.reactions! } : m
+          );
+        }
+      }
+    } catch {
+      if (activeConvId) loadMessages(activeConvId);
+    }
   }
 
   async function createConversation(e: React.FormEvent) {
@@ -1276,8 +1323,11 @@ export function ChatView({
             </div>
           )}
 
+          {/* Loading Skeleton While Fetching Messages (NEVER flashes Empty Welcome while loading!) */}
+          {loadingMessages && <MessageListSkeleton />}
+
           {/* Sculpted Empty-Chat Welcome State */}
-          {messages.length === 0 && (
+          {!loadingMessages && messages.length === 0 && (
             <div className="h-full min-h-[340px] flex flex-col items-center justify-center text-center px-6 py-10 space-y-4">
               <div className="relative flex items-center justify-center">
                 {activeConv ? (
@@ -1350,7 +1400,11 @@ export function ChatView({
                   isMine ? 'items-end' : 'items-start'
                 } ${isHighlighted ? 'bg-[#34D399]/16 ring-1 ring-[#34D399]/50 p-1.5 -mx-1.5' : ''}`}
               >
-                <div className={`relative max-w-[84%] sm:max-w-[68%] flex items-end gap-2 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div
+                  className={`relative w-full flex items-end gap-2 ${
+                    isMine ? 'flex-row-reverse justify-start' : 'flex-row justify-start'
+                  }`}
+                >
                   {!isMine && (
                     isAi ? (
                       <UserAvatar initials={msg.avatarInitials} avatarUrl={msg.avatarUrl} size={28} />
@@ -1368,7 +1422,79 @@ export function ChatView({
                     )
                   )}
 
-                  <div className="relative">
+                  {/* Full Natural Telegram/WhatsApp Horizontal Bubble Width (NEVER crushed by invisible side buttons!) */}
+                  <div className="relative max-w-[82%] sm:max-w-[70%] min-w-0">
+                    {/* Mobile Floating Action Bar Above/Below Tapped Bubble (Takes 0px horizontal layout space!) */}
+                    {showHoverActions && (
+                      <div
+                        onClick={e => e.stopPropagation()}
+                        className={`md:hidden absolute ${popoverPosClass} ${isMine ? 'end-0' : 'start-0'} z-20 flex items-center gap-0.5 px-1.5 py-1 rounded-full bg-[#16161E]/95 backdrop-blur-xl border border-white/[0.14] shadow-2xl`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTranslateMenuMsgId(null);
+                            setOpenPickerMsgId(openPickerMsgId === msg.id ? null : msg.id);
+                          }}
+                          className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                        >
+                          <SmilePlus className="w-3.5 h-3.5" />
+                        </button>
+                        {msg.msgType !== 'audio' && msg.msgType !== 'video_note' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenPickerMsgId(null);
+                              setTranslateMenuMsgId(translateMenuMsgId === msg.id ? null : msg.id);
+                            }}
+                            className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                          >
+                            <Languages className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHoveredMsgId(null);
+                            handleSelectReply(msg);
+                          }}
+                          className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                        >
+                          <CornerUpLeft className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHoveredMsgId(null);
+                            setReplyTarget(msg);
+                            setSharedForAi(msg);
+                            setInvokeAiMode(true);
+                          }}
+                          className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                        </button>
+                        {isMine && (
+                          <ActionMenuOrb
+                            compact
+                            align={isMine ? 'start' : 'end'}
+                            direction={openPopoverDownward ? 'down' : 'up'}
+                            editLabel="تعديل الرسالة"
+                            removeLabel="إزالة الرسالة"
+                            onEdit={
+                              msg.msgType === 'text'
+                                ? () => {
+                                    setHoveredMsgId(null);
+                                    setEditingMsgId(msg.id);
+                                    setEditingMsgText(msg.content);
+                                  }
+                                : undefined
+                            }
+                            onRemove={() => deleteMessage(msg.id)}
+                          />
+                        )}
+                      </div>
+                    )}
                     {/* 2026 Custom Vector Reaction Picker (Auto-Flips Downward for Top Messages!) */}
                     {openPickerMsgId === msg.id && (
                       <div className={`absolute ${popoverPosClass} z-30 ${isMine ? 'end-0' : 'start-0'}`}>
@@ -1419,8 +1545,11 @@ export function ChatView({
                       </div>
                     ) : (
                       <div
-                        onClick={e => e.stopPropagation()}
-                        className={`px-3.5 py-2.5 text-[14px] leading-relaxed ${
+                        onClick={e => {
+                          e.stopPropagation();
+                          setHoveredMsgId(cur => (cur === msg.id ? null : msg.id));
+                        }}
+                        className={`px-3.5 py-2.5 text-[14px] leading-relaxed break-words ${
                           isAi
                             ? 'rounded-2xl bg-[#15151B] border border-white/[0.14] text-[#F2F2F5]'
                             : msg.aiSummoned
@@ -1556,10 +1685,10 @@ export function ChatView({
                     )}
                   </div>
 
-                  {/* Subtle Message Hover Controls */}
+                  {/* Desktop-Only Side Hover Controls (Hidden on mobile so bubble keeps full 82% horizontal width!) */}
                   <div
                     onClick={e => e.stopPropagation()}
-                    className={`flex items-center gap-0.5 transition-opacity focus-within:opacity-100 focus-within:pointer-events-auto ${
+                    className={`hidden md:flex items-center gap-0.5 shrink-0 transition-opacity focus-within:opacity-100 focus-within:pointer-events-auto ${
                       showHoverActions ? 'opacity-100' : 'opacity-0 pointer-events-none'
                     }`}
                   >
@@ -1708,11 +1837,11 @@ export function ChatView({
           </div>
         )}
 
-        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Safe-Area Lifted Above Phone Nav Bar!) */}
+        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Lifts ONLY composer above mobile keyboard!) */}
         {!mobileNavExpanded && (
           <div
-            style={{ bottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))' }}
-            className="pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center"
+            style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
+            className="pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center transition-[bottom] duration-150"
           >
             <div className="pointer-events-auto w-full max-w-[780px] flex flex-col gap-2">
               {/* Compact Side-Aligned Reply / AI Context Card (Never oversized or paper-thin!) */}

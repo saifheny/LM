@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
-import WaveSurfer from 'wavesurfer.js';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Pause, Mic, X, Captions, Loader2, AlertCircle, Sparkles } from 'lucide-react';
 import { ChromeArrowButton } from './HardwareUI';
 import { apiPost } from '../../lib/api';
@@ -17,36 +16,57 @@ function normalizeStoredTranscript(t?: string | null): string | null {
   return clean;
 }
 
+function fmtAudioSec(sec: number): string {
+  const s = Math.max(0, Math.floor(sec || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function buildDeterministicBars(seedStr: string, count = 28): number[] {
+  let hash = 2166136261;
+  for (let i = 0; i < seedStr.length; i++) {
+    hash ^= seedStr.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const bars: number[] = [];
+  for (let i = 0; i < count; i++) {
+    hash = Math.imul(hash ^ (i * 31 + 17), 16777619);
+    const n = (hash >>> 0) % 100;
+    const envelope = Math.sin((i / (count - 1)) * Math.PI);
+    bars.push(Math.round(24 + (n * 0.62 + envelope * 28) * 0.85));
+  }
+  return bars;
+}
+
 /**
- * Monochrome Smart Voice Pill:
- * - WaveSurfer real audio waveform + reliable HTMLAudio fallback
- * - 1x / 1.5x / 2x Playback Speed toggle
- * - REAL Voice-to-Text transcription via Captions icon (live cache + server Gemini/Whisper /api/transcribe)
+ * Zero-Latency 2026 Monochrome Smart Voice Pill:
+ * - Instant 0ms deterministic waveform bars (ZERO multi-file WaveSurfer decode freeze on mobile!)
+ * - Streams lazily via native HTMLAudio (`preload="none"`) with click-to-seek progress bar
+ * - 1x / 1.5x / 2x Playback Speed toggle + REAL Voice-to-Text transcription
  */
 export function SmartVoicePill({
   url,
   transcript,
+  durationSec,
   recordId,
   table,
-  isMine = false,
   compact = false,
-  accent = 'default',
 }: {
   url: string;
   transcript?: string | null;
+  durationSec?: number;
   recordId?: string;
   table?: 'messages' | 'post_comments' | 'video_comments' | 'ai_messages';
   isMine?: boolean;
   compact?: boolean;
   accent?: 'default' | 'ai';
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
-  const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [wsFailed, setWsFailed] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const bars = useMemo(() => buildDeterministicBars(url || 'lm-voice', compact ? 22 : 28), [url, compact]);
 
   const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState('0:00');
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  const [totalSec, setTotalSec] = useState<number>(durationSec && durationSec > 0 ? durationSec : 0);
+  const [curSec, setCurSec] = useState<number>(0);
   const [speed, setSpeed] = useState<1 | 1.5 | 2>(1);
 
   const [resolvedTranscript, setResolvedTranscript] = useState<string | null>(() => normalizeStoredTranscript(transcript));
@@ -60,53 +80,41 @@ export function SmartVoicePill({
   }, [transcript]);
 
   useEffect(() => {
-    setWsFailed(false);
     setPlaying(false);
-    if (!containerRef.current) return;
-
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      waveColor: 'rgba(255,255,255,0.24)',
-      progressColor: '#F5F5F7',
-      cursorWidth: 0,
-      barWidth: 2,
-      barGap: 2,
-      barRadius: 4,
-      height: compact ? 22 : 28,
-      url,
-    });
-    wsRef.current = ws;
-
-    ws.on('ready', () => {
-      const d = Math.max(1, Math.round(ws.getDuration() || 1));
-      setDuration(`${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`);
-    });
-    ws.on('play', () => setPlaying(true));
-    ws.on('pause', () => setPlaying(false));
-    ws.on('finish', () => setPlaying(false));
-    ws.on('error', () => {
-      setWsFailed(true);
-    });
-
-    return () => {
-      ws.destroy();
-      wsRef.current = null;
-    };
-  }, [url, isMine, compact, accent]);
+    setLoadingAudio(false);
+    setCurSec(0);
+    setTotalSec(durationSec && durationSec > 0 ? durationSec : 0);
+  }, [url, durationSec]);
 
   function togglePlay(e: React.MouseEvent) {
     e.stopPropagation();
-    if (!wsFailed && wsRef.current) {
-      wsRef.current.playPause();
-      return;
-    }
-    const audio = fallbackAudioRef.current;
+    const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
       audio.playbackRate = speed;
-      audio.play().catch(() => {});
+      setLoadingAudio(true);
+      const p = audio.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          setLoadingAudio(false);
+          setPlaying(false);
+        });
+      }
     } else {
       audio.pause();
+    }
+  }
+
+  function seekFromClick(e: React.MouseEvent<HTMLDivElement>) {
+    e.stopPropagation();
+    const audio = audioRef.current;
+    if (!audio) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(rect.width, 1)));
+    const targetDur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : totalSec;
+    if (targetDur > 0) {
+      audio.currentTime = ratio * targetDur;
+      setCurSec(ratio * targetDur);
     }
   }
 
@@ -114,8 +122,7 @@ export function SmartVoicePill({
     e.stopPropagation();
     const next: 1 | 1.5 | 2 = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
     setSpeed(next);
-    wsRef.current?.setPlaybackRate(next);
-    if (fallbackAudioRef.current) fallbackAudioRef.current.playbackRate = next;
+    if (audioRef.current) audioRef.current.playbackRate = next;
   }
 
   async function handleToggleTranscript(e: React.MouseEvent) {
@@ -148,22 +155,44 @@ export function SmartVoicePill({
     }
   }
 
+  const progressRatio = totalSec > 0 ? Math.min(1, curSec / totalSec) : 0;
+
   return (
-    <div className={`space-y-1.5 ${compact ? 'min-w-[200px]' : 'min-w-[235px] sm:min-w-[270px]'}`}>
-      {wsFailed && (
-        <audio
-          ref={fallbackAudioRef}
-          src={url}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
-          onLoadedMetadata={e => {
-            const d = Math.max(1, Math.round(e.currentTarget.duration || 1));
-            setDuration(`${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`);
-          }}
-          className="hidden"
-        />
-      )}
+    <div className={`space-y-1.5 ${compact ? 'min-w-[195px]' : 'min-w-[225px] sm:min-w-[260px]'}`}>
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="none"
+        onPlaying={() => {
+          setLoadingAudio(false);
+          setPlaying(true);
+        }}
+        onPause={() => {
+          setLoadingAudio(false);
+          setPlaying(false);
+        }}
+        onEnded={() => {
+          setLoadingAudio(false);
+          setPlaying(false);
+          setCurSec(0);
+        }}
+        onLoadedMetadata={e => {
+          if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0) {
+            setTotalSec(e.currentTarget.duration);
+          }
+        }}
+        onTimeUpdate={e => {
+          setCurSec(e.currentTarget.currentTime);
+          if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0 && totalSec === 0) {
+            setTotalSec(e.currentTarget.duration);
+          }
+        }}
+        onError={() => {
+          setLoadingAudio(false);
+          setPlaying(false);
+        }}
+        className="hidden"
+      />
 
       <div className="flex items-center gap-2.5">
         <button
@@ -171,25 +200,38 @@ export function SmartVoicePill({
           onClick={togglePlay}
           className="w-8 h-8 rounded-full bg-[#F5F5F7] text-black flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90"
         >
-          {playing ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ms-0.5" />}
+          {loadingAudio ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : playing ? (
+            <Pause className="w-3.5 h-3.5 fill-current" />
+          ) : (
+            <Play className="w-3.5 h-3.5 fill-current ms-0.5" />
+          )}
         </button>
 
         <div className="flex-1 min-w-0">
-          <div ref={containerRef} className={`w-full ${wsFailed ? 'hidden' : ''}`} />
-          {wsFailed && (
-            <div className="h-6 flex items-center gap-[3px] px-1">
-              {Array.from({ length: 22 }).map((_, i) => (
+          <div
+            dir="ltr"
+            onClick={seekFromClick}
+            className={`${compact ? 'h-5' : 'h-7'} flex items-center gap-[2.5px] cursor-pointer`}
+          >
+            {bars.map((pct, i) => {
+              const barRatio = (i + 1) / bars.length;
+              const filled = barRatio <= progressRatio;
+              return (
                 <span
                   key={i}
-                  style={{ height: `${28 + ((i * 37) % 58)}%` }}
-                  className={`flex-1 rounded-full ${playing ? 'bg-white/80' : 'bg-white/25'}`}
+                  style={{ height: `${Math.min(100, Math.max(20, pct))}%` }}
+                  className={`flex-1 rounded-full transition-colors duration-100 ${
+                    filled ? 'bg-[#F5F5F7]' : 'bg-white/25'
+                  }`}
                 />
-              ))}
-            </div>
-          )}
+              );
+            })}
+          </div>
 
           <div className="flex items-center justify-between text-[10px] font-mono-num text-[#8E8E93] mt-0.5">
-            <span>{duration}</span>
+            <span>{playing || curSec > 0 ? fmtAudioSec(curSec) : totalSec > 0 ? fmtAudioSec(totalSec) : 'صوتي'}</span>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"

@@ -17,9 +17,13 @@ import {
   VolumeX,
   Pin,
   Radio,
+  RefreshCw,
   Share2,
+  SlidersHorizontal,
   Smartphone,
+  Sparkles,
   Square,
+  X,
 } from 'lucide-react';
 import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
 import { UserAvatar } from '../shared/LmBrandMark';
@@ -29,7 +33,6 @@ import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { ReportContentModal, ReportRequest, SensitiveMediaShield } from '../shared/SensitiveShield';
-import { PublishActionButton } from '../shared/ModalChrome2026';
 import { api, apiGet, apiPost } from '../../lib/api';
 import { RTC_CONFIG, sendWsSignal, subscribeWs } from '../../lib/wsHub';
 import { t } from '../../lib/i18n';
@@ -70,6 +73,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   });
   const [activeIndex, setActiveIndex] = useState(0);
   const [roomState, setRoomState] = useState<LiveRoomState | null>(null);
+  const roomStateCacheRef = useRef<Record<string, LiveRoomState>>({});
   const [commentText, setCommentTextState] = useState<string>(() => {
     try {
       return localStorage.getItem('lm_draft_live') || '';
@@ -117,11 +121,17 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   const commentsScrollRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
 
-  // Full-Screen Go Live Studio & Portrait (9:16) / Landscape (16:9) Orientation State
+  // Full-Screen TikTok-Style Go Live Studio State (Camera fills 100% of screen + floating controls!)
   const [goLiveOpen, setGoLiveOpen] = useState(false);
   const [goLiveTitle, setGoLiveTitle] = useState('');
   const [goLiveCategory, setGoLiveCategory] = useState('دردشة');
   const [goLiveOrientation, setGoLiveOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [goLiveFacing, setGoLiveFacing] = useState<'user' | 'environment'>('user');
+  const [goLiveFilter, setGoLiveFilter] = useState<'none' | 'warm' | 'crisp'>('none');
+  const [goLiveSettingsOpen, setGoLiveSettingsOpen] = useState(false);
+  const [goLiveAllowComments, setGoLiveAllowComments] = useState(true);
+  const [goLiveSlowMode, setGoLiveSlowMode] = useState(false);
+  const [goLiveAudience, setGoLiveAudience] = useState<'everyone' | 'followers'>('everyone');
   const [startingLive, setStartingLive] = useState(false);
   const [hostingRoomId, setHostingRoomId] = useState<string | null>(null);
   const [livePeerCount, setLivePeerCount] = useState(0);
@@ -179,14 +189,19 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
 
   const loadState = useCallback(async (id: string) => {
     const res = await apiGet<{ ok: boolean; state: LiveRoomState }>(`/api/live/rooms/${id}/state`);
-    setRoomState(res.state);
+    roomStateCacheRef.current[id] = res.state;
+    setRoomState(prev => {
+      // Avoid overwriting if user already swiped away to another room while this request was in flight
+      if (prev && prev.roomId !== id && activeRoomId !== id) return prev;
+      return res.state;
+    });
     setOptimisticLikes(prev => {
       if (!(id in prev)) return prev;
       const next = { ...prev };
       delete next[id];
       return next;
     });
-  }, []);
+  }, [activeRoomId]);
 
   useEffect(() => {
     loadRooms();
@@ -197,6 +212,9 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       setPinMode(false);
       userScrolledUpRef.current = false;
       setScrolledUpComments(false);
+      // Instant zero-lag switch: show cached room state at 0ms OR clear stale previous room comments immediately!
+      const cached = roomStateCacheRef.current[activeRoomId];
+      setRoomState(cached || null);
       loadState(activeRoomId);
     }
   }, [activeRoomId, loadState]);
@@ -249,8 +267,8 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         const s = await navigator.mediaDevices.getUserMedia({
           video:
             goLiveOrientation === 'landscape'
-              ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
-              : { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } },
+              ? { facingMode: goLiveFacing, width: { ideal: 1280 }, height: { ideal: 720 } }
+              : { facingMode: goLiveFacing, width: { ideal: 1080 }, height: { ideal: 1920 } },
           audio: false,
         });
         if (cancelled) {
@@ -268,12 +286,13 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       studioPreviewStreamRef.current?.getTracks().forEach(tr => tr.stop());
       studioPreviewStreamRef.current = null;
     };
-  }, [goLiveOpen, goLiveOrientation]);
+  }, [goLiveOpen, goLiveOrientation, goLiveFacing]);
 
   useEffect(() => {
     if (!lastWsEvent) return;
     if (lastWsEvent.event === 'live:state') {
       const st = lastWsEvent.payload as LiveRoomState;
+      roomStateCacheRef.current[st.roomId] = st;
       if (st.roomId === activeRoomId) {
         setRoomState(st);
         setOptimisticLikes(prev => {
@@ -1019,8 +1038,8 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         </div>
 
-        {/* Active Pinned Comment (Only pinned by the broadcast Host) */}
-        {roomState?.activeHighlight && (
+        {/* Active Pinned Comment (Strictly matched to active room — ZERO stale flash on swipe!) */}
+        {roomState && roomState.roomId === activeRoom?.id && roomState.activeHighlight && (
           <div
             onClick={e => e.stopPropagation()}
             className="absolute bottom-[295px] start-4 end-16 z-20 px-3 py-2 rounded-2xl bg-black/72 backdrop-blur-md border border-white/20 flex items-center gap-2"
@@ -1051,7 +1070,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             onScroll={handleCommentsScroll}
             className="live-comments-scroll max-h-[205px] overflow-y-auto overscroll-contain touch-pan-y no-scrollbar space-y-1.5 py-2"
           >
-            {(roomState?.recentMessages || []).map(msg => (
+            {(roomState && roomState.roomId === activeRoom?.id ? roomState.recentMessages : []).map(msg => (
               <div
                 key={msg.id}
                 className="flex items-start gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
@@ -1148,12 +1167,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         )}
 
-        {/* Transparent TikTok Bottom Comment Bar & Direct Bottom Dock Trigger (Safe-Area Lifted Above Phone Nav Bar!) */}
+        {/* Transparent TikTok Bottom Comment Bar & Direct Bottom Dock Trigger (Lifts ONLY composer above keyboard!) */}
         {!mobileNavExpanded && (
           <div
             onClick={e => e.stopPropagation()}
-            style={{ bottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))' }}
-            className="absolute inset-x-3.5 z-20 flex items-end gap-2"
+            style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
+            className="absolute inset-x-3.5 z-20 flex items-end gap-2 transition-[bottom] duration-150"
           >
             <SplitComposerOrb
               directDockMode
@@ -1187,120 +1206,91 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         )}
       </div>
 
-      {/* FULL-SCREEN 2026 LIVE BROADCAST STUDIO — Portrait (9:16) & Landscape (16:9) Camera Preview! */}
+      {/* FULL-SCREEN TIKTOK-STYLE LIVE CAMERA STUDIO — Camera fills 100% of screen, ZERO box containers, floating title/category/settings! */}
       <AnimatePresence>
         {goLiveOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 18 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[72] h-[100dvh] bg-[#08080B] text-white flex flex-col overflow-hidden"
+            className="fixed inset-0 z-[72] h-[100dvh] w-full bg-black text-white overflow-hidden select-none"
           >
-            {/* Top Bar with Sculpted Back Arrow */}
-            <div
-              style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
-              className="px-4 pb-3.5 border-b border-white/[0.08] flex items-center justify-between max-w-[680px] w-full mx-auto"
-            >
-              <button
-                type="button"
-                onClick={() => setGoLiveOpen(false)}
-                className="w-10 h-10 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-white flex items-center justify-center cursor-pointer transition-colors"
-              >
-                {lang === 'en' ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444] animate-pulse" />
-                <span className="text-sm font-bold text-white">{t(lang, 'live_studio_title')}</span>
-              </div>
-              <div className="w-10" />
+            {/* 100% Full-Screen Live Camera Feed Background */}
+            <div className="absolute inset-0 bg-gradient-to-b from-[#17121E] via-[#0B0B10] to-black">
+              <video
+                ref={studioPreviewVideoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  filter:
+                    goLiveFilter === 'warm'
+                      ? 'contrast(1.06) saturate(1.18) brightness(1.04)'
+                      : goLiveFilter === 'crisp'
+                        ? 'contrast(1.12) brightness(1.05)'
+                        : 'none',
+                }}
+                className={`w-full h-full ${goLiveOrientation === 'landscape' ? 'object-contain bg-black' : 'object-cover'} ${
+                  goLiveFacing === 'user' ? 'scale-x-[-1]' : ''
+                }`}
+              />
+              {/* Soft Top & Bottom Legibility Vignettes Over Camera */}
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-52 bg-gradient-to-b from-black/70 via-black/25 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black/82 via-black/30 to-transparent" />
             </div>
 
             <form
               onSubmit={startCustomLiveBroadcast}
-              className="flex-1 overflow-y-auto px-5 py-5 max-w-[680px] w-full mx-auto space-y-5 pb-12"
+              className="relative z-10 h-full w-full max-w-[560px] mx-auto flex flex-col justify-between px-4"
+              style={{
+                paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 10px))',
+                paddingBottom: 'calc(max(22px, env(safe-area-inset-bottom) + 16px) + var(--lm-kb-offset, 0px))',
+              }}
             >
-              {/* Adaptive Live Camera Framing Preview (Portrait 9:16 vs Landscape 16:9!) */}
-              <div className="flex flex-col items-center gap-3">
-                <div
-                  className={`relative rounded-[24px] overflow-hidden bg-[#111116] border border-white/[0.14] shadow-2xl transition-all duration-300 flex items-center justify-center ${
-                    goLiveOrientation === 'landscape'
-                      ? 'w-full aspect-video max-h-[260px]'
-                      : 'w-[180px] sm:w-[210px] aspect-[9/16] max-h-[300px]'
-                  }`}
-                >
-                  <video
-                    ref={studioPreviewVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover scale-x-[-1]"
+              {/* TOP FLOATING ZONE: Back Arrow + Floating Title (No Box!) + Floating Category Chips */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGoLiveSettingsOpen(false);
+                      setGoLiveOpen(false);
+                    }}
+                    aria-label={t(lang, 'back')}
+                    className="w-10 h-10 rounded-full bg-black/40 hover:bg-black/65 backdrop-blur-md text-white flex items-center justify-center cursor-pointer transition-colors"
+                  >
+                    {lang === 'en' ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
+                  </button>
+
+                  <span className="px-3 py-1 rounded-full bg-black/40 backdrop-blur-md text-[11px] font-mono-num text-white/90 inline-flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
+                    <span>{goLiveOrientation === 'landscape' ? '16:9 · عرضي' : '9:16 · طولي'}</span>
+                  </span>
+                </div>
+
+                {/* Floating Gray-Tinted Translucent Title Input Directly Over Camera (NO Heavy Card Container!) */}
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl bg-[#26262C]/55 backdrop-blur-md">
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={36} />
+                  <input
+                    value={goLiveTitle}
+                    onChange={e => setGoLiveTitle(e.target.value)}
+                    placeholder={lang === 'en' ? 'Add a broadcast title...' : 'اكتب عنوان البث هنا...'}
+                    className="flex-1 min-w-0 bg-transparent text-sm font-medium text-white placeholder:text-white/75 outline-none"
                   />
-                  <div className="pointer-events-none absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-[10px] font-mono-num text-white">
-                    {goLiveOrientation === 'landscape' ? '16:9 · HD' : '9:16 · LIVE'}
-                  </div>
                 </div>
 
-                {/* Orientation Switcher: Portrait (9:16) vs Landscape (16:9 بالعرض) */}
-                <div className="inline-flex items-center gap-1.5 p-1 rounded-full bg-[#121218] border border-white/[0.1]">
-                  <button
-                    type="button"
-                    onClick={() => setGoLiveOrientation('portrait')}
-                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                      goLiveOrientation === 'portrait'
-                        ? 'bg-white text-black'
-                        : 'text-[#A1A1AA] hover:text-white'
-                    }`}
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>{t(lang, 'portrait_mode')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setGoLiveOrientation('landscape')}
-                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                      goLiveOrientation === 'landscape'
-                        ? 'bg-white text-black'
-                        : 'text-[#A1A1AA] hover:text-white'
-                    }`}
-                  >
-                    <Monitor className="w-3.5 h-3.5" />
-                    <span>{t(lang, 'landscape_mode')}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#C4C4CC] block">
-                  {lang === 'en' ? 'Broadcast Title' : 'عنوان البث المباشر'}
-                </label>
-                <input
-                  autoFocus
-                  value={goLiveTitle}
-                  onChange={e => setGoLiveTitle(e.target.value)}
-                  placeholder={
-                    lang === 'en'
-                      ? 'e.g. Live tech Q&A and open chat...'
-                      : 'مثال: جلسة نقاش مفتوحة حول الذكاء الاصطناعي...'
-                  }
-                  className="w-full h-12 rounded-2xl bg-[#111116] border border-white/[0.12] focus:border-[#EF4444]/60 px-4 text-sm text-white placeholder:text-[#585860] outline-none transition-colors"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-[#C4C4CC] block">
-                  {lang === 'en' ? 'Category' : 'التصنيف'}
-                </label>
-                <div className="flex flex-wrap gap-2">
+                {/* Floating Category Pills Directly Over Camera (NO Outer Container!) */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                   {LIVE_CATEGORIES.map(cat => (
                     <button
                       key={cat}
                       type="button"
                       onClick={() => setGoLiveCategory(cat)}
-                      className={`px-3.5 py-1.5 rounded-full text-xs cursor-pointer transition-colors ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs shrink-0 backdrop-blur-md cursor-pointer transition-all ${
                         goLiveCategory === cat
-                          ? 'bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white font-semibold'
-                          : 'bg-white/[0.06] border border-white/[0.1] text-[#A1A1AA] hover:text-white'
+                          ? 'bg-white text-black font-bold shadow-md'
+                          : 'bg-[#26262C]/50 text-white/90 hover:bg-black/60'
                       }`}
                     >
                       {cat}
@@ -1309,25 +1299,188 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 </div>
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-2.5">
+              {/* RIGHT FLOATING TIKTOK-STYLE STUDIO CONTROLS (Flip, Orientation, Filter, Settings) */}
+              <div className="absolute end-3.5 top-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-4">
                 <button
                   type="button"
-                  onClick={() => setGoLiveOpen(false)}
-                  className="h-11 px-5 rounded-full bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-[#D4D4D8] hover:text-white cursor-pointer transition-colors"
+                  onClick={() => setGoLiveFacing(f => (f === 'user' ? 'environment' : 'user'))}
+                  className="flex flex-col items-center gap-1 cursor-pointer group"
                 >
-                  {t(lang, 'cancel')}
+                  <span className="w-10 h-10 rounded-full bg-black/45 hover:bg-black/70 backdrop-blur-md text-white flex items-center justify-center transition-colors">
+                    <RefreshCw className="w-[18px] h-[18px]" />
+                  </span>
+                  <span className="text-[10px] font-medium text-white drop-shadow">عكس</span>
                 </button>
-                <PublishActionButton
+
+                <button
+                  type="button"
+                  onClick={() => setGoLiveOrientation(o => (o === 'portrait' ? 'landscape' : 'portrait'))}
+                  className="flex flex-col items-center gap-1 cursor-pointer"
+                >
+                  <span className="w-10 h-10 rounded-full bg-black/45 hover:bg-black/70 backdrop-blur-md text-white flex items-center justify-center transition-colors">
+                    {goLiveOrientation === 'landscape' ? (
+                      <Monitor className="w-[18px] h-[18px] text-[#FBBF24]" />
+                    ) : (
+                      <Smartphone className="w-[18px] h-[18px]" />
+                    )}
+                  </span>
+                  <span className="text-[10px] font-medium text-white drop-shadow">
+                    {goLiveOrientation === 'landscape' ? 'عرضي' : 'طولي'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setGoLiveFilter(f => (f === 'none' ? 'warm' : f === 'warm' ? 'crisp' : 'none'))}
+                  className="flex flex-col items-center gap-1 cursor-pointer"
+                >
+                  <span
+                    className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center transition-colors ${
+                      goLiveFilter !== 'none' ? 'bg-white text-black' : 'bg-black/45 hover:bg-black/70 text-white'
+                    }`}
+                  >
+                    <Sparkles className="w-[18px] h-[18px]" />
+                  </span>
+                  <span className="text-[10px] font-medium text-white drop-shadow">
+                    {goLiveFilter === 'warm' ? 'دافئ' : goLiveFilter === 'crisp' ? 'واضح' : 'تحسين'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setGoLiveSettingsOpen(true)}
+                  className="flex flex-col items-center gap-1 cursor-pointer"
+                >
+                  <span className="w-10 h-10 rounded-full bg-black/45 hover:bg-black/70 backdrop-blur-md text-white flex items-center justify-center transition-colors">
+                    <SlidersHorizontal className="w-[18px] h-[18px]" />
+                  </span>
+                  <span className="text-[10px] font-medium text-white drop-shadow">الإعدادات</span>
+                </button>
+              </div>
+
+              {/* BOTTOM FLOATING START BROADCAST BUTTON */}
+              <div className="flex flex-col items-center gap-2 pt-2">
+                <button
                   type="submit"
-                  variant="live"
-                  loading={startingLive}
-                  disabled={!goLiveTitle.trim()}
-                  label={t(lang, 'start_broadcast_now')}
-                  loadingLabel={lang === 'en' ? 'Starting...' : 'جارٍ التشغيل...'}
-                  icon={<Radio className="w-4 h-4" />}
-                />
+                  disabled={startingLive || !goLiveTitle.trim()}
+                  className="w-full max-w-[280px] h-12 rounded-full bg-gradient-to-r from-[#FF2D55] to-[#F97316] hover:opacity-95 text-white text-sm font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-[0_12px_36px_rgba(255,45,85,0.45)] disabled:opacity-45 disabled:cursor-not-allowed transition-all active:scale-[0.98]"
+                >
+                  <Radio className="w-4 h-4" />
+                  <span>
+                    {startingLive
+                      ? lang === 'en'
+                        ? 'Going Live...'
+                        : 'جارٍ بدء البث...'
+                      : lang === 'en'
+                        ? 'Go LIVE'
+                        : 'ابدأ البث المباشر'}
+                  </span>
+                </button>
               </div>
             </form>
+
+            {/* TikTok-Style Live Settings Bottom Sheet (Comments, Slow Mode, Audience) */}
+            <AnimatePresence>
+              {goLiveSettingsOpen && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setGoLiveSettingsOpen(false)}
+                  className="fixed inset-0 z-30 bg-black/55 flex items-end justify-center"
+                >
+                  <motion.div
+                    initial={{ y: 40, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 40, opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    onClick={e => e.stopPropagation()}
+                    style={{ paddingBottom: 'max(22px, calc(env(safe-area-inset-bottom) + 14px))' }}
+                    className="w-full max-w-[520px] rounded-t-[26px] bg-[#13131A]/96 backdrop-blur-2xl border-t border-white/[0.12] px-5 pt-3 space-y-4"
+                  >
+                    <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+                      <span className="text-sm font-bold text-white">إعدادات البث</span>
+                      <button
+                        type="button"
+                        onClick={() => setGoLiveSettingsOpen(false)}
+                        className="w-8 h-8 rounded-full bg-white/[0.08] text-white flex items-center justify-center cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div className="flex items-center justify-between py-1">
+                        <div>
+                          <div className="font-semibold text-white">السماح بالتعليقات</div>
+                          <div className="text-[11px] text-[#8E8E93]">تمكين المشاهدين من الكتابة أثناء البث</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setGoLiveAllowComments(v => !v)}
+                          className={`w-11 h-6 rounded-full p-0.5 transition-colors cursor-pointer ${
+                            goLiveAllowComments ? 'bg-[#34D399]' : 'bg-white/15'
+                          }`}
+                        >
+                          <span
+                            className={`block w-5 h-5 rounded-full bg-white transition-transform ${
+                              goLiveAllowComments ? '-translate-x-5 rtl:-translate-x-5 ltr:translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1">
+                        <div>
+                          <div className="font-semibold text-white">تهدئة التعليقات (Slow Mode)</div>
+                          <div className="text-[11px] text-[#8E8E93]">منع تكرار التعليقات السريعة أثناء البث</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setGoLiveSlowMode(v => !v)}
+                          className={`w-11 h-6 rounded-full p-0.5 transition-colors cursor-pointer ${
+                            goLiveSlowMode ? 'bg-[#34D399]' : 'bg-white/15'
+                          }`}
+                        >
+                          <span
+                            className={`block w-5 h-5 rounded-full bg-white transition-transform ${
+                              goLiveSlowMode ? '-translate-x-5 rtl:-translate-x-5 ltr:translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1">
+                        <div>
+                          <div className="font-semibold text-white">من يمكنه المشاهدة</div>
+                          <div className="text-[11px] text-[#8E8E93]">اختر جمهور البث المباشر</div>
+                        </div>
+                        <div className="inline-flex rounded-full bg-white/[0.07] p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setGoLiveAudience('everyone')}
+                            className={`px-3 py-1 rounded-full text-[11px] cursor-pointer ${
+                              goLiveAudience === 'everyone' ? 'bg-white text-black font-semibold' : 'text-[#A1A1AA]'
+                            }`}
+                          >
+                            الجميع
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setGoLiveAudience('followers')}
+                            className={`px-3 py-1 rounded-full text-[11px] cursor-pointer ${
+                              goLiveAudience === 'followers' ? 'bg-white text-black font-semibold' : 'text-[#A1A1AA]'
+                            }`}
+                          >
+                            المتابعون
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>

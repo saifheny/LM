@@ -3161,18 +3161,27 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
 
 app.post('/api/messages/:id/react', (req, res) => {
   const { userId, emoji } = req.body as { userId: string; emoji: string };
-  const row = db.prepare('SELECT conversation_id, reactions_json FROM messages WHERE id = ?').get(req.params.id) as { conversation_id: string; reactions_json: string } | undefined;
+  if (!userId || !emoji) return res.status(400).json({ ok: false });
+  const row = db.prepare('SELECT conversation_id, reactions_json FROM messages WHERE id = ?').get(req.params.id) as
+    | { conversation_id: string; reactions_json: string }
+    | undefined;
   if (!row) return res.status(404).json({ ok: false });
 
   let reactions: Record<string, string[]> = {};
   try { reactions = JSON.parse(row.reactions_json || '{}'); } catch { reactions = {}; }
-  const current = reactions[emoji] || [];
-  if (current.includes(userId)) {
-    const next = current.filter(u => u !== userId);
-    if (next.length === 0) delete reactions[emoji];
-    else reactions[emoji] = next;
-  } else {
-    reactions[emoji] = [...current, userId];
+
+  const alreadyHadThis = Array.isArray(reactions[emoji]) && reactions[emoji].includes(userId);
+
+  // Strictly 1 reaction per user per message: remove userId from ALL existing reaction buckets first!
+  for (const key of Object.keys(reactions)) {
+    const filtered = (reactions[key] || []).filter(u => u !== userId);
+    if (filtered.length === 0) delete reactions[key];
+    else reactions[key] = filtered;
+  }
+
+  // If user chose a different reaction (or had none), set that single new reaction
+  if (!alreadyHadThis) {
+    reactions[emoji] = [...(reactions[emoji] || []), userId];
   }
 
   db.prepare('UPDATE messages SET reactions_json = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);

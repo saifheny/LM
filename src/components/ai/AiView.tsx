@@ -1227,12 +1227,12 @@ export function AiView({ user, lang }: AiViewProps) {
         className="hidden"
       />
 
-      {/* FLOATING COMPOSER: Desktop ChatGPT 2-Row Card (when chatting) + Mobile Floating Split Pill (Safe-Area Lifted!) */}
+      {/* FLOATING COMPOSER: Lifts ONLY composer above mobile keyboard (NOT the whole site!) */}
       {!mobileNavExpanded && (
         <div
           onClick={e => e.stopPropagation()}
-          style={{ bottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))' }}
-          className={`pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex justify-center ${
+          style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
+          className={`pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex justify-center transition-[bottom] duration-150 ${
             turns.length === 0 ? 'md:hidden' : ''
           }`}
         >

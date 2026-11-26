@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Sparkles } from 'lucide-react';
 import type { Components } from 'react-markdown';
 
@@ -42,6 +42,10 @@ export function UserAvatar({
   online?: boolean;
 }) {
   const [imgErr, setImgErr] = useState(false);
+
+  useEffect(() => {
+    setImgErr(false);
+  }, [avatarUrl]);
 
   const isNeutralAvatar = avatarUrl === 'lm:neutral';
 

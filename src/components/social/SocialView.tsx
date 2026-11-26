@@ -50,6 +50,7 @@ import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import type { SharePayload } from '../shared/ShareSheetModal';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
+import { CommentListSkeleton, EmptyState2026 } from '../shared/EmptyState2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
@@ -145,7 +146,8 @@ export function SocialView({
   const libTimerRef = useRef<number | null>(null);
   const libSecRef = useRef(0);
 
-  // Inline Multi-Language Comment Translation
+  // Inline Multi-Language Comment Translation & Comment Loading Skeleton State
+  const [loadingCommentsByPost, setLoadingCommentsByPost] = useState<Record<string, boolean>>({});
   const [commentTranslations, setCommentTranslations] = useState<Record<string, { text: string; lang: string }>>({});
   const [translatingCommentId, setTranslatingCommentId] = useState<string | null>(null);
   const [commentLangMenuId, setCommentLangMenuId] = useState<string | null>(null);
@@ -872,8 +874,14 @@ export function SocialView({
     const nextOpen = !openThreads[postId];
     setOpenThreads(prev => ({ ...prev, [postId]: nextOpen }));
     if (nextOpen) {
-      const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
-      setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
+      const hasCached = Array.isArray(commentsByPost[postId]);
+      if (!hasCached) setLoadingCommentsByPost(prev => ({ ...prev, [postId]: true }));
+      try {
+        const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
+        setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
+      } finally {
+        setLoadingCommentsByPost(prev => ({ ...prev, [postId]: false }));
+      }
     }
   }
 
@@ -1898,7 +1906,17 @@ export function SocialView({
                         onClick={e => e.stopPropagation()}
                         className="mt-3.5 pt-3 border-t border-white/[0.08] space-y-3.5"
                       >
-                        {rootComments.map(c => {
+                        {loadingCommentsByPost[post.id] ? (
+                          <CommentListSkeleton rows={2} />
+                        ) : rootComments.length === 0 ? (
+                          <EmptyState2026
+                            compact
+                            icon={<MessageCircle className="w-4 h-4" />}
+                            title={lang === 'en' ? 'No comments yet' : 'لا توجد تعليقات بعد'}
+                            subtitle={lang === 'en' ? 'Start the conversation below.' : 'كن أول من يضيف تعليقًا على هذا المنشور.'}
+                          />
+                        ) : (
+                        rootComments.map(c => {
                           const replies = getReplies(c.id);
                           return (
                             <div key={c.id} className="space-y-2.5">
@@ -2252,7 +2270,8 @@ export function SocialView({
                               )}
                             </div>
                           );
-                        })}
+                        })
+                        )}
 
                         {/* Live LM AI Typing Indicator inside Community Comments */}
                         {aiTypingPostId === post.id && (
