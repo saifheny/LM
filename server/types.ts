@@ -33,6 +33,9 @@ export interface UserProfile {
   avatarColor: string;
   avatarInitials: string;
   avatarUrl: string | null;
+  coverUrl?: string | null;
+  location?: string;
+  website?: string;
   verified: boolean;
   vipTier: VipTier;
   prioritySupport: boolean;

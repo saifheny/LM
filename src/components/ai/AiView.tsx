@@ -16,7 +16,6 @@ import {
   X,
   FileText,
   History,
-  Trash2,
   Pencil,
   RefreshCw,
   Search,
@@ -28,6 +27,7 @@ import { Lang, UserProfile } from '../../types';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { MARKDOWN_LINK_COMPONENTS, RichMessageText } from '../shared/LmBrandMark';
+import { QuickRemovePill } from '../shared/ActionOrb2026';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { AI_COMPANIES, AiCompanyDef, AiCompanyModel, shortenModelLabel } from './AiProvidersCatalog';
@@ -320,8 +320,8 @@ export function AiView({ user, lang }: AiViewProps) {
     }
   }
 
-  async function deleteSession(id: string, e: React.MouseEvent) {
-    e.stopPropagation();
+  async function deleteSession(id: string, e?: React.MouseEvent) {
+    e?.stopPropagation();
     await api(`/api/ai/sessions/${id}`, { method: 'DELETE' });
     setSessions(prev => prev.filter(s => s.id !== id));
     if (sessionId === id) {
@@ -786,13 +786,9 @@ export function AiView({ user, lang }: AiViewProps) {
                       <span className="shrink-0">{comp.renderLogo(14)}</span>
                       <span className="text-xs text-[#F2F2F5] truncate">{s.title}</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={e => deleteSession(s.id, e)}
-                      className="w-6 h-6 rounded-full hover:bg-white/[0.1] text-[#7A7A85] hover:text-[#EF4444] flex items-center justify-center cursor-pointer shrink-0"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    <div onClick={e => e.stopPropagation()} className="shrink-0">
+                      <QuickRemovePill iconOnly onRemove={() => deleteSession(s.id)} />
+                    </div>
                   </div>
                 );
               })

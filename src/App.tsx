@@ -281,10 +281,10 @@ export function App() {
           />
         )}
         {activeTab === 'videos' && (
-          <ShortVideosView user={currentUser} lang={lang} />
+          <ShortVideosView user={currentUser} lang={lang} onOpenProfile={openProfile} />
         )}
         {activeTab === 'live' && (
-          <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
+          <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} onOpenProfile={openProfile} />
         )}
         {activeTab === 'chat' && (
           <ChatView
@@ -304,6 +304,7 @@ export function App() {
             profileUserId={profileUserId || currentUser.id}
             currentUser={currentUser}
             lang={lang}
+            onOpenProfile={openProfile}
             onProfileUpdated={updated => {
               setCurrentUser(updated);
               loadUsers();

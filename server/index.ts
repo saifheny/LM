@@ -464,15 +464,63 @@ app.get('/api/users/:id/profile', (req, res) => {
     createdAt: r.created_at,
   }));
 
-  res.json({ ok: true, user, isFollowing, posts, videos });
+  const savedRows = db.prepare(`
+    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM video_saves vs
+    JOIN short_videos v ON vs.video_id = v.id
+    JOIN users u ON v.user_id = u.id
+    WHERE vs.user_id = ? ORDER BY vs.rowid DESC
+  `).all(targetId) as Array<Record<string, unknown>>;
+
+  const savedVideos = savedRows.map(r => ({
+    id: r.id,
+    userId: r.user_id,
+    displayName: r.display_name,
+    username: r.username,
+    avatarColor: r.avatar_color,
+    avatarInitials: r.avatar_initials,
+    avatarUrl: r.avatar_url,
+    verified: Boolean(r.verified),
+    title: r.title,
+    description: r.description,
+    tags: r.tags,
+    audioTitle: r.audio_title || 'الصوت الأصلي',
+    videoUrl: r.video_url,
+    posterUrl: r.poster_url,
+    scenePreset: r.scene_preset,
+    durationSec: Number(r.duration_sec),
+    likesCount: Number(r.likes_count),
+    commentsCount: Number(r.comments_count),
+    savesCount: Number(r.saves_count),
+    sharesCount: Number(r.shares_count || 0),
+    viewsCount: Number(r.views_count),
+    likedByMe: false,
+    savedByMe: true,
+    createdAt: r.created_at,
+  }));
+
+  const followersList = (db.prepare(`
+    SELECT u.* FROM user_follows f JOIN users u ON f.follower_id = u.id
+    WHERE f.following_id = ? LIMIT 40
+  `).all(targetId) as Array<Record<string, unknown>>).map(mapUserRow);
+
+  const followingList = (db.prepare(`
+    SELECT u.* FROM user_follows f JOIN users u ON f.following_id = u.id
+    WHERE f.follower_id = ? LIMIT 40
+  `).all(targetId) as Array<Record<string, unknown>>).map(mapUserRow);
+
+  res.json({ ok: true, user, isFollowing, posts, videos, savedVideos, followersList, followingList });
 });
 
 app.patch('/api/users/:id', (req, res) => {
   const targetId = req.params.id;
-  const { displayName, bio, avatarUrl } = req.body as {
+  const { displayName, bio, avatarUrl, coverUrl, location, website } = req.body as {
     displayName?: string;
     bio?: string;
     avatarUrl?: string | null;
+    coverUrl?: string | null;
+    location?: string;
+    website?: string;
   };
   const existing = getUserOrNull(targetId);
   if (!existing) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
@@ -480,6 +528,9 @@ app.patch('/api/users/:id', (req, res) => {
   const nextName = (displayName ?? existing.displayName).trim() || existing.displayName;
   const nextBio = (bio ?? existing.bio).trim();
   const nextAvatar = avatarUrl !== undefined ? avatarUrl : existing.avatarUrl;
+  const nextCover = coverUrl !== undefined ? coverUrl : (existing.coverUrl ?? null);
+  const nextLocation = (location ?? existing.location ?? '').trim();
+  const nextWebsite = (website ?? existing.website ?? '').trim();
   const nextInitials =
     nextName
       .split(/\s+/)
@@ -489,9 +540,9 @@ app.patch('/api/users/:id', (req, res) => {
 
   db.prepare(`
     UPDATE users
-    SET display_name = ?, bio = ?, avatar_url = ?, avatar_initials = ?
+    SET display_name = ?, bio = ?, avatar_url = ?, cover_url = ?, location = ?, website = ?, avatar_initials = ?
     WHERE id = ?
-  `).run(nextName, nextBio, nextAvatar, nextInitials, targetId);
+  `).run(nextName, nextBio, nextAvatar, nextCover, nextLocation, nextWebsite, nextInitials, targetId);
 
   // Keep DM conversation display names/avatars synced if user updated their profile
   db.prepare(`
@@ -1120,6 +1171,52 @@ app.post('/api/videos', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(id, userId, title.trim(), (description || '').trim(), tags || '#LM', videoUrl || '/uploads/seed/reel1.mp4');
   res.json({ ok: true, id });
+});
+
+app.patch('/api/videos/:id', (req, res) => {
+  const { userId, title, description, tags } = req.body as {
+    userId?: string;
+    title?: string;
+    description?: string;
+    tags?: string;
+  };
+  const row = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
+    | { user_id: string; title: string; description: string; tags: string }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'الفيديو غير موجود.' });
+  if (userId && row.user_id !== userId) {
+    return res.status(403).json({ ok: false, error: 'يمكنك تعديل فيديوهاتك فقط.' });
+  }
+  const nextTitle = (title ?? row.title).trim() || row.title;
+  const nextDesc = (description ?? row.description).trim();
+  const nextTags = (tags ?? row.tags).trim();
+  db.prepare('UPDATE short_videos SET title = ?, description = ?, tags = ? WHERE id = ?').run(
+    nextTitle,
+    nextDesc,
+    nextTags,
+    req.params.id
+  );
+  res.json({
+    ok: true,
+    title: nextTitle,
+    description: nextDesc,
+    tags: nextTags,
+    video: { id: req.params.id, title: nextTitle, description: nextDesc, tags: nextTags },
+  });
+});
+
+app.delete('/api/videos/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const row = db.prepare('SELECT user_id FROM short_videos WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'الفيديو غير موجود.' });
+  if (userId && row.user_id !== userId) {
+    return res.status(403).json({ ok: false, error: 'يمكنك حذف فيديوهاتك فقط.' });
+  }
+  db.prepare('DELETE FROM video_comments WHERE video_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM video_likes WHERE video_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM video_saves WHERE video_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM short_videos WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/videos/:id/like', (req, res) => {

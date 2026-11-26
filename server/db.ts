@@ -14,7 +14,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 12;
+const TARGET_DB_VERSION = 13;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -59,6 +59,9 @@ export function initDatabase() {
       avatar_color TEXT NOT NULL,
       avatar_initials TEXT NOT NULL,
       avatar_url TEXT,
+      cover_url TEXT,
+      location TEXT DEFAULT 'القاهرة',
+      website TEXT DEFAULT '',
       verified INTEGER DEFAULT 0,
       vip_tier INTEGER DEFAULT 0,
       priority_support INTEGER DEFAULT 0,
@@ -325,39 +328,39 @@ function seedInitialData() {
   const insertUser = db.prepare(`
     INSERT INTO users (
       id, username, password, display_name, display_name_en, bio,
-      avatar_color, avatar_initials, avatar_url, verified, country,
+      avatar_color, avatar_initials, avatar_url, cover_url, location, website, verified, country,
       demo_balance_egp, creator_earnings_egp, followers_count, following_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   insertUser.run(
     'u_youssef', 'youssef', '123456', 'يوسف المنصوري', 'Youssef El-Mansoury',
-    'Cairo • Product & Systems Architect',
-    '#27272A', 'يم', '/uploads/seed/avatar_youssef.jpg', 1, 'EG', 48500, 12400, 284900, 310
+    'مهندس منتجات وأنظمة مفتوحة المصدر • بناء الجيل القادم من المنصات الذكية',
+    '#27272A', 'يم', '/uploads/seed/avatar_youssef.jpg', '/uploads/seed/post_cairo.jpg', 'القاهرة، مصر', 'https://lm.app/youssef', 1, 'EG', 48500, 12400, 284900, 310
   );
 
   insertUser.run(
     'u_mariam', 'mariam', '123456', 'مريم الشريف', 'Mariam El-Sherif',
-    'Visual Director & Live Host',
-    '#27272A', 'مش', '/uploads/seed/avatar_mariam.jpg', 1, 'EG', 15200, 34900, 192400, 520
+    'مخرجة بصرية ومقدمة بثوث مباشرة • سينما وإضاءة ليلية في القاهرة',
+    '#27272A', 'مش', '/uploads/seed/avatar_mariam.jpg', '/uploads/seed/post_studio.jpg', 'الزمالك، القاهرة', 'https://lm.app/mariam', 1, 'EG', 15200, 34900, 192400, 520
   );
 
   insertUser.run(
     'u_karim', 'karim', '123456', 'كريم فؤاد', 'Karim Fouad',
-    'Tech & Media • NYC / CAI',
-    '#27272A', 'كف', '/uploads/seed/avatar_karim.jpg', 1, 'US', 31000, 6200, 94200, 184
+    'تقنية وإعلام رقمي • بين نيويورك والقاهرة',
+    '#27272A', 'كف', '/uploads/seed/avatar_karim.jpg', '/uploads/seed/post_tech1.jpg', 'نيويورك / القاهرة', 'https://lm.app/karim', 1, 'US', 31000, 6200, 94200, 184
   );
 
   insertUser.run(
     'u_nour', 'nour', '123456', 'نور حسن', 'Nour Hassan',
-    'Cinematographer • Night & Motion',
-    '#27272A', 'نح', '/uploads/seed/avatar_nour.jpg', 1, 'EG', 4300, 1850, 67800, 412
+    'مصورة سينمائية وصانعة محتوى • تفاصيل هادئة وإيقاع بصري',
+    '#27272A', 'نح', '/uploads/seed/avatar_nour.jpg', '/uploads/seed/post_nile.jpg', 'الإسكندرية، مصر', '', 1, 'EG', 4300, 1850, 67800, 412
   );
 
   insertUser.run(
     'u_omar', 'omar', '123456', 'عمر طارق', 'Omar Tarek',
-    'Sound Engineer & Open Source Builder',
-    '#27272A', 'عط', '/uploads/seed/avatar_omar.jpg', 0, 'EG', 5400, 0, 5420, 290
+    'مهندس صوتيات ومطور مفتوح المصدر',
+    '#27272A', 'عط', '/uploads/seed/avatar_omar.jpg', '/uploads/seed/post_studio.jpg', 'المعادي، القاهرة', '', 0, 'EG', 5400, 0, 5420, 290
   );
 
   const insertStory = db.prepare('INSERT INTO stories (id, user_id, media_url, caption) VALUES (?, ?, ?, ?)');
@@ -514,6 +517,9 @@ export function mapUserRow(row: Record<string, unknown>): UserProfile {
     avatarColor: String(row.avatar_color),
     avatarInitials: String(row.avatar_initials),
     avatarUrl: row.avatar_url ? String(row.avatar_url) : null,
+    coverUrl: row.cover_url ? String(row.cover_url) : null,
+    location: String(row.location || ''),
+    website: String(row.website || ''),
     verified: Boolean(row.verified),
     vipTier: 0,
     prioritySupport: false,

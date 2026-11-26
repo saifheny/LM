@@ -10,7 +10,6 @@ import {
   LayoutGrid,
   PanelRightClose,
   PanelLeftClose,
-  Bell,
   CheckCheck,
   User,
 } from 'lucide-react';
@@ -22,6 +21,7 @@ import {
   NavLiveIcon,
   NavChatIcon,
   NavAiIcon,
+  NavBellIcon,
 } from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet } from '../../lib/api';
@@ -50,12 +50,50 @@ export const NAV_ITEMS: Array<{
   en: string;
   icon: React.ComponentType<{ active?: boolean; className?: string }>;
   liveDot?: boolean;
+  activePill: string;
+  activeBar: string;
 }> = [
-  { id: 'social', ar: 'المجتمع', en: 'Feed', icon: NavCommunityIcon },
-  { id: 'videos', ar: 'نبض', en: 'Pulse', icon: NavPulseIcon },
-  { id: 'live', ar: 'مباشر', en: 'Live', icon: NavLiveIcon, liveDot: true },
-  { id: 'chat', ar: 'الدردشة', en: 'Chat', icon: NavChatIcon },
-  { id: 'ai', ar: 'LM AI', en: 'LM AI', icon: NavAiIcon },
+  {
+    id: 'social',
+    ar: 'المجتمع',
+    en: 'Feed',
+    icon: NavCommunityIcon,
+    activePill: 'bg-gradient-to-l from-[#F59E0B]/15 to-[#FB7185]/10 border border-[#F59E0B]/28 text-white font-semibold',
+    activeBar: 'bg-gradient-to-r from-[#F59E0B] to-[#FB7185]',
+  },
+  {
+    id: 'videos',
+    ar: 'نبض',
+    en: 'Pulse',
+    icon: NavPulseIcon,
+    activePill: 'bg-gradient-to-l from-[#FF2D55]/16 to-[#FB7185]/10 border border-[#FF2D55]/28 text-white font-semibold',
+    activeBar: 'bg-gradient-to-r from-[#FF2D55] to-[#FB7185]',
+  },
+  {
+    id: 'live',
+    ar: 'مباشر',
+    en: 'Live',
+    icon: NavLiveIcon,
+    liveDot: true,
+    activePill: 'bg-gradient-to-l from-[#EF4444]/16 to-[#F97316]/10 border border-[#EF4444]/28 text-white font-semibold',
+    activeBar: 'bg-gradient-to-r from-[#EF4444] to-[#F97316]',
+  },
+  {
+    id: 'chat',
+    ar: 'الدردشة',
+    en: 'Chat',
+    icon: NavChatIcon,
+    activePill: 'bg-gradient-to-l from-[#10B981]/16 to-[#34D399]/10 border border-[#10B981]/28 text-white font-semibold',
+    activeBar: 'bg-gradient-to-r from-[#10B981] to-[#34D399]',
+  },
+  {
+    id: 'ai',
+    ar: 'LM AI',
+    en: 'LM AI',
+    icon: NavAiIcon,
+    activePill: 'bg-gradient-to-l from-[#FDE68A]/14 to-white/[0.06] border border-[#FDE68A]/26 text-white font-semibold',
+    activeBar: 'bg-gradient-to-r from-[#FDE68A] to-white',
+  },
 ];
 
 /**
@@ -348,8 +386,8 @@ export function AppShell({
                     sidebarCollapsed ? 'justify-center px-0' : 'gap-3.5 px-3'
                   } text-[14px] ${
                     active
-                      ? 'bg-white/[0.11] text-white font-semibold'
-                      : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
+                      ? item.activePill
+                      : 'border border-transparent text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
                   }`}
                 >
                   <span className="relative flex items-center justify-center shrink-0">
@@ -386,9 +424,9 @@ export function AppShell({
               }`}
             >
               <span className="relative flex items-center justify-center shrink-0">
-                <Bell className="w-[20px] h-[20px]" strokeWidth={1.75} />
+                <NavBellIcon active={notifsOpen || unreadNotifications > 0} className="w-[20px] h-[20px]" />
                 {unreadNotifications > 0 && (
-                  <span className="absolute -top-1 -end-1 min-w-[14px] h-[14px] px-1 rounded-full bg-[#EF4444] text-white text-[9px] font-mono-num font-bold flex items-center justify-center">
+                  <span className="absolute -top-1 -end-1 min-w-[14px] h-[14px] px-1 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[9px] font-mono-num font-bold flex items-center justify-center">
                     {unreadNotifications > 9 ? '9+' : unreadNotifications}
                   </span>
                 )}
@@ -521,7 +559,7 @@ export function AppShell({
                     {active && (
                       <motion.span
                         layoutId="dock-active-bar"
-                        className="absolute -top-1 w-6 h-[2.5px] rounded-full bg-white"
+                        className={`absolute -top-1 w-6 h-[2.5px] rounded-full ${item.activeBar}`}
                       />
                     )}
                   </button>
@@ -579,16 +617,23 @@ export function AppShell({
             className="w-full max-w-[340px] rounded-2xl bg-[#131318] border border-white/[0.12] overflow-hidden text-start"
           >
             <div className="px-4 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
-              <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenProfile(user.id);
+                  setAccountOpen(false);
+                }}
+                className="flex items-center gap-2.5 min-w-0 text-start cursor-pointer group"
+              >
                 <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={36} online={wsOnline} />
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold text-white flex items-center gap-1.5 truncate">
+                  <div className="text-sm font-semibold text-white group-hover:underline flex items-center gap-1.5 truncate">
                     <span>{user.displayName}</span>
                     {user.verified && <VerifiedIcon />}
                   </div>
                   <div className="text-xs text-[#7A7A85] font-mono-num">@{user.username}</div>
                 </div>
-              </div>
+              </button>
             </div>
 
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-2">
@@ -600,7 +645,7 @@ export function AppShell({
                 }}
                 className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <User className="w-3.5 h-3.5" />
+                <User className="w-3.5 h-3.5 text-[#FBBF24]" />
                 <span>ملفي الشخصي</span>
               </button>
               <button
@@ -611,10 +656,10 @@ export function AppShell({
                 }}
                 className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer relative"
               >
-                <Bell className="w-3.5 h-3.5" />
+                <NavBellIcon active={unreadNotifications > 0} className="w-4 h-4" />
                 <span>الإشعارات</span>
                 {unreadNotifications > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-[#EF4444] text-white text-[10px] font-mono-num">
+                  <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[10px] font-mono-num">
                     {unreadNotifications}
                   </span>
                 )}
@@ -782,10 +827,10 @@ export function AppShell({
           >
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-white">
-                <Bell className="w-3.5 h-3.5" />
+                <NavBellIcon active className="w-4 h-4" />
                 <span>الإشعارات</span>
                 {unreadNotifications > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-[#EF4444] text-white text-[10px] font-mono-num">
+                  <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[10px] font-mono-num">
                     {unreadNotifications}
                   </span>
                 )}
@@ -807,9 +852,8 @@ export function AppShell({
                 <div className="py-12 text-center text-xs text-[#7A7A85]">لا توجد إشعارات جديدة</div>
               ) : (
                 notifications.map(n => (
-                  <button
+                  <div
                     key={n.id}
-                    type="button"
                     onClick={() => {
                       onOpenNotification(n);
                       setNotifsOpen(false);
@@ -818,16 +862,36 @@ export function AppShell({
                       !n.isRead ? 'bg-white/[0.03]' : ''
                     }`}
                   >
-                    <UserAvatar initials={n.actorInitials} avatarUrl={n.actorAvatarUrl} size={34} />
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onOpenProfile(n.actorId);
+                        setNotifsOpen(false);
+                      }}
+                      className="shrink-0 cursor-pointer hover:opacity-85 transition-opacity"
+                    >
+                      <UserAvatar initials={n.actorInitials} avatarUrl={n.actorAvatarUrl} size={34} />
+                    </button>
                     <div className="flex-1 min-w-0">
                       <div className="text-xs text-[#F2F2F5] leading-snug">
-                        <span className="font-semibold me-1">{n.actorName}</span>
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onOpenProfile(n.actorId);
+                            setNotifsOpen(false);
+                          }}
+                          className="font-semibold me-1 hover:underline cursor-pointer"
+                        >
+                          {n.actorName}
+                        </button>
                         <span className="text-[#C4C4CC]">{n.text}</span>
                       </div>
                       <div className="mt-1 text-[10.5px] text-[#7A7A85]">{n.createdAt}</div>
                     </div>
-                    {!n.isRead && <span className="mt-1.5 w-2 h-2 rounded-full bg-[#EF4444] shrink-0" />}
-                  </button>
+                    {!n.isRead && <span className="mt-1.5 w-2 h-2 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] shrink-0" />}
+                  </div>
                 ))
               )}
             </div>

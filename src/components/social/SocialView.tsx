@@ -20,8 +20,6 @@ import {
   Minimize2,
   Plus,
   Sparkles,
-  Pencil,
-  Trash2,
   Check,
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
@@ -35,6 +33,7 @@ import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReactions';
 import { NavAiIcon } from '../shared/Icons2026Pro';
+import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface SocialViewProps {
@@ -430,10 +429,12 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                 onClick={() => setActiveStory(st)}
                 className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
               >
-                <div className="p-[2px] rounded-full border border-white/35 group-hover:border-white transition-colors">
-                  <UserAvatar initials={st.avatarInitials} avatarUrl={st.avatarUrl} size={52} />
+                <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] group-hover:scale-[1.04] transition-transform">
+                  <div className="p-[2px] rounded-full bg-[#0A0A0C]">
+                    <UserAvatar initials={st.avatarInitials} avatarUrl={st.avatarUrl} size={50} />
+                  </div>
                 </div>
-                <span className="text-[11px] text-[#A1A1AA] max-w-[64px] truncate">{st.displayName.split(' ')[0]}</span>
+                <span className="text-[11px] text-[#C4C4CC] group-hover:text-white max-w-[64px] truncate transition-colors">{st.displayName.split(' ')[0]}</span>
               </button>
             ))}
           </div>
@@ -444,7 +445,13 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
 
         {/* Inline Post Composer with Expand-to-Full-Page Trigger */}
         <form onSubmit={submitPost} className="px-4 py-4 border-b border-white/[0.07] flex gap-3 relative">
-          <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={38} />
+          <button
+            type="button"
+            onClick={() => onOpenProfile?.(user.id)}
+            className="shrink-0 h-fit cursor-pointer hover:opacity-85 transition-opacity"
+          >
+            <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={38} />
+          </button>
           <div className="flex-1 min-w-0">
             {/* Top Row with Expand Icon when Typing / Active */}
             <div className="flex items-start gap-2">
@@ -615,26 +622,16 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                       </div>
 
                       {post.userId === user.id && (
-                        <div onClick={e => e.stopPropagation()} className="flex items-center gap-0.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => {
+                        <div onClick={e => e.stopPropagation()} className="shrink-0">
+                          <ActionMenuOrb
+                            editLabel="تعديل المنشور"
+                            removeLabel="إزالة المنشور"
+                            onEdit={() => {
                               setEditingPostId(post.id);
                               setEditingPostText(post.content);
                             }}
-                            title="تعديل المنشور"
-                            className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deletePost(post.id)}
-                            title="حذف المنشور"
-                            className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-[#EF4444] flex items-center justify-center cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            onRemove={() => deletePost(post.id)}
+                          />
                         </div>
                       )}
                     </div>
@@ -807,10 +804,30 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                           return (
                             <div key={c.id} className="space-y-2.5">
                               <div className="flex gap-2.5">
-                                <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={28} />
+                                {c.isAi ? (
+                                  <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={28} />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenProfile?.(c.userId)}
+                                    className="shrink-0 h-fit cursor-pointer hover:opacity-85 transition-opacity"
+                                  >
+                                    <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={28} />
+                                  </button>
+                                )}
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 text-xs flex-wrap">
-                                    <span className="font-semibold text-[#F2F2F5]">{c.displayName}</span>
+                                    {c.isAi ? (
+                                      <span className="font-semibold text-[#F2F2F5]">{c.displayName}</span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => onOpenProfile?.(c.userId)}
+                                        className="font-semibold text-[#F2F2F5] hover:underline cursor-pointer"
+                                      >
+                                        {c.displayName}
+                                      </button>
+                                    )}
                                     {c.verified && <VerifiedIcon />}
                                     {c.isAi && <AiSummonBadge label="LM AI" compact />}
                                     {!c.isAi && c.aiSummoned && <AiSummonBadge label="AI" compact />}
@@ -863,14 +880,7 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                                       <span>رد</span>
                                     </button>
                                     {c.userId === user.id && (
-                                      <button
-                                        type="button"
-                                        onClick={() => deleteComment(post.id, c.id)}
-                                        className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#EF4444] cursor-pointer"
-                                      >
-                                        <Trash2 className="w-3 h-3" />
-                                        <span>حذف</span>
-                                      </button>
+                                      <QuickRemovePill onRemove={() => deleteComment(post.id, c.id)} />
                                     )}
                                   </div>
                                 </div>
@@ -880,12 +890,32 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                                 <div className="ms-3.5 ps-3.5 border-s border-white/[0.12] space-y-2.5">
                                   {replies.map(rep => (
                                     <div key={rep.id} className="flex gap-2">
-                                      <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={24} />
+                                      {rep.isAi ? (
+                                        <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={24} />
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => onOpenProfile?.(rep.userId)}
+                                          className="shrink-0 h-fit cursor-pointer hover:opacity-85 transition-opacity"
+                                        >
+                                          <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={24} />
+                                        </button>
+                                      )}
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-1.5 text-[11.5px] flex-wrap">
-                                          <span className="font-semibold text-[#F2F2F5] flex items-center gap-1">
-                                            {rep.displayName}
-                                          </span>
+                                          {rep.isAi ? (
+                                            <span className="font-semibold text-[#F2F2F5] flex items-center gap-1">
+                                              {rep.displayName}
+                                            </span>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => onOpenProfile?.(rep.userId)}
+                                              className="font-semibold text-[#F2F2F5] hover:underline flex items-center gap-1 cursor-pointer"
+                                            >
+                                              {rep.displayName}
+                                            </button>
+                                          )}
                                           {rep.isAi && <AiSummonBadge label="LM AI" compact />}
                                           {!rep.isAi && rep.aiSummoned && <AiSummonBadge label="AI" compact />}
                                           <span className="text-[#7A7A85]">· {rep.createdAt}</span>
@@ -915,25 +945,30 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
                                           </div>
                                         )}
 
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setReplyParentByPost(prev => ({
-                                              ...prev,
-                                              [post.id]: {
-                                                id: rep.id,
-                                                name: rep.displayName,
-                                                snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
-                                                isAi: Boolean(rep.isAi),
-                                              },
-                                            }));
-                                            if (rep.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
-                                          }}
-                                          className="mt-1 inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-white cursor-pointer"
-                                        >
-                                          <CornerDownLeft className="w-2.5 h-2.5" />
-                                          <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
-                                        </button>
+                                        <div className="mt-1 flex items-center gap-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setReplyParentByPost(prev => ({
+                                                ...prev,
+                                                [post.id]: {
+                                                  id: rep.id,
+                                                  name: rep.displayName,
+                                                  snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
+                                                  isAi: Boolean(rep.isAi),
+                                                },
+                                              }));
+                                              if (rep.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
+                                            }}
+                                            className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-white cursor-pointer"
+                                          >
+                                            <CornerDownLeft className="w-2.5 h-2.5" />
+                                            <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
+                                          </button>
+                                          {rep.userId === user.id && (
+                                            <QuickRemovePill onRemove={() => deleteComment(post.id, rep.id)} />
+                                          )}
+                                        </div>
                                       </div>
                                     </div>
                                   ))}
@@ -1284,10 +1319,25 @@ export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialVie
           >
             <img src={activeStory.mediaUrl} alt="" className="w-full h-full object-cover" />
             <div className="absolute inset-x-0 top-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const uid = activeStory.userId;
+                  setActiveStory(null);
+                  onOpenProfile?.(uid);
+                }}
+                className="flex items-center gap-2.5 cursor-pointer group"
+              >
                 <UserAvatar initials={activeStory.avatarInitials} avatarUrl={activeStory.avatarUrl} size={34} />
-                <span className="text-xs font-semibold text-white">{activeStory.displayName}</span>
-              </div>
+                <span className="text-xs font-semibold text-white group-hover:underline">{activeStory.displayName}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveStory(null)}
+                className="w-8 h-8 rounded-full bg-black/55 border border-white/15 text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
             {activeStory.caption && (
               <div className="absolute inset-x-0 bottom-0 p-5 bg-gradient-to-t from-black/90 to-transparent text-sm text-white">

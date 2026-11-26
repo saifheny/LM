@@ -14,8 +14,6 @@ import {
   Pin,
   ArrowRight,
   Languages,
-  Pencil,
-  Trash2,
   Check,
 } from 'lucide-react';
 
@@ -25,6 +23,7 @@ import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramReactions';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { NavAiIcon, TelegramVideoNoteIcon } from '../shared/Icons2026Pro';
+import { ActionMenuOrb } from '../shared/ActionOrb2026';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
@@ -867,7 +866,22 @@ export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenCo
                 className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
               >
                 <div className={`relative max-w-[84%] sm:max-w-[68%] flex items-end gap-2 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
-                  {!isMine && <UserAvatar initials={msg.avatarInitials} avatarUrl={msg.avatarUrl} size={28} />}
+                  {!isMine && (
+                    isAi ? (
+                      <UserAvatar initials={msg.avatarInitials} avatarUrl={msg.avatarUrl} size={28} />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          onOpenProfile?.(msg.senderId);
+                        }}
+                        className="shrink-0 cursor-pointer hover:opacity-85 transition-opacity"
+                      >
+                        <UserAvatar initials={msg.avatarInitials} avatarUrl={msg.avatarUrl} size={28} />
+                      </button>
+                    )
+                  )}
 
                   <div className="relative">
                     {/* 2026 Custom Vector Reaction Picker (Auto-Flips Downward for Top Messages!) */}
@@ -935,6 +949,16 @@ export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenCo
                           <div className="mb-1.5 flex items-center gap-1.5">
                             <AiSummonBadge label="LM AI" compact />
                           </div>
+                        )}
+
+                        {!isMine && !isAi && activeConv?.type !== 'dm' && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenProfile?.(msg.senderId)}
+                            className="mb-1 block text-[11px] font-semibold text-[#34D399] hover:underline cursor-pointer"
+                          >
+                            {msg.displayName}
+                          </button>
                         )}
 
                         {!isAi && msg.aiSummoned && (
@@ -1043,7 +1067,7 @@ export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenCo
                   {/* Subtle Message Hover Controls */}
                   <div
                     onClick={e => e.stopPropagation()}
-                    className={`flex items-center gap-0.5 transition-opacity ${
+                    className={`flex items-center gap-0.5 transition-opacity focus-within:opacity-100 focus-within:pointer-events-auto ${
                       showHoverActions ? 'opacity-100' : 'opacity-0 pointer-events-none'
                     }`}
                   >
@@ -1094,29 +1118,23 @@ export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenCo
                       <Sparkles className="w-3.5 h-3.5" />
                     </button>
 
-                    {isMine && msg.msgType === 'text' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingMsgId(msg.id);
-                          setEditingMsgText(msg.content);
-                        }}
-                        title="تعديل"
-                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-
                     {isMine && (
-                      <button
-                        type="button"
-                        onClick={() => deleteMessage(msg.id)}
-                        title="حذف"
-                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-[#EF4444] flex items-center justify-center cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <ActionMenuOrb
+                        compact
+                        align={isMine ? 'start' : 'end'}
+                        direction={openPopoverDownward ? 'down' : 'up'}
+                        editLabel="تعديل الرسالة"
+                        removeLabel="إزالة الرسالة"
+                        onEdit={
+                          msg.msgType === 'text'
+                            ? () => {
+                                setEditingMsgId(msg.id);
+                                setEditingMsgText(msg.content);
+                              }
+                            : undefined
+                        }
+                        onRemove={() => deleteMessage(msg.id)}
+                      />
                     )}
                   </div>
                 </div>

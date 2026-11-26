@@ -23,9 +23,10 @@ interface LiveViewProps {
   user: UserProfile;
   lang: Lang;
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
+  onOpenProfile?: (userId: string) => void;
 }
 
-export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
+export function LiveView({ user, lang, lastWsEvent, onOpenProfile }: LiveViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
   const [activeRoomId, setActiveRoomIdState] = useState<string>(() => {
@@ -238,14 +239,20 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
         {/* Top Floating Host & Viewer Controls */}
         <div onClick={e => e.stopPropagation()} className="absolute top-4 inset-x-4 z-20 flex items-center justify-between gap-2">
           {activeRoom && (
-            <div className="flex items-center gap-2 ps-1 pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12]">
+            <button
+              type="button"
+              onClick={() => onOpenProfile?.(activeRoom.hostId)}
+              className="flex items-center gap-2 ps-1 pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] hover:border-white/30 cursor-pointer text-start transition-colors"
+            >
               <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={32} online />
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-white truncate max-w-[125px]">{activeRoom.hostName}</div>
                 <div className="text-[10px] text-white/70 truncate max-w-[125px]">{activeRoom.title}</div>
               </div>
-              <span className="ms-1 px-2 py-0.5 rounded-full bg-[#EF4444] text-white text-[10px] font-bold">LIVE</span>
-            </div>
+              <span className="ms-1 px-2 py-0.5 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[10px] font-bold">
+                LIVE
+              </span>
+            </button>
           )}
 
           <div className="flex items-center gap-1.5">
@@ -310,9 +317,15 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
             onClick={e => e.stopPropagation()}
             className="absolute bottom-[260px] start-4 end-16 z-20 px-3 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2"
           >
-            <Pin className="w-3.5 h-3.5 text-white shrink-0" />
+            <Pin className="w-3.5 h-3.5 text-[#FBBF24] shrink-0" />
             <div className="min-w-0 flex-1 text-xs">
-              <span className="font-semibold text-white me-1.5">{roomState.activeHighlight.displayName}:</span>
+              <button
+                type="button"
+                onClick={() => onOpenProfile?.(roomState.activeHighlight!.userId)}
+                className="font-semibold text-white hover:underline me-1.5 cursor-pointer"
+              >
+                {roomState.activeHighlight.displayName}:
+              </button>
               <span className="text-white/90">{roomState.activeHighlight.text}</span>
             </div>
           </div>
@@ -326,7 +339,13 @@ export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
           >
             {(roomState?.recentMessages || []).slice(-25).map(msg => (
               <div key={msg.id} className="flex items-start gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
-                <span className="font-semibold text-white/75 shrink-0">{msg.displayName}</span>
+                <button
+                  type="button"
+                  onClick={() => onOpenProfile?.(msg.userId)}
+                  className="font-semibold text-white/80 hover:text-white hover:underline shrink-0 cursor-pointer"
+                >
+                  {msg.displayName}
+                </button>
                 <span className={msg.isGift ? 'text-[#FACC15] font-medium' : 'text-white'}>{msg.text}</span>
               </div>
             ))}
