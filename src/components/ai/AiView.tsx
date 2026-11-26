@@ -44,6 +44,9 @@ interface AiTurn {
   content: string;
   audioUrl?: string | null;
   transcript?: string | null;
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  streaming?: boolean;
   companyId?: string;
   modelLabel?: string;
   feedback?: 'up' | 'down' | null;
@@ -338,73 +341,176 @@ export function AiView({ user, lang }: AiViewProps) {
     e.target.value = '';
   }
 
+  async function streamAiIntoTurn(
+    assistantId: string,
+    payload: Record<string, unknown>,
+    onDoneMeta?: (meta: {
+      sessionId?: string | null;
+      userMsgId?: string | null;
+      transcribedPrompt?: string | null;
+      modelUsed?: string;
+      needsApiKey?: boolean;
+      missingProvider?: string;
+      reply?: string;
+    }) => void
+  ) {
+    const resp = await fetch('/api/ai/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok || !resp.body) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const jsonStr = trimmed.slice(5).trim();
+        if (!jsonStr) continue;
+        try {
+          const ev = JSON.parse(jsonStr) as {
+            type: 'delta' | 'done' | 'error';
+            text?: string;
+            message?: string;
+            reply?: string;
+            modelUsed?: string;
+            sessionId?: string | null;
+            userMsgId?: string | null;
+            transcribedPrompt?: string | null;
+            needsApiKey?: boolean;
+            missingProvider?: string;
+          };
+          if (ev.type === 'delta' && ev.text) {
+            setTurns(prev =>
+              prev.map(t => (t.id === assistantId ? { ...t, content: t.content + ev.text } : t))
+            );
+          } else if (ev.type === 'done') {
+            setTurns(prev =>
+              prev.map(t =>
+                t.id === assistantId
+                  ? {
+                      ...t,
+                      content: t.content || ev.reply || '',
+                      streaming: false,
+                      modelLabel: shortenModelLabel(ev.modelUsed || activeModel.label),
+                      needsApiKey: ev.needsApiKey,
+                      missingProvider: ev.missingProvider,
+                    }
+                  : t
+              )
+            );
+            onDoneMeta?.(ev);
+          } else if (ev.type === 'error') {
+            setTurns(prev =>
+              prev.map(t =>
+                t.id === assistantId
+                  ? { ...t, content: ev.message || 'تعذر الاتصال بالمساعد.', streaming: false }
+                  : t
+              )
+            );
+          }
+        } catch {
+          // ignore partial JSON frame
+        }
+      }
+    }
+  }
+
   async function sendPrompt(textToSend: string, reuseLastUser = false) {
     const clean = textToSend.trim();
-    if (!clean || loading) return;
+    const currentAttachment = attachedFile;
+    if ((!clean && !currentAttachment) || loading) return;
     setPrompt('');
     setComposerFocused(false);
-
-    const payloadPrompt = attachedFile ? `${clean}\n[ملف مرفق: ${attachedFile.name}]` : clean;
     setAttachedFile(null);
 
+    const effectiveText = clean || (currentAttachment ? `حلّل المرفق: ${currentAttachment.name}` : '');
+    const assistantId = `a_${Date.now()}`;
+
     if (!reuseLastUser) {
-      setTurns(prev => [...prev, { id: `u_${Date.now()}`, role: 'user', content: payloadPrompt }]);
+      setTurns(prev => [
+        ...prev,
+        {
+          id: `u_${Date.now()}`,
+          role: 'user',
+          content: effectiveText,
+          attachmentUrl: currentAttachment?.url || null,
+          attachmentName: currentAttachment?.name || null,
+        },
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          streaming: true,
+          companyId: activeCompany.id,
+          modelLabel: shortenModelLabel(activeModel.label),
+          feedback: null,
+        },
+      ]);
+    } else {
+      setTurns(prev => [
+        ...prev,
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          streaming: true,
+          companyId: activeCompany.id,
+          modelLabel: shortenModelLabel(activeModel.label),
+          feedback: null,
+        },
+      ]);
     }
     setLoading(true);
 
     try {
-      const res = await apiPost<{
-        ok: boolean;
-        reply: string;
-        providerUsed: string;
-        modelUsed?: string;
-        sessionId?: string | null;
-        needsApiKey?: boolean;
-        missingProvider?: string;
-      }>('/api/ai/chat', {
-        userId: user.id,
-        prompt: payloadPrompt,
-        provider: activeCompany.id,
-        model: activeModel.id,
-        sessionId,
-        source: 'ai_tab',
-        explicitUserConsent: true,
-      });
-
-      if (res.sessionId) {
-        setSessionId(res.sessionId);
-        loadSessions();
-      }
-
-      setTurns(prev => [
-        ...prev,
+      await streamAiIntoTurn(
+        assistantId,
         {
-          id: `a_${Date.now()}`,
-          role: 'assistant',
-          content: res.reply,
-          companyId: activeCompany.id,
-          modelLabel: shortenModelLabel(res.modelUsed || activeModel.label),
-          feedback: null,
-          needsApiKey: res.needsApiKey,
-          missingProvider: res.missingProvider,
+          userId: user.id,
+          prompt: effectiveText,
+          attachmentUrl: currentAttachment?.url || null,
+          attachmentName: currentAttachment?.name || null,
+          provider: activeCompany.id,
+          model: activeModel.id,
+          sessionId,
+          source: 'ai_tab',
+          explicitUserConsent: true,
         },
-      ]);
-
-      if (res.needsApiKey && res.missingProvider) {
-        const comp = AI_COMPANIES.find(c => c.id === res.missingProvider);
-        if (comp) openSetupForCompany(comp);
-      }
+        ev => {
+          if (ev.sessionId) {
+            setSessionId(ev.sessionId);
+            loadSessions();
+          }
+          if (ev.needsApiKey && ev.missingProvider) {
+            const comp = AI_COMPANIES.find(c => c.id === ev.missingProvider);
+            if (comp) openSetupForCompany(comp);
+          }
+        }
+      );
     } catch (e) {
-      setTurns(prev => [
-        ...prev,
-        {
-          id: `e_${Date.now()}`,
-          role: 'assistant',
-          content: e instanceof Error ? e.message : 'تعذر الاتصال بالمساعد.',
-          companyId: activeCompany.id,
-          feedback: null,
-        },
-      ]);
+      setTurns(prev =>
+        prev.map(t =>
+          t.id === assistantId
+            ? {
+                ...t,
+                content: e instanceof Error ? e.message : 'تعذر الاتصال بالمساعد.',
+                streaming: false,
+              }
+            : t
+        )
+      );
     } finally {
       setLoading(false);
     }
@@ -414,9 +520,10 @@ export function AiView({ user, lang }: AiViewProps) {
     setRecordingVoice(false);
     if (loading) return;
     setLoading(true);
+    const tempUserId = `u_voice_${Date.now()}`;
+    const assistantId = `a_${Date.now() + 1}`;
     try {
       const up = await apiUploadFile(file);
-      const tempUserId = `u_voice_${Date.now()}`;
       setTurns(prev => [
         ...prev,
         {
@@ -426,67 +533,64 @@ export function AiView({ user, lang }: AiViewProps) {
           audioUrl: up.url,
           transcript: liveTranscript || null,
         },
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          streaming: true,
+          companyId: activeCompany.id,
+          modelLabel: shortenModelLabel(activeModel.label),
+          feedback: null,
+        },
       ]);
 
-      const res = await apiPost<{
-        ok: boolean;
-        reply: string;
-        providerUsed: string;
-        modelUsed?: string;
-        sessionId?: string | null;
-        userMsgId?: string | null;
-        transcribedPrompt?: string | null;
-        needsApiKey?: boolean;
-        missingProvider?: string;
-      }>('/api/ai/chat', {
-        userId: user.id,
-        prompt: '',
-        audioUrl: up.url,
-        transcript: liveTranscript || null,
-        provider: activeCompany.id,
-        model: activeModel.id,
-        sessionId,
-        source: 'ai_tab',
-        explicitUserConsent: true,
-      });
-
-      if (res.sessionId) {
-        setSessionId(res.sessionId);
-        loadSessions();
-      }
-
-      setTurns(prev => [
-        ...prev.map(t =>
-          t.id === tempUserId
+      await streamAiIntoTurn(
+        assistantId,
+        {
+          userId: user.id,
+          prompt: '',
+          audioUrl: up.url,
+          transcript: liveTranscript || null,
+          provider: activeCompany.id,
+          model: activeModel.id,
+          sessionId,
+          source: 'ai_tab',
+          explicitUserConsent: true,
+        },
+        ev => {
+          if (ev.sessionId) {
+            setSessionId(ev.sessionId);
+            loadSessions();
+          }
+          setTurns(prev =>
+            prev.map(t =>
+              t.id === tempUserId
+                ? {
+                    ...t,
+                    id: ev.userMsgId || t.id,
+                    transcript: ev.transcribedPrompt || t.transcript,
+                  }
+                : t
+            )
+          );
+          if (ev.needsApiKey && ev.missingProvider) {
+            const comp = AI_COMPANIES.find(c => c.id === ev.missingProvider);
+            if (comp) openSetupForCompany(comp);
+          }
+        }
+      );
+    } catch (e) {
+      setTurns(prev =>
+        prev.map(t =>
+          t.id === assistantId
             ? {
                 ...t,
-                id: res.userMsgId || t.id,
-                transcript: res.transcribedPrompt || t.transcript,
+                content: e instanceof Error ? e.message : 'تعذر معالجة الرسالة الصوتية.',
+                streaming: false,
               }
             : t
-        ),
-        {
-          id: `a_${Date.now()}`,
-          role: 'assistant',
-          content: res.reply,
-          companyId: activeCompany.id,
-          modelLabel: shortenModelLabel(res.modelUsed || activeModel.label),
-          feedback: null,
-          needsApiKey: res.needsApiKey,
-          missingProvider: res.missingProvider,
-        },
-      ]);
-    } catch (e) {
-      setTurns(prev => [
-        ...prev,
-        {
-          id: `e_${Date.now()}`,
-          role: 'assistant',
-          content: e instanceof Error ? e.message : 'تعذر معالجة الرسالة الصوتية.',
-          companyId: activeCompany.id,
-          feedback: null,
-        },
-      ]);
+        )
+      );
     } finally {
       setLoading(false);
     }
@@ -926,8 +1030,21 @@ export function AiView({ user, lang }: AiViewProps) {
                           loadSessions();
                         }}
                         title="اضغط لعرض المحادثات السابقة"
-                        className="max-w-[82%] rounded-3xl rounded-ee-md bg-[#1B1B22] px-4 py-2.5 text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap cursor-pointer hover:bg-[#22222B] transition-colors"
+                        className="max-w-[82%] rounded-3xl rounded-ee-md bg-[#1B1B22] px-4 py-2.5 text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap cursor-pointer hover:bg-[#22222B] transition-colors space-y-2"
                       >
+                        {t.attachmentUrl && /\.(jpg|jpeg|png|webp|gif)$/i.test(t.attachmentUrl) && (
+                          <img
+                            src={t.attachmentUrl}
+                            alt={t.attachmentName || ''}
+                            className="max-h-[220px] rounded-2xl object-cover border border-white/[0.1]"
+                          />
+                        )}
+                        {t.attachmentName && (!t.attachmentUrl || !/\.(jpg|jpeg|png|webp|gif)$/i.test(t.attachmentUrl)) && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.08] text-[11px] text-[#FDE68A]">
+                            <FileText className="w-3 h-3" />
+                            <span className="truncate max-w-[200px]">{t.attachmentName}</span>
+                          </div>
+                        )}
                         <RichMessageText text={t.content} />
                       </div>
                     )}
@@ -973,11 +1090,22 @@ export function AiView({ user, lang }: AiViewProps) {
                       {turnCompany.renderLogo(16)}
                     </div>
                     <div className="flex-1 min-w-0 space-y-2.5">
-                      <div className="text-[14.5px] leading-[1.75] text-[#F2F2F5] space-y-2">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
-                          {t.content}
-                        </ReactMarkdown>
-                      </div>
+                      {t.streaming && !t.content ? (
+                        <div className="flex items-center gap-1.5 py-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:0ms]" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:150ms]" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:300ms]" />
+                        </div>
+                      ) : (
+                        <div className="text-[14.5px] leading-[1.75] text-[#F2F2F5] space-y-2">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                            {t.content}
+                          </ReactMarkdown>
+                          {t.streaming && (
+                            <span className="inline-block w-1.5 h-4 align-middle bg-[#FDE68A] rounded-full animate-pulse ms-1" />
+                          )}
+                        </div>
+                      )}
 
                       {t.needsApiKey && t.missingProvider && (
                         <button
@@ -1044,7 +1172,7 @@ export function AiView({ user, lang }: AiViewProps) {
                 );
               })}
 
-              {loading && (
+              {loading && !turns.some(t => t.streaming) && (
                 <div className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-xl bg-[#14141A] border border-white/[0.1] flex items-center justify-center">
                     {activeCompany.renderLogo(16)}

@@ -1,6 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
+import fs from 'node:fs';
+import path from 'node:path';
 import { v4 as uuid } from 'uuid';
-import { db, loadProviderConfig } from './db.ts';
+import { db, loadProviderConfig, UPLOADS_DIR } from './db.ts';
 
 export interface AiChatRequest {
   userId: string;
@@ -13,6 +15,47 @@ export interface AiChatRequest {
   groupHistoryContext?: string;
   imageBase64?: string;
   imageMimeType?: string;
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
+};
+
+const TEXT_EXTS = new Set([
+  '.txt', '.md', '.json', '.csv', '.ts', '.tsx', '.js', '.jsx', '.py', '.html', '.css', '.sql', '.xml', '.yml', '.yaml', '.log',
+]);
+
+function resolveAttachmentPayload(attachmentUrl?: string | null, attachmentName?: string | null): {
+  inlineData?: { mimeType: string; data: string };
+  extractedText?: string;
+} {
+  if (!attachmentUrl || !attachmentUrl.startsWith('/uploads/')) return {};
+  const rel = attachmentUrl.replace(/^\/uploads\//, '').replace(/\.\./g, '');
+  const fullPath = path.join(UPLOADS_DIR, rel);
+  if (!fs.existsSync(fullPath)) return {};
+  const ext = path.extname(fullPath).toLowerCase();
+  try {
+    const stat = fs.statSync(fullPath);
+    if (stat.size > 14 * 1024 * 1024) return {};
+    if (MIME_BY_EXT[ext]) {
+      const b64 = fs.readFileSync(fullPath).toString('base64');
+      return { inlineData: { mimeType: MIME_BY_EXT[ext], data: b64 } };
+    }
+    if (TEXT_EXTS.has(ext) && stat.size < 250_000) {
+      const raw = fs.readFileSync(fullPath, 'utf-8').slice(0, 22_000);
+      return { extractedText: `[محتوى الملف المرفق (${attachmentName || path.basename(fullPath)})]:\n${raw}` };
+    }
+  } catch {
+    // ignore unreadable file
+  }
+  return {};
 }
 
 export interface AiChatResponse {
@@ -116,7 +159,8 @@ const overloadedModels = new Map<string, number>();
 async function callGeminiWithFailover(
   apiKey: string,
   requestedModel: string | undefined,
-  fullUserContent: string
+  fullUserContent: string,
+  inlineData?: { mimeType: string; data: string }
 ): Promise<{ text: string; modelUsed: string }> {
   const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 14000 } });
   const preferred = requestedModel && requestedModel !== 'lm-smart-local' ? requestedModel : 'gemini-2.5-flash';
@@ -129,18 +173,21 @@ async function callGeminiWithFailover(
   ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 
   const now = Date.now();
-  // Skip recently 429/503 models first, keeping reliable fast models up front
   const fallbackChain = [
     ...rawChain.filter(m => (overloadedModels.get(m) || 0) < now),
     ...rawChain.filter(m => (overloadedModels.get(m) || 0) >= now),
   ];
+
+  const userParts: Array<Record<string, unknown>> = [];
+  if (inlineData) userParts.push({ inlineData });
+  userParts.push({ text: fullUserContent });
 
   let lastErr: unknown = null;
 
   for (let i = 0; i < fallbackChain.length; i++) {
     const model = fallbackChain[i];
     const isStableFast = model === 'gemini-2.5-flash' || model === 'gemini-3-flash-preview' || model === 'gemini-3.5-flash-lite';
-    const timeoutMs = isStableFast ? 12000 : 5500;
+    const timeoutMs = isStableFast ? 18000 : 7500;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -153,7 +200,7 @@ async function callGeminiWithFailover(
             signal: controller.signal,
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: LM_AI_SYSTEM_PROMPT }] },
-              contents: [{ role: 'user', parts: [{ text: fullUserContent }] }],
+              contents: [{ role: 'user', parts: userParts }],
             }),
           }
         );
@@ -229,11 +276,20 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   const config = loadProviderConfig();
   const requestedProvider = pickBestConfiguredProvider(config, req.provider);
 
+  const attachment = resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
+  const effectiveInlineData =
+    req.imageBase64 && req.imageMimeType
+      ? { mimeType: req.imageMimeType, data: req.imageBase64 }
+      : attachment.inlineData;
+
   let fullUserContent = prompt;
+  if (attachment.extractedText) {
+    fullUserContent = `${attachment.extractedText}\n\n[طلب المستخدم]:\n${fullUserContent}`;
+  }
   if (req.groupHistoryContext) {
-    fullUserContent = `[سياق محادثة المجموعة الحديثة — أنت عضو مفعّل داخل المجموعة]:\n${req.groupHistoryContext}\n\n[رسالة المستخدم الموجهة إليك]:\n${prompt}`;
+    fullUserContent = `[سياق محادثة المجموعة الحديثة — أنت عضو مفعّل داخل المجموعة]:\n${req.groupHistoryContext}\n\n[رسالة المستخدم الموجهة إليك]:\n${fullUserContent}`;
   } else if (req.sharedContext) {
-    fullUserContent = `[السياق المشارَك معك بإذن المستخدم]:\n${req.sharedContext}\n\n[سؤال المستخدم — أجب مباشرة على سؤاله واستخدم السياق إن كان مرتبطًا به]:\n${prompt}`;
+    fullUserContent = `[السياق المشارَك معك بإذن المستخدم]:\n${req.sharedContext}\n\n[سؤال المستخدم — أجب مباشرة على سؤاله واستخدم السياق إن كان مرتبطًا به]:\n${fullUserContent}`;
   }
 
   db.prepare('UPDATE users SET ai_used_today = ai_used_today + 1 WHERE id = ?').run(req.userId);
@@ -267,9 +323,9 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   }
 
   try {
-    // 1. Google Gemini with instant failover (NEVER stalls on 429!)
+    // 1. Google Gemini with instant failover + real multimodal vision/PDF support
     if (requestedProvider === 'gemini' && config.geminiApiKey) {
-      const out = await callGeminiWithFailover(config.geminiApiKey, req.model, fullUserContent);
+      const out = await callGeminiWithFailover(config.geminiApiKey, req.model, fullUserContent, effectiveInlineData);
       return {
         ok: true,
         reply: out.text,
@@ -429,4 +485,146 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
     latencyMs: Date.now() - start,
     securityAuditId: auditId,
   };
+}
+
+/**
+ * Live Token-by-Token SSE Streamer for LM AI (Native Gemini streamGenerateContent + Multimodal Vision/PDF + smooth fallback!)
+ */
+export async function streamLmAi(
+  req: AiChatRequest,
+  onChunk: (delta: string) => void
+): Promise<AiChatResponse> {
+  const start = Date.now();
+  const prompt = (req.prompt || '').trim();
+
+  // Enforce the same financial isolation guard before streaming
+  const normalizedPrompt = normalizeArabicForFilter(prompt);
+  for (const rx of FINANCIAL_BLOCK_PATTERNS) {
+    if (rx.test(normalizedPrompt)) {
+      const res = await runLmAi(req);
+      onChunk(res.reply);
+      return res;
+    }
+  }
+
+  const config = loadProviderConfig();
+  const requestedProvider = pickBestConfiguredProvider(config, req.provider);
+
+  // Real native Gemini SSE streaming when Gemini is active!
+  if (requestedProvider === 'gemini' && config.geminiApiKey) {
+    const attachment = resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
+    const effectiveInlineData =
+      req.imageBase64 && req.imageMimeType
+        ? { mimeType: req.imageMimeType, data: req.imageBase64 }
+        : attachment.inlineData;
+
+    let fullUserContent = prompt;
+    if (attachment.extractedText) {
+      fullUserContent = `${attachment.extractedText}\n\n[طلب المستخدم]:\n${fullUserContent}`;
+    }
+    if (req.sharedContext) {
+      fullUserContent = `[السياق المشارَك معك بإذن المستخدم]:\n${req.sharedContext}\n\n[سؤال المستخدم — أجب مباشرة على سؤاله واستخدم السياق إن كان مرتبطًا به]:\n${fullUserContent}`;
+    }
+
+    const userParts: Array<Record<string, unknown>> = [];
+    if (effectiveInlineData) userParts.push({ inlineData: effectiveInlineData });
+    userParts.push({ text: fullUserContent });
+
+    const preferred = req.model && req.model !== 'lm-smart-local' ? req.model : 'gemini-2.5-flash';
+    const rawChain = [preferred, 'gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite'].filter(
+      (m, idx, arr) => arr.indexOf(m) === idx
+    );
+    const now = Date.now();
+    const fallbackChain = [
+      ...rawChain.filter(m => (overloadedModels.get(m) || 0) < now),
+      ...rawChain.filter(m => (overloadedModels.get(m) || 0) >= now),
+    ];
+
+    db.prepare('UPDATE users SET ai_used_today = ai_used_today + 1 WHERE id = ?').run(req.userId);
+    const auditId = logSecurity(req.userId, req.source || 'ai_tab', 'ALLOWED', 'Streamed');
+
+    for (const model of fallbackChain) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 22000);
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(config.geminiApiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                systemInstruction: { parts: [{ text: LM_AI_SYSTEM_PROMPT }] },
+                contents: [{ role: 'user', parts: userParts }],
+              }),
+            }
+          );
+
+          if (!res.ok || !res.body) {
+            if (res.status === 429 || res.status === 503 || res.status === 404) {
+              overloadedModels.set(model, Date.now() + 90_000);
+            }
+            if (res.status === 401 || res.status === 403) break;
+            continue;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          let fullText = '';
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop() || '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith('data:')) continue;
+              const payload = trimmed.slice(5).trim();
+              if (!payload || payload === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(payload) as {
+                  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+                };
+                const chunk = (parsed.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+                if (chunk) {
+                  fullText += chunk;
+                  onChunk(chunk);
+                }
+              } catch {
+                // ignore partial SSE JSON
+              }
+            }
+          }
+
+          if (fullText.trim()) {
+            return {
+              ok: true,
+              reply: fullText.trim(),
+              providerUsed: 'Google',
+              modelUsed: model,
+              latencyMs: Date.now() - start,
+              securityAuditId: auditId,
+            };
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {
+        overloadedModels.set(model, Date.now() + 90_000);
+      }
+    }
+  }
+
+  // Smooth word-by-word streaming fallback for all other providers
+  const result = await runLmAi(req);
+  const words = result.reply.split(/(\s+)/);
+  for (let i = 0; i < words.length; i += 3) {
+    onChunk(words.slice(i, i + 3).join(''));
+    await new Promise(r => setTimeout(r, 14));
+  }
+  return result;
 }

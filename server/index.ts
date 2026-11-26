@@ -11,7 +11,7 @@ import { v4 as uuid } from 'uuid';
 
 import { db, initDatabase, mapUserRow, loadProviderConfig, saveProviderConfig, UPLOADS_DIR } from './db.ts';
 import { liveEngine } from './liveEngine.ts';
-import { runLmAi } from './aiGateway.ts';
+import { runLmAi, streamLmAi } from './aiGateway.ts';
 import { CountryCode } from './types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1689,6 +1689,17 @@ app.get('/api/conversations/:id/messages', (req, res) => {
   });
 });
 
+app.post('/api/conversations/:id/typing', (req, res) => {
+  const { userId, displayName } = req.body as { userId?: string; displayName?: string };
+  if (!userId) return res.status(400).json({ ok: false });
+  broadcast('chat:typing', {
+    conversationId: req.params.id,
+    userId,
+    displayName: displayName || 'مستخدم',
+  });
+  res.json({ ok: true });
+});
+
 app.post('/api/conversations/:id/messages', async (req, res) => {
   const {
     senderId, content, msgType, mediaUrl, transcript,
@@ -2072,6 +2083,120 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 
   res.json({ ...result, sessionId: activeSessionId, userMsgId, transcribedPrompt: resolvedTranscript });
+});
+
+app.post('/api/ai/chat/stream', async (req, res) => {
+  const { userId, prompt, provider, model, sessionId, audioUrl, transcript, attachmentUrl, attachmentName } = req.body as {
+    userId: string;
+    prompt?: string;
+    provider?: string;
+    model?: string;
+    sessionId?: string | null;
+    audioUrl?: string | null;
+    transcript?: string | null;
+    attachmentUrl?: string | null;
+    attachmentName?: string | null;
+  };
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const sendEvent = (obj: Record<string, unknown>) => {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  };
+
+  try {
+    let resolvedTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+    if (audioUrl && !resolvedTranscript) {
+      const tr = await transcribeAudioFile(audioUrl);
+      if (tr?.transcript) resolvedTranscript = tr.transcript;
+    }
+
+    const effectivePrompt = (prompt || '').trim() || resolvedTranscript || (attachmentName ? `حلّل الملف المرفق: ${attachmentName}` : 'مرحبًا');
+
+    let sessionHistoryContext: string | undefined;
+    if (sessionId) {
+      const prevRows = db.prepare(
+        'SELECT role, content, transcript FROM ai_messages WHERE session_id = ? ORDER BY rowid DESC LIMIT 10'
+      ).all(sessionId) as Array<{ role: string; content: string; transcript?: string | null }>;
+      if (prevRows.length > 0) {
+        sessionHistoryContext = prevRows
+          .reverse()
+          .map(r => `${r.role === 'user' ? 'المستخدم' : 'LM AI'}: ${r.transcript || r.content}`)
+          .join('\n');
+      }
+    }
+
+    const result = await streamLmAi(
+      {
+        ...req.body,
+        prompt: effectivePrompt,
+        attachmentUrl,
+        attachmentName,
+        sharedContext: sessionHistoryContext || req.body.sharedContext,
+      },
+      delta => {
+        sendEvent({ type: 'delta', text: delta });
+      }
+    );
+
+    let activeSessionId = sessionId || null;
+    let userMsgId: string | null = null;
+    if (req.body.source === 'ai_tab' && userId && (effectivePrompt || audioUrl)) {
+      const nowIso = new Date().toISOString();
+      if (!activeSessionId) {
+        activeSessionId = `ais_${uuid().slice(0, 8)}`;
+        const title = (resolvedTranscript || effectivePrompt || 'رسالة صوتية').trim().slice(0, 48);
+        db.prepare(
+          'INSERT INTO ai_sessions (id, user_id, title, company_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(activeSessionId, userId, title, provider || 'gemini', model || '', nowIso);
+      } else {
+        db.prepare(
+          'UPDATE ai_sessions SET company_id = ?, model_id = ?, updated_at = ? WHERE id = ?'
+        ).run(provider || 'gemini', model || '', nowIso, activeSessionId);
+      }
+
+      userMsgId = `aim_${uuid().slice(0, 8)}`;
+      db.prepare(
+        'INSERT INTO ai_messages (id, session_id, role, content, audio_url, transcript, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        userMsgId,
+        activeSessionId,
+        'user',
+        (prompt || '').trim() || (audioUrl ? 'رسالة صوتية' : effectivePrompt),
+        audioUrl || null,
+        resolvedTranscript,
+        provider || 'gemini',
+        model || ''
+      );
+
+      db.prepare(
+        'INSERT INTO ai_messages (id, session_id, role, content, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(`aim_${uuid().slice(0, 8)}`, activeSessionId, 'assistant', result.reply, provider || 'gemini', result.modelUsed || model || '');
+    }
+
+    sendEvent({
+      type: 'done',
+      ok: result.ok,
+      reply: result.reply,
+      providerUsed: result.providerUsed,
+      modelUsed: result.modelUsed,
+      needsApiKey: result.needsApiKey,
+      missingProvider: result.missingProvider,
+      sessionId: activeSessionId,
+      userMsgId,
+      transcribedPrompt: resolvedTranscript,
+    });
+  } catch (err) {
+    sendEvent({
+      type: 'error',
+      message: err instanceof Error ? err.message : 'تعذر البث المباشر للرد.',
+    });
+  } finally {
+    res.end();
+  }
 });
 
 // ============================================================

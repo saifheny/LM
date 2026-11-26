@@ -15,6 +15,7 @@ import {
   ArrowRight,
   Languages,
   Check,
+  CheckCheck,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile } from '../../types';
@@ -176,6 +177,13 @@ export function ChatView({
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingMsgText, setEditingMsgText] = useState('');
 
+  // In-Chat Search & Live WebSocket Typing Indicator
+  const [msgSearchOpen, setMsgSearchOpen] = useState(false);
+  const [msgSearchQ, setMsgSearchQ] = useState('');
+  const [remoteTypingName, setRemoteTypingName] = useState<string | null>(null);
+  const lastTypingSentRef = useRef(0);
+  const typingClearTimerRef = useRef<number | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const callVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -235,10 +243,20 @@ export function ChatView({
   useEffect(() => {
     if (lastWsEvent?.event === 'chat:message') {
       const payload = lastWsEvent.payload as { conversationId: string };
-      if (payload.conversationId === activeConvId) loadMessages(activeConvId);
+      if (payload.conversationId === activeConvId) {
+        loadMessages(activeConvId);
+        setRemoteTypingName(null);
+      }
       loadConversations();
+    } else if (lastWsEvent?.event === 'chat:typing') {
+      const payload = lastWsEvent.payload as { conversationId?: string; userId?: string; displayName?: string };
+      if (payload.conversationId === activeConvId && payload.userId && payload.userId !== user.id) {
+        setRemoteTypingName(payload.displayName || 'يكتب الآن');
+        if (typingClearTimerRef.current) window.clearTimeout(typingClearTimerRef.current);
+        typingClearTimerRef.current = window.setTimeout(() => setRemoteTypingName(null), 3200);
+      }
     }
-  }, [lastWsEvent, activeConvId, loadMessages, loadConversations]);
+  }, [lastWsEvent, activeConvId, user.id, loadMessages, loadConversations]);
 
   useEffect(() => {
     return () => {
@@ -453,7 +471,17 @@ export function ChatView({
 
   function handleDraftChange(v: string) {
     setDraft(v);
-    if (v.trim()) setShowQuickRecordHint(false);
+    if (v.trim()) {
+      setShowQuickRecordHint(false);
+      const now = Date.now();
+      if (activeConvId && now - lastTypingSentRef.current > 2200) {
+        lastTypingSentRef.current = now;
+        apiPost(`/api/conversations/${activeConvId}/typing`, {
+          userId: user.id,
+          displayName: user.displayName,
+        }).catch(() => {});
+      }
+    }
   }
 
   function handleSelectReply(msg: ChatMessageItem) {
@@ -653,56 +681,58 @@ export function ChatView({
 
   return (
     <div className="h-full w-full bg-[#0A0A0C] text-[#F2F2F5] flex overflow-hidden">
-      {/* Left Conversations List (Bottom Dock stays visible outside here on mobile!) */}
+      {/* Left Conversations List — Floating Borderless Controls (ZERO Outer Container Boxes!) */}
       <aside
         className={`${
           mobileShowList ? 'flex' : 'hidden md:flex'
-        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#0A0A0C] border-e border-white/[0.07]`}
+        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#0A0A0C] md:border-e md:border-white/[0.06]`}
       >
-        <div className="p-2.5">
-          <div className="p-3 rounded-[22px] bg-[#121217]/92 backdrop-blur-xl border border-white/[0.08] space-y-2.5 shadow-lg">
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-9 rounded-full bg-[#0A0A0E] border border-white/[0.08] px-3.5 flex items-center gap-2">
-                <Search className="w-3.5 h-3.5 text-[#71717A]" />
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder={lang === 'ar' ? 'بحث...' : 'Search...'}
-                  className="flex-1 bg-transparent text-xs text-white placeholder:text-[#585860] outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setNewChatOpen(true)}
-                className="w-9 h-9 rounded-full bg-[#0A0A0E] border border-white/[0.08] hover:border-white/25 text-[#E4E4E7] flex items-center justify-center cursor-pointer shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+        <div className="px-3.5 pt-3.5 pb-1 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-10 rounded-full bg-white/[0.05] backdrop-blur-xl border border-white/[0.09] focus-within:border-[#34D399]/40 px-3.5 flex items-center gap-2 transition-colors">
+              <Search className="w-3.5 h-3.5 text-[#7A7A85]" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder={lang === 'ar' ? 'بحث في المحادثات...' : 'Search chats...'}
+                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#63636C] outline-none"
+              />
             </div>
+            <button
+              type="button"
+              onClick={() => setNewChatOpen(true)}
+              title="محادثة جديدة"
+              className="w-10 h-10 rounded-full bg-white/[0.06] hover:bg-[#10B981]/20 border border-white/[0.1] hover:border-[#34D399]/45 text-[#E4E4E7] hover:text-[#6EE7B7] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
 
-            <div className="flex items-center gap-3.5 text-xs px-1">
-              {[
-                { id: 'all' as const, ar: 'الكل', en: 'All' },
-                { id: 'personal' as const, ar: 'شخصي', en: 'Direct' },
-                { id: 'groups' as const, ar: 'مجموعات', en: 'Groups' },
-                { id: 'channels' as const, ar: 'مجتمعات', en: 'Communities' },
-              ].map(f => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => setFolder(f.id)}
-                  className={`pb-1 border-b-2 transition-colors cursor-pointer ${
-                    folder === f.id ? 'border-white text-white font-semibold' : 'border-transparent text-[#7A7A85] hover:text-[#D4D4D8]'
-                  }`}
-                >
-                  {lang === 'ar' ? f.ar : f.en}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-4 text-xs border-b border-white/[0.06]">
+            {[
+              { id: 'all' as const, ar: 'الكل', en: 'All' },
+              { id: 'personal' as const, ar: 'شخصي', en: 'Direct' },
+              { id: 'groups' as const, ar: 'مجموعات', en: 'Groups' },
+              { id: 'channels' as const, ar: 'مجتمعات', en: 'Communities' },
+            ].map(f => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFolder(f.id)}
+                className={`pb-2.5 relative transition-colors cursor-pointer ${
+                  folder === f.id ? 'text-white font-semibold' : 'text-[#7A7A85] hover:text-[#D4D4D8]'
+                }`}
+              >
+                <span>{lang === 'ar' ? f.ar : f.en}</span>
+                {folder === f.id && (
+                  <span className="absolute bottom-0 inset-x-0 h-[2px] rounded-full bg-gradient-to-r from-[#34D399] to-[#10B981]" />
+                )}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div onScroll={handleConvListScroll} className="flex-1 overflow-y-auto divide-y divide-white/[0.06] pb-20 md:pb-0">
+        <div onScroll={handleConvListScroll} className="flex-1 overflow-y-auto divide-y divide-white/[0.05] pb-20 md:pb-0">
           {filteredConvs.map(conv => {
             const active = conv.id === activeConvId;
             return (
@@ -714,7 +744,7 @@ export function ChatView({
                   setMobileShowList(false);
                 }}
                 className={`w-full px-3.5 py-3 flex items-center gap-3 text-start transition-colors cursor-pointer ${
-                  active ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
+                  active ? 'bg-white/[0.05]' : 'hover:bg-white/[0.025]'
                 }`}
               >
                 <UserAvatar
@@ -731,7 +761,7 @@ export function ChatView({
                   <div className="mt-0.5 flex items-center justify-between gap-2">
                     <span className="text-xs text-[#8E8E93] truncate">{conv.lastMessage || conv.description}</span>
                     {conv.unreadCount > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-white text-black text-[10px] font-mono-num font-bold shrink-0">
+                      <span className="min-w-[18px] h-[18px] px-1.5 rounded-full bg-gradient-to-tr from-[#10B981] to-[#34D399] text-black text-[10px] font-mono-num font-bold flex items-center justify-center shrink-0">
                         {conv.unreadCount}
                       </span>
                     )}
@@ -780,7 +810,9 @@ export function ChatView({
                   <div className="text-[13px] font-semibold text-white truncate max-w-[160px] sm:max-w-[240px]">
                     {activeConv.title}
                   </div>
-                  <div className="text-[10.5px] text-[#9E9EA8] truncate">{activeConv.onlineText}</div>
+                  <div className={`text-[10.5px] truncate ${remoteTypingName ? 'text-[#34D399] font-medium' : 'text-[#9E9EA8]'}`}>
+                    {remoteTypingName ? `${remoteTypingName} يكتب الآن...` : activeConv.onlineText}
+                  </div>
                 </div>
               </button>
             </div>
@@ -820,6 +852,19 @@ export function ChatView({
               <div className="flex items-center gap-1 p-1 rounded-full bg-[#131318]/78 backdrop-blur-xl border border-white/[0.1] shadow-lg">
                 <button
                   type="button"
+                  onClick={() => {
+                    setMsgSearchOpen(v => !v);
+                    if (msgSearchOpen) setMsgSearchQ('');
+                  }}
+                  title="بحث داخل المحادثة"
+                  className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                    msgSearchOpen ? 'bg-[#10B981]/25 text-[#6EE7B7]' : 'hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white'
+                  }`}
+                >
+                  <Search className="w-4 h-4" strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => startCall('audio')}
                   className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
                 >
@@ -835,6 +880,37 @@ export function ChatView({
               </div>
             </div>
           </header>
+        )}
+
+        {/* Floating In-Chat Search Pill */}
+        {msgSearchOpen && (
+          <div className="absolute top-[64px] inset-x-4 md:inset-x-6 z-20 flex justify-center pointer-events-none">
+            <div className="pointer-events-auto w-full max-w-[420px] h-10 rounded-full bg-[#121218]/92 backdrop-blur-2xl border border-[#34D399]/35 px-3.5 flex items-center gap-2 shadow-2xl">
+              <Search className="w-3.5 h-3.5 text-[#34D399]" />
+              <input
+                autoFocus
+                value={msgSearchQ}
+                onChange={e => setMsgSearchQ(e.target.value)}
+                placeholder="ابحث داخل رسائل هذه المحادثة..."
+                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#63636C] outline-none"
+              />
+              {msgSearchQ && (
+                <span className="text-[10.5px] font-mono-num text-[#6EE7B7]">
+                  {messages.filter(m => (m.content + ' ' + (m.transcript || '')).toLowerCase().includes(msgSearchQ.toLowerCase())).length}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setMsgSearchOpen(false);
+                  setMsgSearchQ('');
+                }}
+                className="w-6 h-6 rounded-full hover:bg-white/[0.08] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Open Message Stream (Tap empty space clears translation, menus, & mobile bottom dock!) */}
@@ -856,7 +932,14 @@ export function ChatView({
             </div>
           )}
 
-          {messages.map((msg, msgIdx) => {
+          {(msgSearchQ.trim()
+            ? messages.filter(m =>
+                (m.content + ' ' + (m.transcript || '') + ' ' + m.displayName)
+                  .toLowerCase()
+                  .includes(msgSearchQ.trim().toLowerCase())
+              )
+            : messages
+          ).map((msg, msgIdx) => {
             const isMine = msg.senderId === user.id;
             const isAi = msg.senderId === 'lm_ai' || msg.msgType === 'ai_reply';
             const reactionEntries = Object.entries(msg.reactions || {}).filter(([, arr]) => arr.length > 0);
@@ -1071,9 +1154,10 @@ export function ChatView({
                           </button>
                         )}
 
-                        <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px] font-mono-num text-[#7A7A85]">
+                        <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-mono-num text-[#7A7A85]">
                           {msg.isEdited && <span>معدّلة ·</span>}
                           <span>{msg.createdAt}</span>
+                          {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#34D399]" strokeWidth={2.2} />}
                         </div>
                       </div>
                     )}

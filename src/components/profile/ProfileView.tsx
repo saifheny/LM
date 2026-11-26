@@ -279,228 +279,235 @@ export function ProfileView({
 
   return (
     <div className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]">
-      <div className="max-w-[700px] mx-auto px-3 sm:px-5 pt-4 pb-28">
-        {/* 2026 CINEMATIC COVER + FLOATING IDENTITY HERO */}
-        <div className="rounded-[30px] overflow-hidden bg-[#111116] border border-white/[0.08] shadow-[0_24px_64px_rgba(0,0,0,0.6)]">
-          {/* Editorial Cover Canvas */}
-          <div className="relative h-40 sm:h-48 w-full overflow-hidden bg-[#16161D]">
-            {profileUser.coverUrl ? (
-              <img
-                src={profileUser.coverUrl}
-                alt=""
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div
-                style={{
-                  background:
-                    'linear-gradient(135deg, #1A1614 0%, #241917 48%, #141918 100%)',
-                }}
-                className="w-full h-full"
-              />
-            )}
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#111116] via-[#111116]/35 to-black/20" />
-
-            {isMe && (
-              <button
-                type="button"
-                onClick={openEditStudio}
-                className="absolute top-3.5 end-3.5 h-9 px-3.5 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-xl border border-white/[0.16] text-xs font-medium text-white flex items-center gap-2 cursor-pointer transition-colors"
-              >
-                <CoverCanvasIcon className="w-4 h-4" />
-                <span>تخصيص الغلاف</span>
-              </button>
-            )}
-          </div>
-
-          {/* Avatar + Identity + Actions */}
-          <div className="px-5 sm:px-6 pb-6 -mt-12 relative z-10 space-y-4">
-            <div className="flex items-end justify-between gap-4 flex-wrap">
-              <div className="relative">
-                <div className="p-[3px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#34D399]">
-                  <div className="p-[2px] rounded-full bg-[#111116]">
-                    <UserAvatar
-                      initials={profileUser.avatarInitials}
-                      avatarUrl={profileUser.avatarUrl}
-                      size={88}
-                    />
-                  </div>
-                </div>
-
-                {/* 2026 Sculpted Portrait Studio Trigger (NO Generic Camera Icon!) */}
-                {isMe && (
-                  <motion.button
-                    type="button"
-                    whileHover={{ scale: 1.08 }}
-                    whileTap={{ scale: 0.92 }}
-                    onClick={openEditStudio}
-                    title="تحديث صورة الحساب"
-                    className="absolute -bottom-1 -end-1 w-9 h-9 rounded-full bg-[#16161E]/95 backdrop-blur-xl border border-white/[0.2] flex items-center justify-center cursor-pointer shadow-xl"
-                  >
-                    <PortraitStudioIcon className="w-[18px] h-[18px]" />
-                  </motion.button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 pb-1">
-                {isMe ? (
-                  <button
-                    type="button"
-                    onClick={openEditStudio}
-                    className="h-10 px-4 rounded-full bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.14] text-xs font-semibold text-white flex items-center gap-2 cursor-pointer transition-colors"
-                  >
-                    <StylusEditIcon className="w-4 h-4" />
-                    <span>{lang === 'ar' ? 'تعديل الملف' : 'Edit Profile'}</span>
-                  </button>
-                ) : (
-                  <>
-                    <motion.button
-                      type="button"
-                      whileTap={{ scale: 0.95 }}
-                      onClick={toggleFollow}
-                      className={`h-10 px-5 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                        isFollowing
-                          ? 'bg-white/[0.09] hover:bg-white/[0.15] border border-white/[0.16] text-white'
-                          : 'bg-gradient-to-r from-[#F59E0B] to-[#FB7185] text-black font-bold hover:opacity-95'
-                      }`}
-                    >
-                      {isFollowing ? <UserCheck className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
-                      <span>{isFollowing ? (lang === 'ar' ? 'متابَع' : 'Following') : lang === 'ar' ? 'متابعة' : 'Follow'}</span>
-                    </motion.button>
-
-                    <motion.button
-                      type="button"
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => onMessageUser(profileUser.id)}
-                      className="h-10 px-4 rounded-full bg-[#10B981]/15 hover:bg-[#10B981]/25 border border-[#34D399]/30 text-xs font-semibold text-[#6EE7B7] flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>{lang === 'ar' ? 'مراسلة' : 'Message'}</span>
-                    </motion.button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Name + Handle + Bio + Location + Website */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">{profileUser.displayName}</h1>
-                {profileUser.verified && <VerifiedIcon />}
-                <span className="text-xs text-[#8E8E93] font-mono-num">@{profileUser.username}</span>
-              </div>
-
-              {profileUser.bio && (
-                <p className="text-[14px] text-[#E4E4E7] leading-relaxed whitespace-pre-wrap">{profileUser.bio}</p>
-              )}
-
-              {(profileUser.location || profileUser.website) && (
-                <div className="flex items-center gap-4 flex-wrap pt-0.5 text-xs text-[#9E9EA8]">
-                  {profileUser.location && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-[#FBBF24]" />
-                      <span>{profileUser.location}</span>
-                    </span>
-                  )}
-                  {profileUser.website && (
-                    <a
-                      href={websiteHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      dir="ltr"
-                      className="inline-flex items-center gap-1.5 lm-link-shine text-xs"
-                    >
-                      <Globe className="w-3.5 h-3.5 text-[#34D399]" />
-                      <span>{profileUser.website.replace(/^https?:\/\//i, '')}</span>
-                    </a>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 2026 Interactive Jewel-Accented Bento Stats Strip */}
-            <div className="grid grid-cols-3 gap-2.5 pt-2">
-              <div className="rounded-2xl bg-[#16161D] border border-white/[0.08] px-3.5 py-2.5 relative overflow-hidden">
-                <span className="absolute top-0 inset-x-4 h-[2px] rounded-full bg-gradient-to-r from-[#FBBF24] to-[#FB7185]" />
-                <div className="text-base sm:text-lg font-mono-num font-bold text-white">
-                  {posts.length + videos.length}
-                </div>
-                <div className="text-[11px] text-[#8E8E93]">{lang === 'ar' ? 'إجمالي المحتوى' : 'Content'}</div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setPeopleSheet('followers')}
-                className="rounded-2xl bg-[#16161D] hover:bg-[#1C1C25] border border-white/[0.08] px-3.5 py-2.5 text-start relative overflow-hidden cursor-pointer transition-colors"
-              >
-                <span className="absolute top-0 inset-x-4 h-[2px] rounded-full bg-gradient-to-r from-[#34D399] to-[#10B981]" />
-                <div className="text-base sm:text-lg font-mono-num font-bold text-white">
-                  {compactNum(profileUser.followersCount)}
-                </div>
-                <div className="text-[11px] text-[#8E8E93]">{lang === 'ar' ? 'متابِع' : 'Followers'}</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPeopleSheet('following')}
-                className="rounded-2xl bg-[#16161D] hover:bg-[#1C1C25] border border-white/[0.08] px-3.5 py-2.5 text-start relative overflow-hidden cursor-pointer transition-colors"
-              >
-                <span className="absolute top-0 inset-x-4 h-[2px] rounded-full bg-gradient-to-r from-[#FB7185] to-[#F97316]" />
-                <div className="text-base sm:text-lg font-mono-num font-bold text-white">
-                  {compactNum(profileUser.followingCount)}
-                </div>
-                <div className="text-[11px] text-[#8E8E93]">{lang === 'ar' ? 'يتابع' : 'Following'}</div>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Floating Tab Capsules */}
-        <div className="mt-5 flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <button
-            type="button"
-            onClick={() => setTab('posts')}
-            className={`px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors shrink-0 ${
-              tab === 'posts'
-                ? 'bg-[#1A1A22] border border-[#FBBF24]/40 text-white'
-                : 'bg-[#121217] border border-white/[0.08] text-[#8E8E93] hover:text-white'
-            }`}
-          >
-            <NavCommunityIcon active={tab === 'posts'} className="w-4 h-4" />
-            <span>{lang === 'ar' ? `المنشورات (${posts.length})` : `Posts (${posts.length})`}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setTab('videos')}
-            className={`px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors shrink-0 ${
-              tab === 'videos'
-                ? 'bg-[#1A1A22] border border-[#FF2D55]/40 text-white'
-                : 'bg-[#121217] border border-white/[0.08] text-[#8E8E93] hover:text-white'
-            }`}
-          >
-            <NavPulseIcon active={tab === 'videos'} className="w-4 h-4" />
-            <span>{lang === 'ar' ? `نبض (${videos.length})` : `Pulse (${videos.length})`}</span>
-          </button>
+      <div className="max-w-[720px] mx-auto pb-28">
+        {/* 2026 BORDERLESS FULL-BLEED COVER (ZERO Outer Container Box!) */}
+        <div className="relative h-44 sm:h-56 w-full overflow-hidden bg-[#0E0E12]">
+          {profileUser.coverUrl ? (
+            <img
+              src={profileUser.coverUrl}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div
+              style={{
+                background:
+                  'linear-gradient(135deg, #161210 0%, #1E1415 50%, #0E1514 100%)',
+              }}
+              className="w-full h-full"
+            />
+          )}
+          {/* Seamless Melt into Pure Obsidian Canvas */}
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0A0A0C] via-[#0A0A0C]/45 to-black/15" />
 
           {isMe && (
             <button
               type="button"
-              onClick={() => setTab('saved')}
-              className={`px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 ${
-                tab === 'saved'
-                  ? 'bg-[#1A1A22] border border-[#34D399]/40 text-white'
-                  : 'bg-[#121217] border border-white/[0.08] text-[#8E8E93] hover:text-white'
-              }`}
+              onClick={openEditStudio}
+              className="absolute top-4 end-4 h-9 px-3.5 rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-xl border border-white/[0.15] text-xs font-medium text-white flex items-center gap-2 cursor-pointer transition-colors"
             >
-              <span>
-                {lang === 'ar'
-                  ? `المحفوظات (${savedPosts.length + savedVideos.length})`
-                  : `Saved (${savedPosts.length + savedVideos.length})`}
-              </span>
+              <CoverCanvasIcon className="w-4 h-4" />
+              <span>تخصيص الغلاف</span>
             </button>
           )}
         </div>
+
+        {/* FLOATING BORDERLESS IDENTITY STAGE (Directly on Open Black Canvas — ZERO Containers!) */}
+        <div className="px-4 sm:px-6 -mt-12 relative z-10 space-y-5">
+          <div className="flex items-end justify-between gap-4 flex-wrap">
+            <div className="relative">
+              <div className="p-[2.5px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#34D399]">
+                <div className="p-[2.5px] rounded-full bg-[#0A0A0C]">
+                  <UserAvatar
+                    initials={profileUser.avatarInitials}
+                    avatarUrl={profileUser.avatarUrl}
+                    size={90}
+                  />
+                </div>
+              </div>
+
+              {/* 2026 Sculpted Portrait Studio Trigger (NO Generic Camera Icon!) */}
+              {isMe && (
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={openEditStudio}
+                  title="تحديث صورة الحساب"
+                  className="absolute -bottom-1 -end-1 w-9 h-9 rounded-full bg-[#0E0E13]/95 backdrop-blur-xl border border-white/[0.2] flex items-center justify-center cursor-pointer shadow-xl"
+                >
+                  <PortraitStudioIcon className="w-[18px] h-[18px]" />
+                </motion.button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pb-1">
+              {isMe ? (
+                <button
+                  type="button"
+                  onClick={openEditStudio}
+                  className="h-9 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-xl border border-white/[0.13] text-xs font-semibold text-white flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <StylusEditIcon className="w-4 h-4" />
+                  <span>{lang === 'ar' ? 'تعديل الملف' : 'Edit Profile'}</span>
+                </button>
+              ) : (
+                <>
+                  <motion.button
+                    type="button"
+                    whileTap={{ scale: 0.95 }}
+                    onClick={toggleFollow}
+                    className={`h-9 px-5 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      isFollowing
+                        ? 'bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.15] text-white'
+                        : 'bg-gradient-to-r from-[#F59E0B] to-[#FB7185] text-black font-bold hover:opacity-95'
+                    }`}
+                  >
+                    {isFollowing ? <UserCheck className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                    <span>{isFollowing ? (lang === 'ar' ? 'متابَع' : 'Following') : lang === 'ar' ? 'متابعة' : 'Follow'}</span>
+                  </motion.button>
+
+                  <motion.button
+                    type="button"
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => onMessageUser(profileUser.id)}
+                    className="h-9 px-4 rounded-full bg-[#10B981]/14 hover:bg-[#10B981]/24 border border-[#34D399]/35 text-xs font-semibold text-[#6EE7B7] flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>{lang === 'ar' ? 'مراسلة' : 'Message'}</span>
+                  </motion.button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Name + Handle + Bio + Location + Website */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">{profileUser.displayName}</h1>
+              {profileUser.verified && <VerifiedIcon />}
+              <span className="text-xs text-[#8E8E93] font-mono-num">@{profileUser.username}</span>
+            </div>
+
+            {profileUser.bio && (
+              <p className="text-[14px] text-[#E4E4E7] leading-relaxed whitespace-pre-wrap">{profileUser.bio}</p>
+            )}
+
+            {(profileUser.location || profileUser.website) && (
+              <div className="flex items-center gap-4 flex-wrap pt-0.5 text-xs text-[#9E9EA8]">
+                {profileUser.location && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-[#FBBF24]" />
+                    <span>{profileUser.location}</span>
+                  </span>
+                )}
+                {profileUser.website && (
+                  <a
+                    href={websiteHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    dir="ltr"
+                    className="inline-flex items-center gap-1.5 lm-link-shine text-xs"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-[#34D399]" />
+                    <span>{profileUser.website.replace(/^https?:\/\//i, '')}</span>
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* OPEN FLOATING EDITORIAL METRICS (ZERO Boxed Stat Cards!) */}
+          <div className="flex items-center gap-6 sm:gap-9 pt-1">
+            <div className="flex items-baseline gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24] self-center" />
+              <span className="text-lg font-mono-num font-bold text-white">{posts.length + videos.length}</span>
+              <span className="text-xs text-[#8E8E93]">{lang === 'ar' ? 'محتوى' : 'Posts'}</span>
+            </div>
+
+            <span className="w-px h-5 bg-white/[0.09]" />
+
+            <button
+              type="button"
+              onClick={() => setPeopleSheet('followers')}
+              className="flex items-baseline gap-2 group cursor-pointer"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-[#34D399] self-center" />
+              <span className="text-lg font-mono-num font-bold text-white group-hover:text-[#6EE7B7] transition-colors">
+                {compactNum(profileUser.followersCount)}
+              </span>
+              <span className="text-xs text-[#8E8E93] group-hover:text-white transition-colors">
+                {lang === 'ar' ? 'متابِع' : 'Followers'}
+              </span>
+            </button>
+
+            <span className="w-px h-5 bg-white/[0.09]" />
+
+            <button
+              type="button"
+              onClick={() => setPeopleSheet('following')}
+              className="flex items-baseline gap-2 group cursor-pointer"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FB7185] self-center" />
+              <span className="text-lg font-mono-num font-bold text-white group-hover:text-[#FDA4AF] transition-colors">
+                {compactNum(profileUser.followingCount)}
+              </span>
+              <span className="text-xs text-[#8E8E93] group-hover:text-white transition-colors">
+                {lang === 'ar' ? 'يتابع' : 'Following'}
+              </span>
+            </button>
+          </div>
+
+          {/* BORDERLESS FLOATING UNDERLINE TABS */}
+          <div className="pt-2 border-b border-white/[0.08] flex items-center gap-6 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setTab('posts')}
+              className={`pb-3 text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors relative shrink-0 ${
+                tab === 'posts' ? 'text-white' : 'text-[#7A7A85] hover:text-white'
+              }`}
+            >
+              <NavCommunityIcon active={tab === 'posts'} className="w-[18px] h-[18px]" />
+              <span>{lang === 'ar' ? `المنشورات (${posts.length})` : `Posts (${posts.length})`}</span>
+              {tab === 'posts' && (
+                <span className="absolute bottom-0 inset-x-0 h-[2px] rounded-full bg-gradient-to-r from-[#FBBF24] to-[#FB7185]" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTab('videos')}
+              className={`pb-3 text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors relative shrink-0 ${
+                tab === 'videos' ? 'text-white' : 'text-[#7A7A85] hover:text-white'
+              }`}
+            >
+              <NavPulseIcon active={tab === 'videos'} className="w-[18px] h-[18px]" />
+              <span>{lang === 'ar' ? `نبض (${videos.length})` : `Pulse (${videos.length})`}</span>
+              {tab === 'videos' && (
+                <span className="absolute bottom-0 inset-x-0 h-[2px] rounded-full bg-gradient-to-r from-[#FF2D55] to-[#FBBF24]" />
+              )}
+            </button>
+
+            {isMe && (
+              <button
+                type="button"
+                onClick={() => setTab('saved')}
+                className={`pb-3 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors relative shrink-0 ${
+                  tab === 'saved' ? 'text-white' : 'text-[#7A7A85] hover:text-white'
+                }`}
+              >
+                <Bookmark className={`w-4 h-4 ${tab === 'saved' ? 'text-[#34D399] fill-current' : ''}`} />
+                <span>
+                  {lang === 'ar'
+                    ? `المحفوظات (${savedPosts.length + savedVideos.length})`
+                    : `Saved (${savedPosts.length + savedVideos.length})`}
+                </span>
+                {tab === 'saved' && (
+                  <span className="absolute bottom-0 inset-x-0 h-[2px] rounded-full bg-gradient-to-r from-[#34D399] to-[#10B981]" />
+                )}
+              </button>
+            )}
+          </div>
 
         {/* Content Area */}
         {tab === 'posts' ? (
@@ -658,9 +665,9 @@ export function ProfileView({
             ) : (
               <>
                 {(savedFilter === 'all' || savedFilter === 'posts') && savedPosts.length > 0 && (
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <div className="text-[11px] font-semibold text-[#A1A1AA]">المنشورات المحفوظة</div>
-                    <div className="divide-y divide-white/[0.07] rounded-2xl bg-[#111116] border border-white/[0.08] px-4">
+                    <div className="divide-y divide-white/[0.07]">
                       {savedPosts.map(post => (
                         <article key={post.id} className="py-4 space-y-2.5">
                           <div className="flex items-center justify-between gap-2">
@@ -753,6 +760,7 @@ export function ProfileView({
             )}
           </div>
         )}
+        </div>
       </div>
 
       {/* 2026 PROFILE STUDIO LIVE-PREVIEW EDITOR MODAL */}

@@ -572,9 +572,9 @@ export function AppShell({
                 className="relative flex flex-col items-center justify-center gap-1 px-2 py-1 rounded-2xl cursor-pointer"
               >
                 <span className="relative">
-                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={24} online={wsOnline} />
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={24} />
                   {unreadNotifications > 0 && (
-                    <span className="absolute -top-1 -end-1 w-2.5 h-2.5 rounded-full bg-[#EF4444] border border-black" />
+                    <span className="absolute -top-0.5 -end-0.5 w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] border border-black" />
                   )}
                 </span>
                 <span className="text-[10px] leading-none text-[#7A7A85]">{lang === 'ar' ? 'حسابي' : 'Me'}</span>
