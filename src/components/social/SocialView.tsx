@@ -29,6 +29,8 @@ import {
   Volume2,
   VolumeX,
   Send,
+  Languages,
+  Square,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Swiper, SwiperSlide } from 'swiper/react';
@@ -47,6 +49,23 @@ import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shar
 import type { SharePayload } from '../shared/ShareSheetModal';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
+import { t } from '../../lib/i18n';
+
+const COMMENT_TRANSLATE_LANGS = [
+  { code: 'ar', label: 'العربية' },
+  { code: 'en', label: 'English' },
+  { code: 'fr', label: 'Français' },
+  { code: 'es', label: 'Español' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'tr', label: 'Türkçe' },
+];
+
+function formatDurationMMSS(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${String(rem).padStart(2, '0')}`;
+}
 
 interface SocialViewProps {
   user: UserProfile;
@@ -105,16 +124,29 @@ export function SocialView({
   const [hashtagVideos, setHashtagVideos] = useState<ShortVideoItem[]>([]);
   const [hashtagFilter, setHashtagFilter] = useState<'all' | 'posts' | 'videos'>('all');
 
-  // Licensed Royalty-Free Studio Music Library + Photo Post Audio Player
+  // Licensed Royalty-Free Studio Music Library + Pinned User Uploads + 60s Voice Recorder
   const [musicLibrary, setMusicLibrary] = useState<LicensedMusicTrack[]>([]);
   const [musicPickerOpen, setMusicPickerOpen] = useState(false);
+  const [musicMoodFilter, setMusicMoodFilter] = useState<string>('all');
   const [selectedMusic, setSelectedMusic] = useState<{ url: string; title: string } | null>(null);
   const [uploadingCustomAudio, setUploadingCustomAudio] = useState(false);
   const [previewingMusicUrl, setPreviewingMusicUrl] = useState<string | null>(null);
   const [playingPostMusicId, setPlayingPostMusicId] = useState<string | null>(null);
+  const [libRecording, setLibRecording] = useState(false);
+  const [libRecordSec, setLibRecordSec] = useState(0);
   const customAudioRef = useRef<HTMLInputElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const postMusicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const libRecRef = useRef<MediaRecorder | null>(null);
+  const libStreamRef = useRef<MediaStream | null>(null);
+  const libChunksRef = useRef<Blob[]>([]);
+  const libTimerRef = useRef<number | null>(null);
+  const libSecRef = useRef(0);
+
+  // Inline Multi-Language Comment Translation
+  const [commentTranslations, setCommentTranslations] = useState<Record<string, { text: string; lang: string }>>({});
+  const [translatingCommentId, setTranslatingCommentId] = useState<string | null>(null);
+  const [commentLangMenuId, setCommentLangMenuId] = useState<string | null>(null);
 
   // Sensitive Content Blur & Universal Reporting
   const [reportRequest, setReportRequest] = useState<ReportRequest | null>(null);
@@ -227,16 +259,27 @@ export function SocialView({
     loadFeed();
   }, [loadFeed]);
 
+  const loadMusicLibrary = useCallback(async () => {
+    try {
+      const res = await apiGet<{ ok: boolean; tracks: LicensedMusicTrack[] }>(
+        `/api/music/library?userId=${encodeURIComponent(user.id)}`
+      );
+      setMusicLibrary(res.tracks || []);
+    } catch {
+      // ignore
+    }
+  }, [user.id]);
+
   useEffect(() => {
-    apiGet<{ ok: boolean; tracks: LicensedMusicTrack[] }>('/api/music/library')
-      .then(res => setMusicLibrary(res.tracks || []))
-      .catch(() => {});
-  }, []);
+    loadMusicLibrary();
+  }, [loadMusicLibrary]);
 
   useEffect(() => {
     return () => {
       previewAudioRef.current?.pause();
       postMusicAudioRef.current?.pause();
+      if (libTimerRef.current) window.clearInterval(libTimerRef.current);
+      libStreamRef.current?.getTracks().forEach(tr => tr.stop());
     };
   }, []);
 
@@ -383,15 +426,131 @@ export function SocialView({
     setUploadingCustomAudio(true);
     try {
       const up = await apiUploadFile(f, 'music');
-      const cleanTitle = f.name.replace(/\.[^.]+$/, '').slice(0, 48) || 'مقطع صوتي مخصص';
-      setSelectedMusic({ url: up.url, title: cleanTitle });
-      setMusicPickerOpen(false);
+      const saved = await apiPost<{ ok: boolean; track: LicensedMusicTrack }>('/api/music/user-tracks', {
+        userId: user.id,
+        url: up.url,
+        kind: 'upload',
+        durationSec: 30,
+      });
+      await loadMusicLibrary();
+      setSelectedMusic({ url: saved.track.url, title: saved.track.title });
+      setMusicMoodFilter('mine');
       stopPreviewMusic();
     } catch (err) {
       notifyUploadError(err);
     } finally {
       setUploadingCustomAudio(false);
       e.target.value = '';
+    }
+  }
+
+  function cancelLibVoiceRec() {
+    if (libTimerRef.current) {
+      window.clearInterval(libTimerRef.current);
+      libTimerRef.current = null;
+    }
+    try {
+      if (libRecRef.current && libRecRef.current.state !== 'inactive') {
+        libRecRef.current.onstop = null;
+        libRecRef.current.stop();
+      }
+    } catch {
+      // ignore
+    }
+    libStreamRef.current?.getTracks().forEach(tr => tr.stop());
+    libStreamRef.current = null;
+    libRecRef.current = null;
+    libChunksRef.current = [];
+    libSecRef.current = 0;
+    setLibRecording(false);
+    setLibRecordSec(0);
+  }
+
+  function stopLibVoiceRec() {
+    if (libTimerRef.current) {
+      window.clearInterval(libTimerRef.current);
+      libTimerRef.current = null;
+    }
+    try {
+      if (libRecRef.current && libRecRef.current.state !== 'inactive') {
+        libRecRef.current.stop();
+      }
+    } catch {
+      setLibRecording(false);
+    }
+  }
+
+  async function startLibVoiceRec() {
+    if (libRecording || uploadingCustomAudio) return;
+    stopPreviewMusic();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      libStreamRef.current = stream;
+      libChunksRef.current = [];
+      libSecRef.current = 0;
+      setLibRecordSec(0);
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      libRecRef.current = mr;
+      mr.ondataavailable = ev => {
+        if (ev.data.size > 0) libChunksRef.current.push(ev.data);
+      };
+      mr.onstop = async () => {
+        const finalSec = Math.max(1, Math.min(60, libSecRef.current || 1));
+        stream.getTracks().forEach(tr => tr.stop());
+        libStreamRef.current = null;
+        setLibRecording(false);
+        const blob = new Blob(libChunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        libChunksRef.current = [];
+        if (blob.size < 400) return;
+        setUploadingCustomAudio(true);
+        try {
+          const ext = (mr.mimeType || '').includes('mp4') ? 'm4a' : (mr.mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+          const file = new File([blob], `lm_voice_${Date.now()}.${ext}`, { type: blob.type || 'audio/webm' });
+          const up = await apiUploadFile(file, 'voice');
+          const saved = await apiPost<{ ok: boolean; track: LicensedMusicTrack }>('/api/music/user-tracks', {
+            userId: user.id,
+            url: up.url,
+            kind: 'voice',
+            durationSec: finalSec,
+          });
+          await loadMusicLibrary();
+          setSelectedMusic({ url: saved.track.url, title: saved.track.title });
+          setMusicMoodFilter('mine');
+        } catch (err) {
+          notifyUploadError(err);
+        } finally {
+          setUploadingCustomAudio(false);
+          setLibRecordSec(0);
+        }
+      };
+      mr.start(250);
+      setLibRecording(true);
+      libTimerRef.current = window.setInterval(() => {
+        libSecRef.current += 1;
+        setLibRecordSec(libSecRef.current);
+        if (libSecRef.current >= 60) {
+          stopLibVoiceRec();
+        }
+      }, 1000);
+    } catch {
+      notifyUploadError(new Error(lang === 'en' ? 'Microphone access denied.' : 'يرجى السماح بالوصول للميكروفون للتسجيل الصوتي.'));
+    }
+  }
+
+  async function deleteUserAudioTrack(trackId: string) {
+    try {
+      await api(`/api/music/user-tracks/${trackId}?userId=${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+      const removed = musicLibrary.find(tr => tr.id === trackId);
+      if (removed && selectedMusic?.url === removed.url) setSelectedMusic(null);
+      if (removed && previewingMusicUrl === removed.url) stopPreviewMusic();
+      setMusicLibrary(prev => prev.filter(tr => tr.id !== trackId));
+    } catch {
+      // ignore
     }
   }
 
@@ -598,8 +757,66 @@ export function SocialView({
   }
 
   async function handleRepost(postId: string) {
-    const res = await apiPost<{ ok: boolean; sharesCount: number }>(`/api/posts/${postId}/repost`, {});
-    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, sharesCount: res.sharesCount } : p)));
+    // Optimistic X-style single-action toggle (strictly 1 repost per user)
+    setPosts(prev =>
+      prev.map(p => {
+        if (p.id !== postId) return p;
+        const nextReposted = !p.repostedByMe;
+        return {
+          ...p,
+          repostedByMe: nextReposted,
+          sharesCount: Math.max(0, p.sharesCount + (nextReposted ? 1 : -1)),
+          repostedBy: nextReposted
+            ? { userId: user.id, displayName: user.displayName, username: user.username }
+            : p.repostedBy?.userId === user.id
+              ? null
+              : p.repostedBy,
+        };
+      })
+    );
+    try {
+      const res = await apiPost<{ ok: boolean; reposted: boolean; sharesCount: number }>(
+        `/api/posts/${postId}/repost`,
+        { userId: user.id }
+      );
+      setPosts(prev =>
+        prev.map(p =>
+          p.id === postId
+            ? {
+                ...p,
+                repostedByMe: res.reposted,
+                sharesCount: res.sharesCount,
+                repostedBy: res.reposted
+                  ? { userId: user.id, displayName: user.displayName, username: user.username }
+                  : p.repostedBy?.userId === user.id
+                    ? null
+                    : p.repostedBy,
+              }
+            : p
+        )
+      );
+    } catch {
+      loadFeed();
+    }
+  }
+
+  async function translateCommentText(commentId: string, text: string, targetLang: string) {
+    if (!text.trim()) return;
+    setCommentLangMenuId(null);
+    setTranslatingCommentId(commentId);
+    try {
+      const res = await apiPost<{ ok: boolean; translated: string }>('/api/translate', { text, targetLang });
+      if (res.translated) {
+        setCommentTranslations(prev => ({
+          ...prev,
+          [commentId]: { text: res.translated, lang: targetLang },
+        }));
+      }
+    } catch {
+      // ignore
+    } finally {
+      setTranslatingCommentId(cur => (cur === commentId ? null : cur));
+    }
   }
 
   async function saveEditedPost(postId: string) {
@@ -1135,6 +1352,29 @@ export function SocialView({
 
             return (
               <article key={post.id} className="px-4 py-5">
+                {/* X-Style Single-Action Repost Attribution Banner */}
+                {post.repostedBy && (
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onOpenProfile?.(post.repostedBy!.userId);
+                    }}
+                    className="mb-2 ps-12 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-[#8E8E93] hover:text-[#34D399] transition-colors cursor-pointer"
+                  >
+                    <Repeat2 className="w-3.5 h-3.5 text-[#34D399]" />
+                    <span>
+                      {post.repostedBy.userId === user.id
+                        ? lang === 'en'
+                          ? 'You reposted'
+                          : 'أعدت النشر'
+                        : lang === 'en'
+                          ? `${post.repostedBy.displayName} reposted`
+                          : `أعاد ${post.repostedBy.displayName} النشر`}
+                    </span>
+                  </button>
+                )}
+
                 <div className="flex gap-3">
                   <div className="flex flex-col items-center">
                     <button
@@ -1237,6 +1477,8 @@ export function SocialView({
                           >
                             <RichMessageText
                               text={post.content}
+                              maxChars={260}
+                              lang={lang}
                               onMentionClick={onOpenProfileByUsername}
                               onHashtagClick={tag => onSelectHashtag?.(tag)}
                             />
@@ -1311,15 +1553,21 @@ export function SocialView({
                             onClick={e => e.stopPropagation()}
                             className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex items-center justify-between gap-2"
                           >
-                            <div className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 max-w-[75%]">
+                            <div className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/72 backdrop-blur-xl border border-white/15 max-w-[75%]">
                               <Music
-                                className={`w-3.5 h-3.5 shrink-0 ${
-                                  isPostMusicPlaying ? 'text-[#34D399] animate-spin' : 'text-white/80'
+                                className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+                                  isPostMusicPlaying ? 'text-[#34D399]' : 'text-white/80'
                                 }`}
-                                style={isPostMusicPlaying ? { animationDuration: '4s' } : undefined}
                               />
+                              {isPostMusicPlaying && (
+                                <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
+                                  <span className="w-[2px] h-2 bg-[#34D399] rounded-full animate-pulse" />
+                                  <span className="w-[2px] h-3 bg-[#34D399] rounded-full animate-pulse [animation-delay:150ms]" />
+                                  <span className="w-[2px] h-1.5 bg-[#34D399] rounded-full animate-pulse [animation-delay:300ms]" />
+                                </span>
+                              )}
                               <span className="text-[11.5px] font-medium text-white truncate">
-                                {post.musicTitle || 'موسيقى مرفقة'}
+                                {post.musicTitle || (lang === 'en' ? 'Attached Audio' : 'موسيقى مرفقة')}
                               </span>
                             </div>
 
@@ -1385,7 +1633,7 @@ export function SocialView({
                       </div>
                     )}
 
-                    {/* Action Row with Facebook-Style Floating Animated Multi-Effect Reactions + Report */}
+                    {/* Action Row with Facebook-Style Floating Animated Multi-Effect Reactions + X-Style Repost + Discreet Report Last */}
                     <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
                       <div className="flex items-center gap-4">
                         <FacebookReactionButton
@@ -1393,6 +1641,7 @@ export function SocialView({
                           myReaction={post.myReaction}
                           totalCount={post.score}
                           onReact={rxId => handlePostReact(post.id, rxId)}
+                          lang={lang}
                         />
 
                         <button
@@ -1411,10 +1660,16 @@ export function SocialView({
 
                         <button
                           type="button"
-                          onClick={() => handleRepost(post.id)}
-                          className="flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer"
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleRepost(post.id);
+                          }}
+                          title={post.repostedByMe ? (lang === 'en' ? 'Undo Repost' : 'إلغاء إعادة النشر') : lang === 'en' ? 'Repost' : 'إعادة نشر'}
+                          className={`flex items-center gap-1.5 text-xs transition-colors cursor-pointer ${
+                            post.repostedByMe ? 'text-[#34D399] font-semibold' : 'hover:text-white'
+                          }`}
                         >
-                          <Repeat2 className="w-4 h-4" strokeWidth={1.75} />
+                          <Repeat2 className="w-4 h-4" strokeWidth={post.repostedByMe ? 2.2 : 1.75} />
                           <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
                         </button>
                       </div>
@@ -1422,19 +1677,8 @@ export function SocialView({
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={e => {
-                            e.stopPropagation();
-                            setReportRequest({ targetType: 'post', targetId: post.id, label: 'هذا المنشور' });
-                          }}
-                          title="إبلاغ عن محتوى حساس"
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
-                        >
-                          <Flag className="w-3.5 h-3.5" strokeWidth={1.75} />
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => toggleSavePost(post.id)}
-                          title={post.savedByMe ? 'إزالة من المحفوظات' : 'حفظ المنشور'}
+                          title={post.savedByMe ? (lang === 'en' ? 'Unsave' : 'إزالة من المحفوظات') : lang === 'en' ? 'Save post' : 'حفظ المنشور'}
                           className={`w-7 h-7 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
                             post.savedByMe ? 'text-[#FACC15]' : 'hover:text-white'
                           }`}
@@ -1459,11 +1703,28 @@ export function SocialView({
                               navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
                             }
                           }}
-                          title="مشاركة المنشور"
+                          title={lang === 'en' ? 'Share post' : 'مشاركة المنشور'}
                           className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                         >
                           <Share2 className="w-3.5 h-3.5" strokeWidth={1.8} />
                         </button>
+                        {post.userId !== user.id && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setReportRequest({
+                                targetType: 'post',
+                                targetId: post.id,
+                                label: lang === 'en' ? 'this post' : 'هذا المنشور',
+                              });
+                            }}
+                            title={t(lang, 'report')}
+                            className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
+                          >
+                            <Flag className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1539,6 +1800,8 @@ export function SocialView({
                                       <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
                                         <RichMessageText
                                           text={c.content}
+                                          maxChars={220}
+                                          lang={lang}
                                           onMentionClick={onOpenProfileByUsername}
                                           onHashtagClick={tag => onSelectHashtag?.(tag)}
                                         />
@@ -1546,7 +1809,32 @@ export function SocialView({
                                     )}
                                   </SensitiveCommentShield>
 
-                                  <div className="mt-1 flex items-center gap-3">
+                                  {/* Inline Translated Comment Block */}
+                                  {commentTranslations[c.id] && (
+                                    <div className="mt-1.5 ps-2.5 border-s-2 border-[#34D399]/60 py-0.5 text-[12.5px] text-[#D4D4D8] leading-relaxed flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <span className="text-[10px] font-semibold text-[#34D399] block mb-0.5">
+                                          {COMMENT_TRANSLATE_LANGS.find(l => l.code === commentTranslations[c.id].lang)?.label || commentTranslations[c.id].lang}
+                                        </span>
+                                        <span>{commentTranslations[c.id].text}</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCommentTranslations(prev => {
+                                            const copy = { ...prev };
+                                            delete copy[c.id];
+                                            return copy;
+                                          })
+                                        }
+                                        className="text-[#7A7A85] hover:text-white cursor-pointer shrink-0"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  <div className="mt-1 flex items-center gap-3 flex-wrap">
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1564,26 +1852,59 @@ export function SocialView({
                                       className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
                                     >
                                       <CornerDownLeft className="w-3 h-3" />
-                                      <span>رد</span>
+                                      <span>{t(lang, 'reply')}</span>
                                     </button>
-                                    {!c.isAi && (
+
+                                    {!c.audioUrl && c.content.trim() && (
+                                      <div className="relative">
+                                        <button
+                                          type="button"
+                                          disabled={translatingCommentId === c.id}
+                                          onClick={() =>
+                                            setCommentLangMenuId(cur => (cur === c.id ? null : c.id))
+                                          }
+                                          className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#34D399] cursor-pointer disabled:opacity-50"
+                                        >
+                                          <Languages className="w-3 h-3" />
+                                          <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                                        </button>
+                                        {commentLangMenuId === c.id && (
+                                          <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                            {COMMENT_TRANSLATE_LANGS.map(lg => (
+                                              <button
+                                                key={lg.code}
+                                                type="button"
+                                                onClick={() => translateCommentText(c.id, c.content, lg.code)}
+                                                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
+                                              >
+                                                {lg.label}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {c.userId === user.id && (
+                                      <QuickRemovePill onRemove={() => deleteComment(post.id, c.id)} />
+                                    )}
+
+                                    {/* Report strictly LAST & hidden on own comments */}
+                                    {!c.isAi && c.userId !== user.id && (
                                       <button
                                         type="button"
                                         onClick={() =>
                                           setReportRequest({
                                             targetType: 'post_comment',
                                             targetId: c.id,
-                                            label: 'هذا التعليق',
+                                            label: lang === 'en' ? 'this comment' : 'هذا التعليق',
                                           })
                                         }
                                         className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#FB7185] cursor-pointer"
                                       >
                                         <Flag className="w-2.5 h-2.5" />
-                                        <span>إبلاغ</span>
+                                        <span>{t(lang, 'report')}</span>
                                       </button>
-                                    )}
-                                    {c.userId === user.id && (
-                                      <QuickRemovePill onRemove={() => deleteComment(post.id, c.id)} />
                                     )}
                                   </div>
                                 </div>
@@ -1655,6 +1976,8 @@ export function SocialView({
                                             <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
                                               <RichMessageText
                                                 text={rep.content}
+                                                maxChars={200}
+                                                lang={lang}
                                                 onMentionClick={onOpenProfileByUsername}
                                                 onHashtagClick={tag => onSelectHashtag?.(tag)}
                                               />
@@ -1662,7 +1985,31 @@ export function SocialView({
                                           )}
                                         </SensitiveCommentShield>
 
-                                        <div className="mt-1 flex items-center gap-3">
+                                        {commentTranslations[rep.id] && (
+                                          <div className="mt-1 ps-2 border-s-2 border-[#34D399]/60 py-0.5 text-[12px] text-[#D4D4D8] leading-relaxed flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                              <span className="text-[9.5px] font-semibold text-[#34D399] block mb-0.5">
+                                                {COMMENT_TRANSLATE_LANGS.find(l => l.code === commentTranslations[rep.id].lang)?.label || commentTranslations[rep.id].lang}
+                                              </span>
+                                              <span>{commentTranslations[rep.id].text}</span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setCommentTranslations(prev => {
+                                                  const copy = { ...prev };
+                                                  delete copy[rep.id];
+                                                  return copy;
+                                                })
+                                              }
+                                              className="text-[#7A7A85] hover:text-white cursor-pointer shrink-0"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        <div className="mt-1 flex items-center gap-3 flex-wrap">
                                           <button
                                             type="button"
                                             onClick={() => {
@@ -1680,26 +2027,58 @@ export function SocialView({
                                             className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-white cursor-pointer"
                                           >
                                             <CornerDownLeft className="w-2.5 h-2.5" />
-                                            <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
+                                            <span>{rep.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
                                           </button>
-                                          {!rep.isAi && (
+
+                                          {!rep.audioUrl && rep.content.trim() && (
+                                            <div className="relative">
+                                              <button
+                                                type="button"
+                                                disabled={translatingCommentId === rep.id}
+                                                onClick={() =>
+                                                  setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))
+                                                }
+                                                className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-[#34D399] cursor-pointer disabled:opacity-50"
+                                              >
+                                                <Languages className="w-2.5 h-2.5" />
+                                                <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
+                                              </button>
+                                              {commentLangMenuId === rep.id && (
+                                                <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                                  {COMMENT_TRANSLATE_LANGS.map(lg => (
+                                                    <button
+                                                      key={lg.code}
+                                                      type="button"
+                                                      onClick={() => translateCommentText(rep.id, rep.content, lg.code)}
+                                                      className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
+                                                    >
+                                                      {lg.label}
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {rep.userId === user.id && (
+                                            <QuickRemovePill onRemove={() => deleteComment(post.id, rep.id)} />
+                                          )}
+
+                                          {!rep.isAi && rep.userId !== user.id && (
                                             <button
                                               type="button"
                                               onClick={() =>
                                                 setReportRequest({
                                                   targetType: 'post_comment',
                                                   targetId: rep.id,
-                                                  label: 'هذا الرد',
+                                                  label: lang === 'en' ? 'this reply' : 'هذا الرد',
                                                 })
                                               }
                                               className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] cursor-pointer"
                                             >
                                               <Flag className="w-2.5 h-2.5" />
-                                              <span>إبلاغ</span>
+                                              <span>{t(lang, 'report')}</span>
                                             </button>
-                                          )}
-                                          {rep.userId === user.id && (
-                                            <QuickRemovePill onRemove={() => deleteComment(post.id, rep.id)} />
                                           )}
                                         </div>
                                       </div>
@@ -2302,112 +2681,255 @@ export function SocialView({
         </StudioModalOverlay>
       )}
 
-      {/* Licensed Royalty-Free Studio Music Library Modal (CC0 + Custom Audio Upload) */}
+      {/* 2026 Studio Audio & Music Library Modal (Pinned User Audio + 60s Voice Recorder + 10 Distinct Melodies) */}
       {musicPickerOpen && (
         <StudioModalOverlay
           zClass="z-[75]"
           onClose={() => {
+            cancelLibVoiceRec();
             stopPreviewMusic();
             setMusicPickerOpen(false);
           }}
         >
-          <div className="max-h-[82vh] flex flex-col">
+          <div className="max-h-[85vh] flex flex-col">
             <div className="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Music className="w-4 h-4 text-[#34D399]" />
-                <span className="text-sm font-bold text-white">مكتبة الموسيقى المجانية المرخّصة</span>
+              <div className="flex items-center gap-2.5">
+                <span className="w-8 h-8 rounded-2xl bg-[#10B981]/15 border border-[#34D399]/30 flex items-center justify-center text-[#34D399]">
+                  <Music className="w-4 h-4" />
+                </span>
+                <div>
+                  <div className="text-sm font-bold text-white">{t(lang, 'audio_library')}</div>
+                  <div className="text-[10.5px] text-[#8E8E93]">
+                    {lang === 'en'
+                      ? 'Record voice up to 1:00, upload audio, or pick studio melodies'
+                      : 'سجّل صوتك حتى دقيقة أو ارفع مقطعًا أو اختر من ألحان الاستوديو'}
+                  </div>
+                </div>
               </div>
               <CloseOrbButton
                 onClick={() => {
+                  cancelLibVoiceRec();
                   stopPreviewMusic();
                   setMusicPickerOpen(false);
                 }}
               />
             </div>
 
-            <div className="p-4 space-y-2.5 overflow-y-auto">
-              <p className="text-[11px] text-[#9E9EA8] leading-relaxed">
-                أضف مقطوعة موسيقية مرخّصة بدون حقوق (CC0) أو ارفع مقطعًا من جهازك ليظهر مع زر السماعة أسفل صورك.
-              </p>
-
-              <button
-                type="button"
-                disabled={uploadingCustomAudio}
-                onClick={() => customAudioRef.current?.click()}
-                className="w-full px-3.5 py-2.5 rounded-2xl border border-dashed border-white/[0.18] hover:border-[#34D399]/60 bg-[#0B0B0F] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
-              >
-                <Upload className="w-4 h-4 text-[#34D399]" />
-                <span>{uploadingCustomAudio ? 'جارٍ رفع الملف الصوتي...' : 'رفع مقطع صوتي من جهازك (MP3 / WAV)'}</span>
-              </button>
-
-              <div className="space-y-1.5 pt-1">
-                {musicLibrary.map(track => {
-                  const isPreviewing = previewingMusicUrl === track.url;
-                  const isChosen = selectedMusic?.url === track.url;
-                  return (
-                    <div
-                      key={track.id}
-                      className={`p-2.5 rounded-2xl border flex items-center justify-between gap-2.5 transition-colors ${
-                        isChosen
-                          ? 'bg-[#10B981]/14 border-[#34D399]/45'
-                          : 'bg-[#0C0C10] border-white/[0.08] hover:border-white/[0.16]'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => togglePreviewTrack(track.url)}
-                        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
-                          isPreviewing
-                            ? 'bg-[#34D399] text-black'
-                            : 'bg-white/[0.08] text-white hover:bg-white/[0.16]'
-                        }`}
-                      >
-                        {isPreviewing ? (
-                          <Pause className="w-4 h-4" />
-                        ) : (
-                          <Play className="w-4 h-4 fill-current" />
-                        )}
-                      </button>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-semibold text-white truncate">{track.title}</div>
-                        <div className="text-[10.5px] text-[#8E8E93] flex items-center gap-1.5 truncate">
-                          <span>{track.artist}</span>
-                          <span>·</span>
-                          <span>{track.mood}</span>
-                          <span>·</span>
-                          <span className="text-[#34D399] font-mono-num">{track.license}</span>
-                        </div>
+            <div className="p-4 space-y-3 overflow-y-auto">
+              {/* Studio Capture Strip: Record 60s Voice OR Upload Audio File */}
+              {libRecording ? (
+                <div className="p-3 rounded-2xl bg-[#EF4444]/10 border border-[#FB7185]/35 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#FB7185] animate-pulse shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-white truncate">
+                        {user.displayName} · LM
                       </div>
+                      <div className="text-[11px] font-mono-num text-[#FDA4AF]">
+                        {formatDurationMMSS(libRecordSec)} / 1:00
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={cancelLibVoiceRec}
+                      className="px-3 py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-[#D4D4D8] cursor-pointer"
+                    >
+                      {t(lang, 'cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopLibVoiceRec}
+                      className="px-3.5 py-1.5 rounded-full bg-white text-black text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:opacity-90"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                      <span>{lang === 'en' ? 'Save Audio' : 'حفظ الصوت'}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={uploadingCustomAudio}
+                    onClick={startLibVoiceRec}
+                    className="px-3 py-2.5 rounded-2xl border border-white/[0.12] hover:border-[#FBBF24]/50 bg-[#0D0D12] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-45"
+                  >
+                    <Mic className="w-4 h-4 text-[#FBBF24] shrink-0" />
+                    <span className="truncate">{t(lang, 'record_voice_1m')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={uploadingCustomAudio}
+                    onClick={() => customAudioRef.current?.click()}
+                    className="px-3 py-2.5 rounded-2xl border border-dashed border-white/[0.18] hover:border-[#34D399]/60 bg-[#0D0D12] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-45"
+                  >
+                    <Upload className="w-4 h-4 text-[#34D399] shrink-0" />
+                    <span className="truncate">
+                      {uploadingCustomAudio ? (lang === 'en' ? 'Uploading...' : 'جارٍ الرفع...') : t(lang, 'upload_audio')}
+                    </span>
+                  </button>
+                </div>
+              )}
 
+              {/* Mood Filter Pills */}
+              {(() => {
+                const userTracks = musicLibrary.filter(tr => tr.isUserTrack);
+                const moods = Array.from(new Set(musicLibrary.filter(tr => !tr.isUserTrack).map(tr => tr.mood)));
+                const filteredTracks =
+                  musicMoodFilter === 'all'
+                    ? musicLibrary
+                    : musicMoodFilter === 'mine'
+                      ? userTracks
+                      : musicLibrary.filter(tr => !tr.isUserTrack && tr.mood === musicMoodFilter);
+
+                return (
+                  <>
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedMusic({ url: track.url, title: `${track.title} — ${track.artist}` });
-                          stopPreviewMusic();
-                          setMusicPickerOpen(false);
-                        }}
-                        className={`px-3 py-1.5 rounded-full text-[11px] font-semibold cursor-pointer shrink-0 transition-colors ${
-                          isChosen
-                            ? 'bg-[#34D399] text-black'
-                            : 'bg-white/[0.09] hover:bg-white hover:text-black text-white'
+                        onClick={() => setMusicMoodFilter('all')}
+                        className={`px-3 py-1 rounded-full text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                          musicMoodFilter === 'all'
+                            ? 'bg-white text-black font-semibold'
+                            : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
                         }`}
                       >
-                        {isChosen ? 'محدّد' : 'اختيار'}
+                        {t(lang, 'all')} ({musicLibrary.length})
                       </button>
+                      {userTracks.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setMusicMoodFilter('mine')}
+                          className={`px-3 py-1 rounded-full text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                            musicMoodFilter === 'mine'
+                              ? 'bg-[#34D399] text-black font-semibold'
+                              : 'bg-[#10B981]/15 text-[#6EE7B7] border border-[#34D399]/30 hover:bg-[#10B981]/25'
+                          }`}
+                        >
+                          {t(lang, 'my_uploads')} ({userTracks.length})
+                        </button>
+                      )}
+                      {moods.map(mood => (
+                        <button
+                          key={mood}
+                          type="button"
+                          onClick={() => setMusicMoodFilter(mood)}
+                          className={`px-3 py-1 rounded-full text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                            musicMoodFilter === mood
+                              ? 'bg-white text-black font-semibold'
+                              : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+                          }`}
+                        >
+                          {mood}
+                        </button>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
+
+                    <div className="space-y-1.5">
+                      {filteredTracks.map(track => {
+                        const isPreviewing = previewingMusicUrl === track.url;
+                        const isChosen = selectedMusic?.url === track.url;
+                        const accent = track.accent || (track.isUserTrack ? '#34D399' : '#FBBF24');
+                        return (
+                          <div
+                            key={track.id}
+                            className={`p-2.5 rounded-2xl border flex items-center justify-between gap-2.5 transition-colors ${
+                              isChosen
+                                ? 'bg-[#10B981]/14 border-[#34D399]/45'
+                                : track.isUserTrack
+                                  ? 'bg-[#111514] border-[#34D399]/22 hover:border-[#34D399]/45'
+                                  : 'bg-[#0C0C10] border-white/[0.08] hover:border-white/[0.16]'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => togglePreviewTrack(track.url)}
+                              style={isPreviewing ? { backgroundColor: accent, color: '#0A0A0C' } : undefined}
+                              className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                                isPreviewing ? '' : 'bg-white/[0.08] text-white hover:bg-white/[0.16]'
+                              }`}
+                            >
+                              {isPreviewing ? (
+                                <Pause className="w-4 h-4" />
+                              ) : (
+                                <Play className="w-4 h-4 fill-current" />
+                              )}
+                            </button>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-semibold text-white truncate">{track.title}</span>
+                                {track.isUserTrack && (
+                                  <span className="px-1.5 py-0.5 rounded-md bg-[#34D399]/18 text-[#6EE7B7] text-[9.5px] font-semibold shrink-0">
+                                    {track.kind === 'voice' ? (lang === 'en' ? 'Voice' : 'تسجيلك') : t(lang, 'my_uploads')}
+                                  </span>
+                                )}
+                                {isPreviewing && (
+                                  <span className="inline-flex items-end gap-[2px] h-3 shrink-0 ms-0.5">
+                                    <span style={{ backgroundColor: accent }} className="w-[2px] h-2 rounded-full animate-pulse" />
+                                    <span style={{ backgroundColor: accent }} className="w-[2px] h-3 rounded-full animate-pulse [animation-delay:140ms]" />
+                                    <span style={{ backgroundColor: accent }} className="w-[2px] h-1.5 rounded-full animate-pulse [animation-delay:280ms]" />
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10.5px] text-[#8E8E93] flex items-center gap-1.5 truncate mt-0.5">
+                                <span>{track.artist}</span>
+                                <span>·</span>
+                                <span>{track.mood}</span>
+                                <span>·</span>
+                                <span className="font-mono-num text-[#C4C4CC]">{formatDurationMMSS(track.durationSec)}</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {track.isUserTrack && (
+                                <button
+                                  type="button"
+                                  onClick={() => deleteUserAudioTrack(track.id)}
+                                  title={t(lang, 'remove')}
+                                  className="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-[#FB7185]/20 text-[#8E8E93] hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedMusic({
+                                    url: track.url,
+                                    title: track.isUserTrack ? track.title : `${track.title} — ${track.artist}`,
+                                  });
+                                  stopPreviewMusic();
+                                  setMusicPickerOpen(false);
+                                }}
+                                className={`px-3 py-1.5 rounded-full text-[11px] font-semibold cursor-pointer transition-colors ${
+                                  isChosen
+                                    ? 'bg-[#34D399] text-black'
+                                    : 'bg-white/[0.09] hover:bg-white hover:text-black text-white'
+                                }`}
+                              >
+                                {isChosen ? (lang === 'en' ? 'Selected' : 'محدّد') : lang === 'en' ? 'Select' : 'اختيار'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </StudioModalOverlay>
       )}
 
-      {/* Universal Sensitive Content Reporting Modal */}
+      {/* Universal Discreet Content Reporting Sheet/Modal */}
       <ReportContentModal
         request={reportRequest}
         reporterId={user.id}
+        lang={lang}
         onClose={() => setReportRequest(null)}
         onReported={res => {
           if (res.targetType === 'post') {

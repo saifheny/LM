@@ -7,6 +7,7 @@ import {
   MapPin,
   MessageCircle,
   Play,
+  Repeat2,
   Share2,
   UserCheck,
   UserPlus,
@@ -26,6 +27,7 @@ import {
 import { ActionMenuOrb } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton } from '../shared/ModalChrome2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
+import { t } from '../../lib/i18n';
 
 interface ProfileViewProps {
   profileUserId: string;
@@ -229,6 +231,11 @@ export function ProfileView({
     setPosts(prev => prev.filter(p => p.id !== postId));
   }
 
+  async function undoRepost(postId: string) {
+    await apiPost(`/api/posts/${postId}/repost`, { userId: currentUser.id });
+    setPosts(prev => prev.filter(p => !(p.id === postId && p.repostedBy?.userId === currentUser.id)));
+  }
+
   async function unsavePost(postId: string) {
     await apiPost(`/api/posts/${postId}/save`, { userId: currentUser.id });
     setSavedPosts(prev => prev.filter(p => p.id !== postId));
@@ -429,7 +436,15 @@ export function ProfileView({
             </div>
 
             {profileUser.bio && (
-              <p className="text-[14px] text-[#E4E4E7] leading-relaxed whitespace-pre-wrap">{profileUser.bio}</p>
+              <div className="text-[14px] text-[#E4E4E7] leading-relaxed whitespace-pre-wrap">
+                <RichMessageText
+                  text={profileUser.bio}
+                  maxChars={200}
+                  lang={lang}
+                  onMentionClick={onOpenProfileByUsername}
+                  onHashtagClick={onOpenHashtag}
+                />
+              </div>
             )}
 
             {(profileUser.location || profileUser.website) && (
@@ -552,21 +567,65 @@ export function ProfileView({
         {tab === 'posts' ? (
           <div className="mt-4 divide-y divide-white/[0.07]">
             {posts.length === 0 ? (
-              <div className="py-16 text-center text-xs text-[#7A7A85]">لا توجد منشورات بعد</div>
+              <div className="py-16 text-center text-xs text-[#7A7A85]">
+                {lang === 'en' ? 'No posts yet' : 'لا توجد منشورات بعد'}
+              </div>
             ) : (
-              posts.map(post => (
-                <article key={post.id} className="py-5 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs text-[#7A7A85]">
-                      <span className="font-semibold text-white">{post.displayName}</span>
-                      <span>· {post.createdAt}</span>
-                      {post.isEdited && <span className="text-[10.5px] text-[#FBBF24]/80">(معدّل)</span>}
+              posts.map(post => {
+                const isRepostItem = Boolean(post.repostedBy);
+                const isOwnOriginal = post.userId === currentUser.id;
+                return (
+                <article key={`${post.id}_${isRepostItem ? 'rp' : 'orig'}`} className="py-5 space-y-3">
+                  {/* X-Style Repost Header */}
+                  {isRepostItem && post.repostedBy && (
+                    <div className="flex items-center justify-between gap-2 text-[11.5px] font-medium text-[#8E8E93]">
+                      <div className="inline-flex items-center gap-1.5">
+                        <Repeat2 className="w-3.5 h-3.5 text-[#34D399]" />
+                        <span>
+                          {post.repostedBy.userId === currentUser.id
+                            ? lang === 'en'
+                              ? 'You reposted'
+                              : 'أعدت النشر'
+                            : lang === 'en'
+                              ? `${post.repostedBy.displayName} reposted`
+                              : `أعاد ${post.repostedBy.displayName} النشر`}
+                        </span>
+                      </div>
+                      {isMe && post.repostedBy.userId === currentUser.id && (
+                        <button
+                          type="button"
+                          onClick={() => undoRepost(post.id)}
+                          className="text-[11px] text-[#8E8E93] hover:text-[#FB7185] cursor-pointer transition-colors"
+                        >
+                          {lang === 'en' ? 'Undo repost' : 'إلغاء إعادة النشر'}
+                        </button>
+                      )}
                     </div>
+                  )}
 
-                    {isMe && (
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenProfile(post.userId)}
+                      className="flex items-center gap-2 text-xs text-[#7A7A85] cursor-pointer group"
+                    >
+                      {post.userId !== profileUser.id && (
+                        <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={24} />
+                      )}
+                      <span className="font-semibold text-white group-hover:underline">{post.displayName}</span>
+                      {post.verified && <VerifiedIcon />}
+                      <span>· {post.createdAt}</span>
+                      {post.isEdited && (
+                        <span className="text-[10.5px] text-[#FBBF24]/80">
+                          {lang === 'en' ? '(edited)' : '(معدّل)'}
+                        </span>
+                      )}
+                    </button>
+
+                    {isMe && isOwnOriginal && !isRepostItem && (
                       <ActionMenuOrb
-                        editLabel="تعديل المنشور"
-                        removeLabel="إزالة المنشور"
+                        editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
+                        removeLabel={lang === 'en' ? 'Remove post' : 'إزالة المنشور'}
                         onEdit={() => {
                           setEditingPostId(post.id);
                           setEditingPostText(post.content);
@@ -590,7 +649,7 @@ export function ProfileView({
                           onClick={() => setEditingPostId(null)}
                           className="px-3 py-1.5 rounded-full bg-white/[0.07] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
                         >
-                          إلغاء
+                          {t(lang, 'cancel')}
                         </button>
                         <button
                           type="button"
@@ -598,7 +657,7 @@ export function ProfileView({
                           className="px-3.5 py-1.5 rounded-full bg-white text-black text-xs font-semibold flex items-center gap-1 cursor-pointer"
                         >
                           <Check className="w-3.5 h-3.5" />
-                          <span>حفظ</span>
+                          <span>{t(lang, 'save')}</span>
                         </button>
                       </div>
                     </div>
@@ -606,6 +665,8 @@ export function ProfileView({
                     <div className="text-[14.5px] text-[#F2F2F5] leading-relaxed">
                       <RichMessageText
                         text={post.content}
+                        maxChars={240}
+                        lang={lang}
                         onMentionClick={onOpenProfileByUsername}
                         onHashtagClick={onOpenHashtag}
                       />
@@ -627,7 +688,8 @@ export function ProfileView({
                     </div>
                   )}
                 </article>
-              ))
+                );
+              })
             )}
           </div>
         ) : tab === 'videos' ? (

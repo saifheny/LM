@@ -57,20 +57,20 @@ export function ActionMenuOrb({
         }`}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <circle cx="6.5" cy="12" r="1.8" />
+          <circle cx="12" cy="6.5" r="1.8" />
           <circle cx="12" cy="12" r="1.8" />
-          <circle cx="17.5" cy="12" r="1.8" />
+          <circle cx="12" cy="17.5" r="1.8" />
         </svg>
       </motion.button>
 
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.88, y: direction === 'up' ? 8 : -8 }}
+            initial={{ opacity: 0, scale: 0.9, y: direction === 'up' ? 6 : -6 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.88, y: direction === 'up' ? 6 : -6 }}
+            exit={{ opacity: 0, scale: 0.9, y: direction === 'up' ? 4 : -4 }}
             transition={{ type: 'spring', stiffness: 480, damping: 28 }}
-            className={`absolute z-40 min-w-[148px] p-1.5 rounded-2xl bg-[#15151C]/96 backdrop-blur-2xl border border-white/[0.14] shadow-[0_14px_40px_rgba(0,0,0,0.68)] space-y-1 ${
+            className={`absolute z-40 min-w-[144px] max-w-[200px] p-1.5 rounded-2xl bg-[#15151C]/98 backdrop-blur-2xl border border-white/[0.14] shadow-[0_14px_40px_rgba(0,0,0,0.72)] space-y-1 ${
               direction === 'up' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
             } ${align === 'end' ? 'end-0' : 'start-0'}`}
           >

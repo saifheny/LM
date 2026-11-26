@@ -26,6 +26,7 @@ import {
   FastForward,
   Sparkles,
   X,
+  Languages,
 } from 'lucide-react';
 
 import { ConversationItem, Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
@@ -39,6 +40,16 @@ import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shar
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
+import { t } from '../../lib/i18n';
+
+const PULSE_TRANSLATE_LANGS = [
+  { code: 'ar', label: 'العربية' },
+  { code: 'en', label: 'English' },
+  { code: 'fr', label: 'Français' },
+  { code: 'es', label: 'Español' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'tr', label: 'Türkçe' },
+];
 
 interface ShortVideosViewProps {
   user: UserProfile;
@@ -289,6 +300,30 @@ export function ShortVideosView({
   const [reportRequest, setReportRequest] = useState<ReportRequest | null>(null);
   const [revealedVideos, setRevealedVideos] = useState<Record<string, boolean>>({});
   const [revealedComments, setRevealedComments] = useState<Record<string, boolean>>({});
+
+  // Inline Multi-Language Comment Translation
+  const [commentTranslations, setCommentTranslations] = useState<Record<string, { text: string; lang: string }>>({});
+  const [translatingCommentId, setTranslatingCommentId] = useState<string | null>(null);
+  const [commentLangMenuId, setCommentLangMenuId] = useState<string | null>(null);
+
+  async function translatePulseComment(commentId: string, text: string, targetLang: string) {
+    if (!text.trim()) return;
+    setCommentLangMenuId(null);
+    setTranslatingCommentId(commentId);
+    try {
+      const res = await apiPost<{ ok: boolean; translated: string }>('/api/translate', { text, targetLang });
+      if (res.translated) {
+        setCommentTranslations(prev => ({
+          ...prev,
+          [commentId]: { text: res.translated, lang: targetLang },
+        }));
+      }
+    } catch {
+      // ignore
+    } finally {
+      setTranslatingCommentId(cur => (cur === commentId ? null : cur));
+    }
+  }
 
   const loadVideos = useCallback(async () => {
     const res = await apiGet<{ ok: boolean; videos: ShortVideoItem[] }>(`/api/videos?userId=${user.id}`);
@@ -996,16 +1031,22 @@ export function ShortVideosView({
                       <span className="text-[11px] font-mono-num text-white">{compactNum(v.sharesCount)}</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setReportRequest({ targetType: 'video', targetId: v.id, label: 'فيديو نبض' })
-                      }
-                      title="إبلاغ عن محتوى حساس"
-                      className="flex flex-col items-center gap-0.5 text-white/80 hover:text-[#FB7185] cursor-pointer transition-colors"
-                    >
-                      <Flag className="w-5 h-5" strokeWidth={1.85} />
-                    </button>
+                    {v.userId !== user.id && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReportRequest({
+                            targetType: 'video',
+                            targetId: v.id,
+                            label: lang === 'en' ? 'this Pulse video' : 'فيديو نبض',
+                          })
+                        }
+                        title={t(lang, 'report')}
+                        className="flex flex-col items-center gap-0.5 text-white/80 hover:text-[#FB7185] cursor-pointer transition-colors"
+                      >
+                        <Flag className="w-5 h-5" strokeWidth={1.85} />
+                      </button>
+                    )}
 
                     {v.userId === user.id && (
                       <ActionMenuOrb
@@ -1229,23 +1270,31 @@ export function ShortVideosView({
                 },
                 {
                   id: 'not_interested',
-                  label: 'غير مهتم',
+                  label: lang === 'en' ? 'Not interested' : 'غير مهتم',
                   icon: EyeOff,
                   action: () => {
-                    showToast('سنعرض محتوى أقل مشابهًا');
+                    showToast(lang === 'en' ? 'Showing less similar content' : 'سنعرض محتوى أقل مشابهًا');
                     setShareVideo(null);
                   },
                 },
-                {
-                  id: 'report',
-                  label: 'إبلاغ',
-                  icon: Flag,
-                  action: () => {
-                    const vidId = shareVideo.id;
-                    setShareVideo(null);
-                    setReportRequest({ targetType: 'video', targetId: vidId, label: 'فيديو نبض' });
-                  },
-                },
+                ...(shareVideo.userId !== user.id
+                  ? [
+                      {
+                        id: 'report',
+                        label: t(lang, 'report'),
+                        icon: Flag,
+                        action: () => {
+                          const vidId = shareVideo.id;
+                          setShareVideo(null);
+                          setReportRequest({
+                            targetType: 'video',
+                            targetId: vidId,
+                            label: lang === 'en' ? 'this Pulse video' : 'فيديو نبض',
+                          });
+                        },
+                      },
+                    ]
+                  : []),
               ].map(act => {
                 const Icon = act.icon;
                 return (
@@ -1383,6 +1432,8 @@ export function ShortVideosView({
                           <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
                             <RichMessageText
                               text={c.content}
+                              maxChars={200}
+                              lang={lang}
                               onMentionClick={handle => {
                                 setDrawerVideo(null);
                                 onOpenProfileByUsername?.(handle);
@@ -1395,6 +1446,31 @@ export function ShortVideosView({
                           </div>
                         )}
                         </SensitiveCommentShield>
+
+                        {commentTranslations[c.id] && (
+                          <div className="mt-1.5 ps-2.5 border-s-2 border-[#34D399]/60 py-0.5 text-[12px] text-[#D4D4D8] leading-relaxed flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[9.5px] font-semibold text-[#34D399] block mb-0.5">
+                                {PULSE_TRANSLATE_LANGS.find(l => l.code === commentTranslations[c.id].lang)?.label || commentTranslations[c.id].lang}
+                              </span>
+                              <span>{commentTranslations[c.id].text}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCommentTranslations(prev => {
+                                  const copy = { ...prev };
+                                  delete copy[c.id];
+                                  return copy;
+                                })
+                              }
+                              className="text-[#7A7A85] hover:text-white cursor-pointer shrink-0"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+
                         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                           <button
                             type="button"
@@ -1410,24 +1486,37 @@ export function ShortVideosView({
                             className="text-[11px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
                           >
                             <CornerDownLeft className="w-3 h-3" />
-                            <span>{c.isAi ? 'الرد على AI' : 'رد'}</span>
+                            <span>{c.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
                           </button>
-                          {!c.isAi && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setReportRequest({
-                                  targetType: 'video_comment',
-                                  targetId: c.id,
-                                  label: 'هذا التعليق',
-                                })
-                              }
-                              className="text-[11px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
-                            >
-                              <Flag className="w-2.5 h-2.5" />
-                              <span>إبلاغ</span>
-                            </button>
+
+                          {!c.audioUrl && c.content.trim() && (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                disabled={translatingCommentId === c.id}
+                                onClick={() => setCommentLangMenuId(cur => (cur === c.id ? null : c.id))}
+                                className="text-[11px] text-[#7A7A85] hover:text-[#34D399] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              >
+                                <Languages className="w-3 h-3" />
+                                <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                              </button>
+                              {commentLangMenuId === c.id && (
+                                <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                  {PULSE_TRANSLATE_LANGS.map(lg => (
+                                    <button
+                                      key={lg.code}
+                                      type="button"
+                                      onClick={() => translatePulseComment(c.id, c.content, lg.code)}
+                                      className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
+                                    >
+                                      {lg.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
+
                           {c.userId === user.id && !c.audioUrl && (
                             <button
                               type="button"
@@ -1438,11 +1527,27 @@ export function ShortVideosView({
                               className="text-[11px] text-[#7A7A85] hover:text-[#FBBF24] flex items-center gap-1 cursor-pointer transition-colors"
                             >
                               <StylusEditIcon className="w-3 h-3" />
-                              <span>تعديل</span>
+                              <span>{t(lang, 'edit')}</span>
                             </button>
                           )}
                           {c.userId === user.id && (
                             <QuickRemovePill onRemove={() => deleteComment(c.id)} />
+                          )}
+                          {!c.isAi && c.userId !== user.id && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setReportRequest({
+                                  targetType: 'video_comment',
+                                  targetId: c.id,
+                                  label: lang === 'en' ? 'this comment' : 'هذا التعليق',
+                                })
+                              }
+                              className="text-[11px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
+                            >
+                              <Flag className="w-2.5 h-2.5" />
+                              <span>{t(lang, 'report')}</span>
+                            </button>
                           )}
                         </div>
                       </div>
@@ -1551,6 +1656,8 @@ export function ShortVideosView({
                                 <div className="text-[13px] text-[#D4D4D8] mt-0.5">
                                   <RichMessageText
                                     text={rep.content}
+                                    maxChars={180}
+                                    lang={lang}
                                     onMentionClick={handle => {
                                       setDrawerVideo(null);
                                       onOpenProfileByUsername?.(handle);
@@ -1563,6 +1670,31 @@ export function ShortVideosView({
                                 </div>
                               )}
                               </SensitiveCommentShield>
+
+                              {commentTranslations[rep.id] && (
+                                <div className="mt-1 ps-2 border-s-2 border-[#34D399]/60 py-0.5 text-[11.5px] text-[#D4D4D8] leading-relaxed flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <span className="text-[9.5px] font-semibold text-[#34D399] block mb-0.5">
+                                      {PULSE_TRANSLATE_LANGS.find(l => l.code === commentTranslations[rep.id].lang)?.label || commentTranslations[rep.id].lang}
+                                    </span>
+                                    <span>{commentTranslations[rep.id].text}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCommentTranslations(prev => {
+                                        const copy = { ...prev };
+                                        delete copy[rep.id];
+                                        return copy;
+                                      })
+                                    }
+                                    className="text-[#7A7A85] hover:text-white cursor-pointer shrink-0"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+
                               <div className="mt-1 flex items-center gap-3 flex-wrap">
                                 <button
                                   type="button"
@@ -1578,24 +1710,37 @@ export function ShortVideosView({
                                   className="text-[10.5px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
                                 >
                                   <CornerDownLeft className="w-2.5 h-2.5" />
-                                  <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
+                                  <span>{rep.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
                                 </button>
-                                {!rep.isAi && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setReportRequest({
-                                        targetType: 'video_comment',
-                                        targetId: rep.id,
-                                        label: 'هذا الرد',
-                                      })
-                                    }
-                                    className="text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
-                                  >
-                                    <Flag className="w-2.5 h-2.5" />
-                                    <span>إبلاغ</span>
-                                  </button>
+
+                                {!rep.audioUrl && rep.content.trim() && (
+                                  <div className="relative">
+                                    <button
+                                      type="button"
+                                      disabled={translatingCommentId === rep.id}
+                                      onClick={() => setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))}
+                                      className="text-[10.5px] text-[#7A7A85] hover:text-[#34D399] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                    >
+                                      <Languages className="w-2.5 h-2.5" />
+                                      <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
+                                    </button>
+                                    {commentLangMenuId === rep.id && (
+                                      <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                        {PULSE_TRANSLATE_LANGS.map(lg => (
+                                          <button
+                                            key={lg.code}
+                                            type="button"
+                                            onClick={() => translatePulseComment(rep.id, rep.content, lg.code)}
+                                            className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
+                                          >
+                                            {lg.label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
+
                                 {rep.userId === user.id && !rep.audioUrl && (
                                   <button
                                     type="button"
@@ -1606,11 +1751,27 @@ export function ShortVideosView({
                                     className="text-[10.5px] text-[#7A7A85] hover:text-[#FBBF24] flex items-center gap-1 cursor-pointer transition-colors"
                                   >
                                     <StylusEditIcon className="w-2.5 h-2.5" />
-                                    <span>تعديل</span>
+                                    <span>{t(lang, 'edit')}</span>
                                   </button>
                                 )}
                                 {rep.userId === user.id && (
                                   <QuickRemovePill onRemove={() => deleteComment(rep.id)} />
+                                )}
+                                {!rep.isAi && rep.userId !== user.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setReportRequest({
+                                        targetType: 'video_comment',
+                                        targetId: rep.id,
+                                        label: lang === 'en' ? 'this reply' : 'هذا الرد',
+                                      })
+                                    }
+                                    className="text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Flag className="w-2.5 h-2.5" />
+                                    <span>{t(lang, 'report')}</span>
+                                  </button>
                                 )}
                               </div>
                             </div>
@@ -1860,10 +2021,11 @@ export function ShortVideosView({
         </StudioModalOverlay>
       )}
 
-      {/* Universal Sensitive Content Reporting Modal */}
+      {/* Universal Discreet Content Reporting Sheet/Modal */}
       <ReportContentModal
         request={reportRequest}
         reporterId={user.id}
+        lang={lang}
         onClose={() => setReportRequest(null)}
         onReported={res => {
           if (res.targetType === 'video') {

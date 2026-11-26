@@ -31,6 +31,7 @@ import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { AI_COMPANIES, AiCompanyDef, AiCompanyModel, shortenModelLabel } from './AiProvidersCatalog';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
+import { t } from '../../lib/i18n';
 
 interface AiViewProps {
   user: UserProfile;
@@ -849,7 +850,7 @@ export function AiView({ user, lang }: AiViewProps) {
             }`}
           >
             <History className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">السجل</span>
+            <span className="hidden sm:inline">{t(lang, 'ai_history')}</span>
           </button>
 
           {turns.length > 0 && (
@@ -862,7 +863,7 @@ export function AiView({ user, lang }: AiViewProps) {
               className="h-9 px-3 rounded-full bg-[#14141A]/90 backdrop-blur-xl border border-white/[0.1] hover:border-white/25 text-xs text-[#D4D4D8] hover:text-white flex items-center gap-1.5 cursor-pointer shadow-lg"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">جديد</span>
+              <span className="hidden sm:inline">{t(lang, 'ai_new_chat')}</span>
             </button>
           )}
         </div>
@@ -937,7 +938,7 @@ export function AiView({ user, lang }: AiViewProps) {
                   }}
                   className="text-3xl sm:text-4xl font-semibold tracking-tight"
                 >
-                  {lang === 'ar' ? 'كيف أساعدك اليوم؟' : 'What can I help with?'}
+                  {t(lang, 'ai_greeting')}
                 </h1>
                 {!providerStatus[activeCompany.id] && (
                   <button

@@ -291,6 +291,18 @@ export function App() {
         // ignore
       }
       setActiveTab('live');
+      return;
+    }
+
+    const callMatch = pathname.match(/^\/call\/([^/]+)$/);
+    const callCode = callMatch ? decodeURIComponent(callMatch[1]) : params.get('call');
+    if (callCode) {
+      setActiveTab('chat');
+      setOutgoingCall({
+        targetName: 'مكالمة صوتية',
+        targetInitials: 'LM',
+        joinRoomCode: callCode,
+      });
     }
   }, [openProfileByUsername, setActiveTab]);
 
@@ -438,9 +450,11 @@ export function App() {
         </Suspense>
       </AppShell>
 
-      {/* Global Real WebRTC 1-on-1 Audio & Video Call Controller (Works across ALL tabs!) */}
+      {/* Global Real WebRTC Voice-Only Call Studio (Works across ALL tabs!) */}
       <WebRtcCallController
         currentUser={currentUser}
+        allUsers={users}
+        lang={lang}
         outgoingRequest={outgoingCall}
         onClearOutgoing={() => setOutgoingCall(null)}
       />

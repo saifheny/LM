@@ -204,12 +204,19 @@ export function RichMessageText({
   text,
   onMentionClick,
   onHashtagClick,
+  maxChars,
+  lang = 'ar',
 }: {
   text: string;
   onMentionClick?: (username: string) => void;
   onHashtagClick?: (tag: string) => void;
+  maxChars?: number;
+  lang?: 'ar' | 'en';
 }) {
-  const lines = text.split('\n');
+  const [expanded, setExpanded] = React.useState(false);
+  const shouldClamp = Boolean(maxChars && text.length > maxChars && !expanded);
+  const displayText = shouldClamp && maxChars ? `${text.slice(0, maxChars).trimEnd()}...` : text;
+  const lines = displayText.split('\n');
   const renderInline = (line: string, lineIdx: number) => {
     const tokens = line.split(/(\*\*[^*]+\*\*|`[^`]+`|_[^_]+_)/g);
     return tokens.map((tok, i) => {
@@ -248,6 +255,18 @@ export function RichMessageText({
         }
         return <div key={idx}>{renderInline(line, idx)}</div>;
       })}
+      {maxChars && text.length > maxChars && (
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            setExpanded(v => !v);
+          }}
+          className="text-xs font-semibold text-[#A1A1AA] hover:text-white cursor-pointer transition-colors pt-0.5"
+        >
+          {expanded ? (lang === 'ar' ? 'عرض أقل' : 'Show less') : (lang === 'ar' ? 'عرض المزيد' : 'Show more')}
+        </button>
+      )}
     </div>
   );
 }

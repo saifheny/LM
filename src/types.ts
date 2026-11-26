@@ -66,6 +66,9 @@ export interface LicensedMusicTrack {
   mood: string;
   durationSec: number;
   license: string;
+  accent?: string;
+  isUserTrack?: boolean;
+  kind?: 'studio' | 'upload' | 'voice';
   url: string;
 }
 
@@ -96,6 +99,12 @@ export interface SocialPost {
   sharesCount: number;
   likedByMe: boolean;
   savedByMe?: boolean;
+  repostedByMe?: boolean;
+  repostedBy?: {
+    userId: string;
+    displayName: string;
+    username: string;
+  } | null;
   isEdited?: boolean;
   reportsCount?: number;
   isSensitive?: boolean;
@@ -169,11 +178,31 @@ export interface ConversationItem {
   unreadCount: number;
   isEncrypted: boolean;
   memberCount: number;
+  maxMembers?: number;
   aiEnabled?: boolean;
   creatorId?: string;
   peerUserId?: string | null;
   lastMessage: string;
   lastMessageAt: string;
+}
+
+export interface VoiceCallLogItem {
+  id: string;
+  roomCode: string;
+  convId: string | null;
+  hostId: string;
+  hostName: string;
+  hostAvatarUrl: string | null;
+  hostInitials: string;
+  peerId: string | null;
+  peerName?: string | null;
+  peerAvatarUrl?: string | null;
+  title: string;
+  callScope: 'dm' | 'group' | 'community';
+  joinMode: 'open' | 'approval' | 'invited';
+  invitedUserIds: string[];
+  status: 'active' | 'ended' | 'missed';
+  createdAt: string;
 }
 
 export interface ChatMessageItem {
@@ -269,6 +298,7 @@ export interface LiveRoomItem {
   category: string;
   videoUrl: string | null;
   scenePreset: string;
+  orientation?: 'portrait' | 'landscape';
   viewersCount: number;
   likesCount?: number;
   totalGiftsEgp: number;

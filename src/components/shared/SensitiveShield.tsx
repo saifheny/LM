@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Flag, ShieldAlert } from 'lucide-react';
 import { apiPost } from '../../lib/api';
-import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from './ModalChrome2026';
+import { CloseOrbButton, StudioModalOverlay } from './ModalChrome2026';
 
 export type ReportTargetType = 'post' | 'post_comment' | 'video' | 'video_comment' | 'live';
 
@@ -166,10 +166,10 @@ export function SensitiveCommentShield({
 }
 
 const REPORT_REASONS = [
-  { id: 'sexual', label: 'محتوى جنسي أو إيحائي' },
-  { id: 'inappropriate', label: 'محتوى غير سوي أو غير لائق' },
-  { id: 'violent', label: 'عنف أو مشاهد حساسة / صادمة' },
-  { id: 'harassment', label: 'إساءة أو ألفاظ غير لائقة' },
+  { id: 'sexual', label: 'محتوى جنسي أو إيحائي', labelEn: 'Sexual or suggestive content' },
+  { id: 'inappropriate', label: 'محتوى غير سوي أو غير لائق', labelEn: 'Inappropriate or harmful content' },
+  { id: 'violent', label: 'عنف أو مشاهد حساسة / صادمة', labelEn: 'Violence or sensitive imagery' },
+  { id: 'harassment', label: 'إساءة أو ألفاظ غير لائقة', labelEn: 'Abuse or harassment' },
 ];
 
 export interface ReportRequest {
@@ -179,17 +179,19 @@ export interface ReportRequest {
 }
 
 /**
- * Universal Content Reporting Modal
- * Classifies content as sensitive; 3 unique reports automatically trigger Telegram-style blur across LM!
+ * Universal Discreet Content Reporting Sheet (Mobile bottom sheet + Desktop modal)
+ * NEVER exposes internal thresholds, counts, or glowing neon buttons!
  */
 export function ReportContentModal({
   request,
   reporterId,
+  lang = 'ar',
   onClose,
   onReported,
 }: {
   request: ReportRequest | null;
   reporterId: string;
+  lang?: 'ar' | 'en';
   onClose: () => void;
   onReported?: (res: { targetType: ReportTargetType; targetId: string; reportsCount: number; isSensitive: boolean }) => void;
 }) {
@@ -227,12 +229,16 @@ export function ReportContentModal({
         reportsCount: res.reportsCount,
         isSensitive: res.isSensitive,
       });
+      // Discreet confirmation: NEVER reveal internal report count or auto-shield threshold!
       setDoneMsg(
-        res.isSensitive
-          ? 'تم تسجيل الإبلاغ وتفعيل التعتيم الحساس تلقائيًا على هذا المحتوى.'
-          : `تم تسجيل الإبلاغ (${res.reportsCount}/3) — سيتم تفعيل التعتيم الحساس تلقائيًا عند بلوغ 3 إبلاغات.`
+        lang === 'en'
+          ? 'Thank you. Your report has been received.'
+          : 'شكرًا لك، تم استلام إبلاغك وسيتم التعامل معه.'
       );
-      setTimeout(onClose, 1400);
+      setTimeout(onClose, 1300);
+    } catch (err) {
+      setDoneMsg(err instanceof Error ? err.message : lang === 'en' ? 'Could not submit report.' : 'تعذر إرسال الإبلاغ.');
+      setTimeout(onClose, 1500);
     } finally {
       setSubmitting(false);
     }
@@ -241,43 +247,50 @@ export function ReportContentModal({
   return (
     <StudioModalOverlay zClass="z-[85]" onClose={onClose}>
       <div className="p-5 space-y-4">
+        {/* Mobile Sheet Drag Handle */}
+        <div className="sm:hidden flex justify-center -mt-2 pb-0.5">
+          <span className="w-10 h-1 rounded-full bg-white/20" />
+        </div>
+
         <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
-          <div className="flex items-center gap-2 text-sm font-bold text-white">
-            <ShieldAlert className="w-4 h-4 text-[#FB7185]" />
-            <span>إبلاغ عن {active.label || 'محتوى حساس'}</span>
+          <div className="flex items-center gap-2.5 text-sm font-bold text-white">
+            <span className="w-8 h-8 rounded-full bg-white/[0.07] border border-white/[0.12] text-[#E4E4E7] flex items-center justify-center">
+              <ShieldAlert className="w-4 h-4" />
+            </span>
+            <span>
+              {lang === 'en'
+                ? `Report ${active.label || 'content'}`
+                : `إبلاغ عن ${active.label || 'هذا المحتوى'}`}
+            </span>
           </div>
           <CloseOrbButton onClick={onClose} />
         </div>
 
         {doneMsg ? (
-          <div className="py-6 flex flex-col items-center gap-2.5 text-center">
-            <div className="w-11 h-11 rounded-full bg-[#10B981]/20 border border-[#34D399]/40 text-[#34D399] flex items-center justify-center">
+          <div className="py-7 flex flex-col items-center gap-3 text-center">
+            <div className="w-11 h-11 rounded-full bg-white/[0.09] border border-white/[0.18] text-white flex items-center justify-center">
               <Check className="w-5 h-5" />
             </div>
-            <p className="text-xs text-[#E4E4E7] leading-relaxed">{doneMsg}</p>
+            <p className="text-xs text-[#E4E4E7] leading-relaxed max-w-[260px]">{doneMsg}</p>
           </div>
         ) : (
           <>
-            <p className="text-[11.5px] text-[#A1A1AA] leading-relaxed">
-              لا يتم حذف المحتوى؛ عند وصول الإبلاغات إلى 3 إبلاغات يتم تغطيته تلقائيًا بـ <strong>تعتيم المحتوى الحساس</strong> مع زر «اضغط لفتح المحتوى الحساس».
-            </p>
-
             <div className="space-y-1.5">
               {REPORT_REASONS.map(r => (
                 <button
                   key={r.id}
                   type="button"
                   onClick={() => setSelectedReason(r.id)}
-                  className={`w-full px-3.5 py-2.5 rounded-2xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                  className={`w-full px-4 py-3 rounded-2xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
                     selectedReason === r.id
-                      ? 'bg-[#FB7185]/14 border-[#FB7185]/45 text-white font-semibold'
-                      : 'bg-[#0B0B0F] border-white/[0.08] text-[#C4C4CC] hover:border-white/20'
+                      ? 'bg-white/[0.1] border-white/[0.28] text-white font-semibold'
+                      : 'bg-[#0B0B0F] border-white/[0.07] text-[#C4C4CC] hover:border-white/[0.18]'
                   }`}
                 >
-                  <span>{r.label}</span>
+                  <span>{lang === 'en' ? r.labelEn : r.label}</span>
                   <span
-                    className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                      selectedReason === r.id ? 'border-[#FB7185] bg-[#FB7185]' : 'border-white/25'
+                    className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
+                      selectedReason === r.id ? 'border-white bg-white' : 'border-white/25'
                     }`}
                   >
                     {selectedReason === r.id && <Check className="w-2.5 h-2.5 text-black" strokeWidth={3} />}
@@ -286,23 +299,31 @@ export function ReportContentModal({
               ))}
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-1">
+            <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer transition-colors"
+                className="h-9 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer transition-colors"
               >
-                إلغاء
+                {lang === 'en' ? 'Cancel' : 'إلغاء'}
               </button>
-              <PublishActionButton
+              <button
                 type="button"
-                variant="rose"
-                loading={submitting}
+                disabled={submitting}
                 onClick={submitReport}
-                label="تأكيد الإبلاغ"
-                loadingLabel="جارٍ الإرسال..."
-                icon={<Flag className="w-3.5 h-3.5" />}
-              />
+                className="h-9 px-5 rounded-full bg-white hover:bg-[#E4E4E7] text-black text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-40 transition-colors"
+              >
+                <Flag className="w-3.5 h-3.5" />
+                <span>
+                  {submitting
+                    ? lang === 'en'
+                      ? 'Sending...'
+                      : 'جارٍ الإرسال...'
+                    : lang === 'en'
+                      ? 'Submit Report'
+                      : 'إرسال الإبلاغ'}
+                </span>
+              </button>
             </div>
           </>
         )}

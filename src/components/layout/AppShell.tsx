@@ -4,7 +4,6 @@ import {
   Search,
   SlidersHorizontal,
   LogOut,
-  X,
   Plus,
   Paperclip,
   LayoutGrid,
@@ -14,9 +13,15 @@ import {
   User,
   Download,
   Share2,
+  ArrowRight,
+  ArrowLeft,
+  Globe,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Lang, NavTab, NotificationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
+import { CloseOrbButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import {
   NavCommunityIcon,
   NavPulseIcon,
@@ -27,6 +32,7 @@ import {
 } from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet } from '../../lib/api';
+import { t } from '../../lib/i18n';
 
 interface AppShellProps {
   user: UserProfile;
@@ -109,9 +115,13 @@ export const NAV_ITEMS: Array<{
 export function SplitComposerOrb({
   onAttach,
   showNavOption = true,
+  directDockMode = false,
+  transparent = false,
 }: {
   onAttach?: () => void;
   showNavOption?: boolean;
+  directDockMode?: boolean;
+  transparent?: boolean;
 }) {
   const { composerFocused, setMobileNavExpanded, setBottomDockHidden } = useLayout();
   const [splitOpen, setSplitOpen] = useState(false);
@@ -119,6 +129,38 @@ export function SplitComposerOrb({
   useEffect(() => {
     if (composerFocused) setSplitOpen(false);
   }, [composerFocused]);
+
+  // Direct Bottom-Dock button mode (Used in Live so users tap the Bottom Dock icon directly instead of "+")
+  if (directDockMode) {
+    return (
+      <AnimatePresence initial={false}>
+        {!composerFocused && (
+          <motion.button
+            key="direct-dock-orb"
+            type="button"
+            initial={{ opacity: 0, width: 0, scale: 0.82 }}
+            animate={{ opacity: 1, width: 46, scale: 1 }}
+            exit={{ opacity: 0, width: 0, scale: 0.82 }}
+            transition={{ duration: 0.26, ease: [0.32, 0.72, 0, 1] }}
+            onClick={e => {
+              e.stopPropagation();
+              setBottomDockHidden(false);
+              setMobileNavExpanded(true);
+            }}
+            aria-label="الشريط السفلي"
+            title="الشريط السفلي"
+            className={`md:hidden w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-all ${
+              transparent
+                ? 'bg-black/22 hover:bg-[#14141B]/95 backdrop-blur-md border border-white/[0.18] text-white/85 hover:text-white'
+                : 'bg-[#0B0B0E]/95 backdrop-blur-2xl border border-white/[0.14] text-[#D4D4D8] hover:text-white'
+            }`}
+          >
+            <LayoutGrid className="w-[19px] h-[19px]" strokeWidth={1.9} />
+          </motion.button>
+        )}
+      </AnimatePresence>
+    );
+  }
 
   return (
     <>
@@ -639,153 +681,346 @@ export function AppShell({
         )}
       </AnimatePresence>
 
-      {/* Account Switcher Modal */}
-      {accountOpen && (
-        <div
-          onClick={() => setAccountOpen(false)}
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-end md:items-center justify-center p-4"
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="w-full max-w-[340px] rounded-2xl bg-[#131318] border border-white/[0.12] overflow-hidden text-start"
-          >
-            <div className="px-4 py-3.5 border-b border-white/[0.08] flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenProfile(user.id);
-                  setAccountOpen(false);
-                }}
-                className="flex items-center gap-2.5 min-w-0 text-start cursor-pointer group"
-              >
-                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={36} online={wsOnline} />
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-white group-hover:underline flex items-center gap-1.5 truncate">
-                    <span>{user.displayName}</span>
-                    {user.verified && <VerifiedIcon />}
-                  </div>
-                  <div className="text-xs text-[#7A7A85] font-mono-num">@{user.username}</div>
+      {/* 2026 Full-Screen Mobile Account Hub Page + Refined Desktop Account Sheet */}
+      <AnimatePresence>
+        {accountOpen && (
+          <>
+            {/* MOBILE FULL-SCREEN ACCOUNT HUB PAGE (With Sculpted Top Back Arrow!) */}
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 18 }}
+              transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
+              onClick={e => e.stopPropagation()}
+              className="md:hidden fixed inset-0 z-[65] bg-[#0A0A0C] text-[#F2F2F5] flex flex-col overflow-hidden text-start"
+            >
+              {/* Sculpted Top Navigation Header with Back Arrow Orb */}
+              <div className="px-4 py-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3 shrink-0 bg-[#0A0A0C]/95 backdrop-blur-xl">
+                <div className="flex items-center gap-3">
+                  <motion.button
+                    type="button"
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => setAccountOpen(false)}
+                    aria-label={t(lang, 'back')}
+                    className="w-10 h-10 rounded-full bg-white/[0.07] hover:bg-white/[0.15] border border-white/[0.14] text-white flex items-center justify-center cursor-pointer transition-colors"
+                  >
+                    {lang === 'ar' ? <ArrowRight className="w-[18px] h-[18px]" /> : <ArrowLeft className="w-[18px] h-[18px]" />}
+                  </motion.button>
+                  <span className="text-base font-bold text-white">{t(lang, 'account_hub')}</span>
                 </div>
-              </button>
-            </div>
+                <LmBrandMark size={28} />
+              </div>
 
-            <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenProfile(user.id);
-                  setAccountOpen(false);
-                }}
-                className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <User className="w-3.5 h-3.5 text-[#FBBF24]" />
-                <span>ملفي الشخصي</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAccountOpen(false);
-                  setNotifsOpen(true);
-                }}
-                className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer relative"
-              >
-                <NavBellIcon active={unreadNotifications > 0} className="w-4 h-4" />
-                <span>الإشعارات</span>
-                {unreadNotifications > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[10px] font-mono-num">
-                    {unreadNotifications}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            <div className="px-4 py-2.5 border-b border-white/[0.08] flex items-center gap-2">
-              {onShareApp && (
+              <div className="flex-1 overflow-y-auto px-4 py-5 space-y-6 pb-12">
+                {/* Floating Profile Hero Row */}
                 <button
                   type="button"
                   onClick={() => {
-                    setAccountOpen(false);
-                    onShareApp();
-                  }}
-                  className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                  <span>{lang === 'ar' ? 'مشاركة التطبيق' : 'Share LM'}</span>
-                </button>
-              )}
-              {installPromptEvt && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await installPromptEvt.prompt();
-                    setInstallPromptEvt(null);
+                    onOpenProfile(user.id);
                     setAccountOpen(false);
                   }}
-                  className="flex-1 py-2 rounded-xl bg-white hover:bg-white/90 text-black text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  className="w-full py-2 flex items-center gap-3.5 text-start cursor-pointer group"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{lang === 'ar' ? 'تثبيت LM' : 'Install LM'}</span>
-                </button>
-              )}
-            </div>
-
-            <div className="py-1 border-b border-white/[0.08]">
-              {allUsers.map(u => (
-                <button
-                  key={u.id}
-                  type="button"
-                  onClick={() => {
-                    onSwitchUser(u);
-                    setAccountOpen(false);
-                  }}
-                  className={`w-full px-4 py-2.5 flex items-center justify-between text-xs hover:bg-white/[0.04] cursor-pointer ${
-                    u.id === user.id ? 'text-white font-semibold' : 'text-[#A1A1AA]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={26} />
-                    <span>{u.displayName}</span>
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={58} online={wsOnline} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-base font-bold text-white flex items-center gap-1.5 truncate">
+                      <span>{user.displayName}</span>
+                      {user.verified && <VerifiedIcon />}
+                    </div>
+                    <div className="text-xs text-[#8E8E93] font-mono-num">@{user.username}</div>
+                    <div className="text-[11px] text-[#FBBF24] mt-0.5">{t(lang, 'my_profile')}</div>
                   </div>
-                  {u.id === user.id && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  {lang === 'ar' ? (
+                    <ChevronLeft className="w-4 h-4 text-[#7A7A85]" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-[#7A7A85]" />
+                  )}
                 </button>
-              ))}
+
+                {/* Primary Controls */}
+                <div className="divide-y divide-white/[0.07] border-y border-white/[0.07]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAccountOpen(false);
+                      setNotifsOpen(true);
+                    }}
+                    className="w-full py-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-white/[0.02]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center">
+                        <NavBellIcon active={unreadNotifications > 0} className="w-5 h-5" />
+                      </span>
+                      <span className="text-sm font-medium text-white">{t(lang, 'notifications')}</span>
+                    </div>
+                    {unreadNotifications > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[11px] font-mono-num font-bold">
+                        {unreadNotifications}
+                      </span>
+                    )}
+                  </button>
+
+                  {onShareApp && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountOpen(false);
+                        onShareApp();
+                      }}
+                      className="w-full py-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-white/[0.02]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-9 h-9 rounded-full bg-white/[0.06] text-[#E4E4E7] flex items-center justify-center">
+                          <Share2 className="w-4 h-4" />
+                        </span>
+                        <span className="text-sm font-medium text-white">{t(lang, 'share_app')}</span>
+                      </div>
+                    </button>
+                  )}
+
+                  {installPromptEvt && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await installPromptEvt.prompt();
+                        setInstallPromptEvt(null);
+                        setAccountOpen(false);
+                      }}
+                      className="w-full py-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-white/[0.02]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center">
+                          <Download className="w-4 h-4" />
+                        </span>
+                        <span className="text-sm font-semibold text-white">{t(lang, 'install_app')}</span>
+                      </div>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={onToggleLang}
+                    className="w-full py-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-white/[0.02]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-9 h-9 rounded-full bg-white/[0.06] text-[#34D399] flex items-center justify-center">
+                        <Globe className="w-4 h-4" />
+                      </span>
+                      <span className="text-sm font-medium text-white">{t(lang, 'language')}</span>
+                    </div>
+                    <span className="px-3 py-1 rounded-full bg-white/[0.08] text-xs font-medium text-[#E4E4E7]">
+                      {t(lang, 'switch_lang_label')}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectTab('settings');
+                      setAccountOpen(false);
+                    }}
+                    className="w-full py-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-white/[0.02]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-9 h-9 rounded-full bg-white/[0.06] text-[#FBBF24] flex items-center justify-center">
+                        <SlidersHorizontal className="w-4 h-4" />
+                      </span>
+                      <span className="text-sm font-medium text-white">{t(lang, 'api_hub')}</span>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Accounts Switcher */}
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-[#8E8E93] px-1">{t(lang, 'switch_account')}</div>
+                  <div className="divide-y divide-white/[0.06]">
+                    {allUsers.map(u => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          onSwitchUser(u);
+                          setAccountOpen(false);
+                        }}
+                        className="w-full py-3 flex items-center justify-between gap-3 text-start cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={36} />
+                          <div className="min-w-0">
+                            <div className={`text-sm truncate ${u.id === user.id ? 'text-white font-bold' : 'text-[#C4C4CC]'}`}>
+                              {u.displayName}
+                            </div>
+                            <div className="text-[11px] text-[#7A7A85] font-mono-num">@{u.username}</div>
+                          </div>
+                        </div>
+                        {u.id === user.id && <span className="w-2.5 h-2.5 rounded-full bg-[#34D399]" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sign Out */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAccountOpen(false);
+                    onLogout();
+                  }}
+                  className="w-full py-3 rounded-2xl bg-[#EF4444]/10 border border-[#EF4444]/25 text-sm font-semibold text-[#F87171] flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>{t(lang, 'logout')}</span>
+                </button>
+              </div>
+            </motion.div>
+
+            {/* DESKTOP REFINED ACCOUNT MODAL */}
+            <div className="hidden md:block">
+              <StudioModalOverlay onClose={() => setAccountOpen(false)}>
+                <div>
+                  <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenProfile(user.id);
+                        setAccountOpen(false);
+                      }}
+                      className="flex items-center gap-2.5 min-w-0 text-start cursor-pointer group"
+                    >
+                      <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={38} online={wsOnline} />
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white group-hover:underline flex items-center gap-1.5 truncate">
+                          <span>{user.displayName}</span>
+                          {user.verified && <VerifiedIcon />}
+                        </div>
+                        <div className="text-xs text-[#7A7A85] font-mono-num">@{user.username}</div>
+                      </div>
+                    </button>
+                    <CloseOrbButton onClick={() => setAccountOpen(false)} />
+                  </div>
+
+                  <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenProfile(user.id);
+                        setAccountOpen(false);
+                      }}
+                      className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <User className="w-3.5 h-3.5 text-[#FBBF24]" />
+                      <span>{t(lang, 'my_profile')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountOpen(false);
+                        setNotifsOpen(true);
+                      }}
+                      className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer relative"
+                    >
+                      <NavBellIcon active={unreadNotifications > 0} className="w-4 h-4" />
+                      <span>{t(lang, 'notifications')}</span>
+                      {unreadNotifications > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[10px] font-mono-num">
+                          {unreadNotifications}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="px-4 py-2.5 border-b border-white/[0.08] flex items-center gap-2">
+                    {onShareApp && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAccountOpen(false);
+                          onShareApp();
+                        }}
+                        className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>{t(lang, 'share_app')}</span>
+                      </button>
+                    )}
+                    {installPromptEvt && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await installPromptEvt.prompt();
+                          setInstallPromptEvt(null);
+                          setAccountOpen(false);
+                        }}
+                        className="flex-1 py-2 rounded-xl bg-white hover:bg-white/90 text-black text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>{t(lang, 'install_app')}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="py-1 border-b border-white/[0.08]">
+                    {allUsers.map(u => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          onSwitchUser(u);
+                          setAccountOpen(false);
+                        }}
+                        className={`w-full px-4 py-2.5 flex items-center justify-between text-xs hover:bg-white/[0.04] cursor-pointer ${
+                          u.id === user.id ? 'text-white font-semibold' : 'text-[#A1A1AA]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={26} />
+                          <span>{u.displayName}</span>
+                        </div>
+                        {u.id === user.id && <span className="w-1.5 h-1.5 rounded-full bg-[#34D399]" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="p-2.5 flex items-center justify-between gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectTab('settings');
+                        setAccountOpen(false);
+                      }}
+                      className="flex-1 px-3 py-2 rounded-xl hover:bg-white/[0.05] text-xs text-[#E4E4E7] flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>{t(lang, 'api_hub')}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={onToggleLang}
+                      className="px-3 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-white flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Globe className="w-3.5 h-3.5 text-[#34D399]" />
+                      <span>{lang === 'ar' ? 'English' : 'العربية'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountOpen(false);
+                        onLogout();
+                      }}
+                      title={t(lang, 'logout')}
+                      className="px-3 py-2 rounded-xl hover:bg-white/[0.05] text-xs text-[#EF4444] flex items-center gap-1 cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </StudioModalOverlay>
             </div>
-
-            <div className="p-2 flex items-center justify-between gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectTab('settings');
-                  setAccountOpen(false);
-                }}
-                className="flex-1 px-3 py-2 rounded-xl hover:bg-white/[0.05] text-xs text-[#E4E4E7] flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                <span>API Hub</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onToggleLang}
-                className="px-3 py-2 rounded-xl hover:bg-white/[0.05] text-xs font-mono-num text-[#A1A1AA] hover:text-white cursor-pointer"
-              >
-                {lang === 'ar' ? 'EN' : 'AR'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setAccountOpen(false);
-                  onLogout();
-                }}
-                className="px-3 py-2 rounded-xl hover:bg-white/[0.05] text-xs text-[#EF4444] flex items-center gap-1 cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Search Overlay */}
       {searchOpen && (
@@ -806,13 +1041,7 @@ export function AppShell({
                 placeholder={lang === 'ar' ? 'ابحث...' : 'Search...'}
                 className="flex-1 bg-transparent text-sm text-white placeholder:text-[#585860] outline-none"
               />
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="w-6 h-6 rounded-full flex items-center justify-center text-[#7A7A85] hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <CloseOrbButton size="sm" onClick={() => setSearchOpen(false)} />
             </div>
 
             <div className="max-h-[60vh] overflow-y-auto divide-y divide-white/[0.08]">

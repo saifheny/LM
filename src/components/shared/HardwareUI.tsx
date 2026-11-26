@@ -49,6 +49,7 @@ export function ObsidianComposerPill({
   extraEnd,
   customAction,
   disabled = false,
+  transparent = false,
   onFocus,
   onBlur,
 }: {
@@ -63,11 +64,13 @@ export function ObsidianComposerPill({
   extraEnd?: React.ReactNode;
   customAction?: React.ReactNode;
   disabled?: boolean;
+  transparent?: boolean;
   onFocus?: () => void;
   onBlur?: () => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const [multiline, setMultiline] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   useEffect(() => {
     const el = taRef.current;
@@ -88,12 +91,18 @@ export function ObsidianComposerPill({
     }
   }
 
+  const isGhostTransparent = transparent && !focused && !value.trim();
+
   return (
     <form
       onSubmit={onSubmit}
-      className={`w-full min-h-[50px] rounded-[25px] bg-[#14141A]/95 backdrop-blur-xl border border-white/[0.11] ps-4 pe-1.5 py-1.5 flex gap-2.5 transition-all ${
-        multiline ? 'items-end' : 'items-center'
-      }`}
+      className={`w-full min-h-[50px] rounded-[25px] ps-4 pe-1.5 py-1.5 flex gap-2.5 transition-all duration-200 border ${
+        isGhostTransparent
+          ? 'bg-black/22 backdrop-blur-sm border-white/[0.18]'
+          : transparent
+            ? 'bg-[#14141B]/96 backdrop-blur-2xl border-white/[0.26] shadow-2xl'
+            : 'bg-[#14141A]/95 backdrop-blur-xl border-white/[0.11]'
+      } ${multiline ? 'items-end' : 'items-center'}`}
     >
       {extraStart && <div className="shrink-0 flex items-center">{extraStart}</div>}
 
@@ -103,12 +112,18 @@ export function ObsidianComposerPill({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        onFocus={onFocus}
-        onBlur={onBlur}
+        onFocus={() => {
+          setFocused(true);
+          onFocus?.();
+        }}
+        onBlur={() => {
+          setFocused(false);
+          onBlur?.();
+        }}
         placeholder={placeholder}
-        className={`flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] placeholder:text-[#6C6C76] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] text-start ${
-          multiline ? 'py-1.5' : 'py-0'
-        }`}
+        className={`flex-1 bg-transparent text-[14px] leading-[22px] text-[#F2F2F5] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] text-start ${
+          isGhostTransparent ? 'placeholder:text-white/70' : 'placeholder:text-[#6C6C76]'
+        } ${multiline ? 'py-1.5' : 'py-0'}`}
       />
 
       <div className="flex items-center gap-1.5 shrink-0">

@@ -6,15 +6,19 @@ import type { Swiper as SwiperClass } from 'swiper';
 import 'swiper/css';
 import {
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   Eye,
   Flag,
   Heart,
+  Monitor,
   Volume2,
   VolumeX,
   Pin,
   Radio,
   Share2,
+  Smartphone,
   Square,
 } from 'lucide-react';
 import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
@@ -25,9 +29,10 @@ import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
 import { ReportContentModal, ReportRequest, SensitiveMediaShield } from '../shared/SensitiveShield';
-import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
+import { PublishActionButton } from '../shared/ModalChrome2026';
 import { api, apiGet, apiPost } from '../../lib/api';
 import { RTC_CONFIG, sendWsSignal, subscribeWs } from '../../lib/wsHub';
+import { t } from '../../lib/i18n';
 
 interface LiveViewProps {
   user: UserProfile;
@@ -92,12 +97,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   }, []);
 
   const [pinMode, setPinMode] = useState(false);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [liveInputFocused, setLiveInputFocused] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
 
-  // TikTok Live Tap-to-Like Energy Gauge State (Fills on taps, flies hearts up to arrow meter!)
+  // TikTok Live Tap-to-Like Energy Gauge State (Gradual 50-tap fill, ZERO x2/x6 multiplier badges!)
   const [tapProgress, setTapProgress] = useState(0);
-  const [tapLevel, setTapLevel] = useState(1);
   const [gaugePulse, setGaugePulse] = useState(false);
   const [flyingOrbs, setFlyingOrbs] = useState<FlyingLikeOrb[]>([]);
   const [optimisticLikes, setOptimisticLikes] = useState<Record<string, number>>({});
@@ -112,13 +117,16 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   const commentsScrollRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
 
-  // Go Live Studio Modal & Real Multi-Viewer WebRTC Host State
+  // Full-Screen Go Live Studio & Portrait (9:16) / Landscape (16:9) Orientation State
   const [goLiveOpen, setGoLiveOpen] = useState(false);
   const [goLiveTitle, setGoLiveTitle] = useState('');
   const [goLiveCategory, setGoLiveCategory] = useState('دردشة');
+  const [goLiveOrientation, setGoLiveOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [startingLive, setStartingLive] = useState(false);
   const [hostingRoomId, setHostingRoomId] = useState<string | null>(null);
   const [livePeerCount, setLivePeerCount] = useState(0);
+  const studioPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const studioPreviewStreamRef = useRef<MediaStream | null>(null);
 
   // Remote Viewer WebRTC Live Stream State
   const [viewerConnected, setViewerConnected] = useState(false);
@@ -203,17 +211,64 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     }
   }, [activeRoomId, rooms, activeIndex]);
 
-  // Play only the active slide's background video cleanly
+  // Play only the active slide's background video cleanly (Audio ON by default with safe autoplay fallback!)
   useEffect(() => {
     Object.entries(slideVideoRefs.current).forEach(([rid, el]) => {
       if (!el) return;
       if (rid === activeRoomId) {
-        el.play().catch(() => {});
+        el.muted = muted;
+        const playPromise = el.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {
+            if (!muted) {
+              el.muted = true;
+              setMuted(true);
+              el.play().catch(() => {});
+            }
+          });
+        }
       } else {
         el.pause();
       }
     });
-  }, [activeRoomId, rooms.length]);
+  }, [activeRoomId, rooms.length, muted]);
+
+  // Live Camera Preview inside Full-Screen Go Live Broadcast Studio!
+  useEffect(() => {
+    if (!goLiveOpen) {
+      studioPreviewStreamRef.current?.getTracks().forEach(tr => tr.stop());
+      studioPreviewStreamRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      studioPreviewStreamRef.current?.getTracks().forEach(tr => tr.stop());
+      studioPreviewStreamRef.current = null;
+      if (!navigator.mediaDevices?.getUserMedia) return;
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video:
+            goLiveOrientation === 'landscape'
+              ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+              : { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } },
+          audio: false,
+        });
+        if (cancelled) {
+          s.getTracks().forEach(tr => tr.stop());
+          return;
+        }
+        studioPreviewStreamRef.current = s;
+        if (studioPreviewVideoRef.current) studioPreviewVideoRef.current.srcObject = s;
+      } catch {
+        // camera unavailable
+      }
+    })();
+    return () => {
+      cancelled = true;
+      studioPreviewStreamRef.current?.getTracks().forEach(tr => tr.stop());
+      studioPreviewStreamRef.current = null;
+    };
+  }, [goLiveOpen, goLiveOrientation]);
 
   useEffect(() => {
     if (!lastWsEvent) return;
@@ -561,12 +616,17 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     e.preventDefault();
     if (!goLiveTitle.trim() || startingLive) return;
     setStartingLive(true);
+    studioPreviewStreamRef.current?.getTracks().forEach(tr => tr.stop());
+    studioPreviewStreamRef.current = null;
     try {
       let stream: MediaStream | null = null;
       if (navigator.mediaDevices?.getUserMedia) {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } },
+            video:
+              goLiveOrientation === 'landscape'
+                ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+                : { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } },
             audio: true,
           });
         } catch {
@@ -582,6 +642,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         hostId: user.id,
         title: goLiveTitle.trim(),
         category: goLiveCategory,
+        orientation: goLiveOrientation,
       });
 
       camStreamRef.current = stream;
@@ -598,7 +659,15 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         swiperRef.current?.slideTo(newIdx, 0);
         if (camVideoRef.current && stream) camVideoRef.current.srcObject = stream;
       }, 80);
-      showNotice(stream ? 'أنت الآن على البث المباشر!' : 'تم فتح غرفة البث (الكاميرا غير متاحة على هذا الجهاز)');
+      showNotice(
+        stream
+          ? lang === 'en'
+            ? 'You are LIVE!'
+            : 'أنت الآن على البث المباشر!'
+          : lang === 'en'
+            ? 'Live room opened (camera unavailable)'
+            : 'تم فتح غرفة البث (الكاميرا غير متاحة على هذا الجهاز)'
+      );
     } catch (err) {
       showNotice(err instanceof Error ? err.message : 'تعذر بدء البث المباشر');
     } finally {
@@ -609,7 +678,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   /**
    * TikTok Live Tap-to-Like Engine:
    * Every tap spawns a burst, sends a glowing heart orb flying up into the top Arrow Energy Gauge,
-   * fills the gauge smoothly (leveling up every 15 taps), and boosts the broadcast's real popularity!
+   * fills the gauge gradually (~50 taps per cycle, ZERO x2/x6 multipliers!), and boosts live ranking!
    */
   function triggerStageTapBurst(clientX?: number, clientY?: number) {
     const stageRect = stageRef.current?.getBoundingClientRect();
@@ -642,17 +711,14 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       }, 680);
     }
 
-    // Fill the top TikTok Arrow Energy Gauge (15 taps = 100% Level Up!)
+    // Gradual TikTok Arrow Energy Gauge (50 taps = full cycle, NO x2/x3 multipliers!)
     setTapProgress(prev => {
-      const next = prev + 100 / 15;
-      if (next >= 100) {
-        setTapLevel(lvl => lvl + 1);
-        return 8;
-      }
+      const next = prev + 100 / 50;
+      if (next >= 100) return 6;
       return next;
     });
     setGaugePulse(true);
-    setTimeout(() => setGaugePulse(false), 260);
+    setTimeout(() => setGaugePulse(false), 240);
 
     // Real backend like counter + Live popularity boost!
     if (activeRoom?.id) {
@@ -729,54 +795,81 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           {rooms.map((room, idx) => {
             const isCurrent = idx === activeIndex;
             const isHostingThis = Boolean(hostingRoomId && room.id === hostingRoomId);
+            const isLandscape = room.orientation === 'landscape';
+
+            const mediaNode = isHostingThis ? (
+              camStreamRef.current ? (
+                <video
+                  ref={camVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full scale-x-[-1] ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
+                />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-b from-[#1A0D0E] via-[#0A0A0D] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={86} online />
+                  <div className="text-sm font-bold text-white">{room.title}</div>
+                  <div className="text-xs text-[#FB7185]">
+                    {lang === 'en' ? 'Interactive Live Room' : 'غرفة بث صوتي/تفاعلي مباشر'}
+                  </div>
+                </div>
+              )
+            ) : isCurrent && viewerConnected ? (
+              <video
+                ref={remoteLiveVideoRef}
+                autoPlay
+                playsInline
+                muted={muted}
+                className={`w-full h-full ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
+              />
+            ) : room.videoUrl ? (
+              <video
+                ref={el => {
+                  slideVideoRefs.current[room.id] = el;
+                }}
+                src={room.videoUrl}
+                autoPlay={isCurrent}
+                loop
+                playsInline
+                muted={muted}
+                className={`w-full h-full ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
+              />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-b from-[#170E11] via-[#0B0B0F] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
+                <UserAvatar
+                  initials={room.hostInitials}
+                  avatarUrl={room.hostAvatarUrl}
+                  size={84}
+                  online
+                />
+                <div className="text-sm font-bold text-white">{room.title || (lang === 'en' ? 'Live' : 'بث مباشر')}</div>
+                <div className="text-xs text-[#9E9EA8]">
+                  {isCurrent && viewerConnecting
+                    ? lang === 'en'
+                      ? 'Connecting to host stream...'
+                      : 'جارٍ الاتصال بكاميرا المذيع عبر WebRTC...'
+                    : lang === 'en'
+                      ? 'Waiting for host broadcast'
+                      : 'بانتظار بث الفيديو من المذيع'}
+                </div>
+              </div>
+            );
 
             return (
               <SwiperSlide key={room.id} className="w-full h-full relative bg-black">
-                {isHostingThis ? (
-                  camStreamRef.current ? (
-                    <video
-                      ref={camVideoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover scale-x-[-1]"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-b from-[#1A0D0E] via-[#0A0A0D] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
-                      <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={86} online />
-                      <div className="text-sm font-bold text-white">{room.title}</div>
-                      <div className="text-xs text-[#FB7185]">غرفة بث صوتي/تفاعلي مباشر</div>
-                    </div>
-                  )
-                ) : isCurrent && viewerConnected ? (
-                  <video ref={remoteLiveVideoRef} autoPlay playsInline muted={muted} className="w-full h-full object-cover" />
-                ) : room.videoUrl ? (
-                  <video
-                    ref={el => {
-                      slideVideoRefs.current[room.id] = el;
-                    }}
-                    src={room.videoUrl}
-                    autoPlay={isCurrent}
-                    loop
-                    playsInline
-                    muted={muted}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-b from-[#170E11] via-[#0B0B0F] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
-                    <UserAvatar
-                      initials={room.hostInitials}
-                      avatarUrl={room.hostAvatarUrl}
-                      size={84}
-                      online
-                    />
-                    <div className="text-sm font-bold text-white">{room.title || 'بث مباشر'}</div>
-                    <div className="text-xs text-[#9E9EA8]">
-                      {isCurrent && viewerConnecting
-                        ? 'جارٍ الاتصال بكاميرا المذيع عبر WebRTC...'
-                        : 'بانتظار بث الفيديو من المذيع'}
+                {isLandscape ? (
+                  /* Authentic TikTok Landscape (16:9) Live Theater Frame — Centered Widescreen Between Top Header & Bottom Comments! */
+                  <div className="w-full h-full bg-[#060608] flex flex-col items-center justify-center pb-36 pt-20">
+                    <div className="relative w-full aspect-video bg-black border-y border-white/[0.1] overflow-hidden shadow-2xl">
+                      {mediaNode}
+                      <span className="pointer-events-none absolute top-2.5 end-2.5 px-2 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-[9.5px] font-mono-num text-white/85">
+                        16:9
+                      </span>
                     </div>
                   </div>
+                ) : (
+                  mediaNode
                 )}
 
                 {/* Telegram-Style Animated Particle Sensitive Blur (z-10 so z-20 Comments & Controls stay interactive!) */}
@@ -866,11 +959,6 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   <Heart className="w-3 h-3 text-[#FF2D55] fill-current" />
                   <span>{formatCompact(displayedLikes)}</span>
                 </span>
-                {tapLevel > 1 && (
-                  <span className="relative z-10 ms-auto px-1.5 py-0.2 rounded-full bg-[#F59E0B]/25 border border-[#FBBF24]/45 text-[9.5px] font-mono-num font-bold text-[#FDE68A]">
-                    x{tapLevel}
-                  </span>
-                )}
               </motion.div>
             </div>
           )}
@@ -893,21 +981,21 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
               <button
                 type="button"
                 onClick={() => stopHostingBroadcast(true)}
-                title="إنهاء البث"
+                title={t(lang, 'end_live')}
                 className="h-8 px-3 rounded-full bg-[#EF4444] hover:bg-[#DC2626] text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-lg"
               >
                 <Square className="w-3 h-3 fill-current" />
-                <span>إنهاء</span>
+                <span>{t(lang, 'end_live')}</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => setGoLiveOpen(true)}
-                title="ابدأ بثًا مباشرًا"
+                title={t(lang, 'go_live')}
                 className="h-8 px-3 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-lg hover:opacity-95 transition-opacity"
               >
                 <Radio className="w-3.5 h-3.5" />
-                <span>ابدأ بثًا</span>
+                <span>{t(lang, 'go_live')}</span>
               </button>
             )}
           </div>
@@ -1013,17 +1101,17 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             <Share2 className="w-4 h-4" />
           </button>
 
-          {activeRoom && (
+          {activeRoom && activeRoom.hostId !== user.id && (
             <button
               type="button"
               onClick={() =>
                 setReportRequest({
                   targetType: 'live',
                   targetId: activeRoom.id,
-                  label: 'هذا البث المباشر',
+                  label: lang === 'en' ? 'this live broadcast' : 'هذا البث المباشر',
                 })
               }
-              title="إبلاغ عن محتوى حساس"
+              title={t(lang, 'report')}
               className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white/85 hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
             >
               <Flag className="w-4 h-4" />
@@ -1037,21 +1125,37 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         )}
 
-        {/* Bottom Floating Composer + Split Orb */}
+        {/* Transparent TikTok Bottom Comment Bar & Direct Bottom Dock Trigger (Opaque ONLY when Focused/Typing!) */}
         {!mobileNavExpanded && (
           <div
             onClick={e => e.stopPropagation()}
             className="absolute bottom-3.5 inset-x-3.5 z-20 flex items-end gap-2"
           >
-            <SplitComposerOrb showNavOption />
+            <SplitComposerOrb
+              directDockMode
+              transparent={!liveInputFocused && !commentText.trim()}
+            />
             <div className="flex-1 min-w-0">
               <ObsidianComposerPill
+                transparent
                 value={commentText}
                 onChange={setCommentText}
                 onSubmit={handleSendComment}
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
-                placeholder={pinMode && isOwnerOfActiveRoom ? 'تعليق مثبت...' : lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
+                onFocus={() => {
+                  setLiveInputFocused(true);
+                  setComposerFocused(true);
+                }}
+                onBlur={() => {
+                  setLiveInputFocused(false);
+                  setTimeout(() => setComposerFocused(false), 140);
+                }}
+                placeholder={
+                  pinMode && isOwnerOfActiveRoom
+                    ? lang === 'en'
+                      ? 'Pinned comment...'
+                      : 'تعليق مثبت...'
+                    : t(lang, 'add_comment')
+                }
                 disabled={!commentText.trim()}
               />
             </div>
@@ -1059,44 +1163,117 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         )}
       </div>
 
-      {/* 2026 Go Live Studio Modal — Create Custom Live Broadcast Room */}
+      {/* FULL-SCREEN 2026 LIVE BROADCAST STUDIO — Portrait (9:16) & Landscape (16:9) Camera Preview! */}
       <AnimatePresence>
         {goLiveOpen && (
-          <StudioModalOverlay onClose={() => setGoLiveOpen(false)}>
-            <form onSubmit={startCustomLiveBroadcast} className="p-5 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
-                <div className="flex items-center gap-2.5 text-sm font-bold text-white">
-                  <span className="w-8 h-8 rounded-2xl bg-[#EF4444]/15 border border-[#EF4444]/35 text-[#EF4444] flex items-center justify-center">
-                    <Radio className="w-4 h-4" />
-                  </span>
-                  <span>إنشاء بث مباشر جديد</span>
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 18 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[72] bg-[#08080B] text-white flex flex-col overflow-hidden"
+          >
+            {/* Top Bar with Sculpted Back Arrow */}
+            <div className="px-4 py-4 border-b border-white/[0.08] flex items-center justify-between max-w-[680px] w-full mx-auto">
+              <button
+                type="button"
+                onClick={() => setGoLiveOpen(false)}
+                className="w-10 h-10 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-white flex items-center justify-center cursor-pointer transition-colors"
+              >
+                {lang === 'en' ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444] animate-pulse" />
+                <span className="text-sm font-bold text-white">{t(lang, 'live_studio_title')}</span>
+              </div>
+              <div className="w-10" />
+            </div>
+
+            <form
+              onSubmit={startCustomLiveBroadcast}
+              className="flex-1 overflow-y-auto px-5 py-5 max-w-[680px] w-full mx-auto space-y-5 pb-12"
+            >
+              {/* Adaptive Live Camera Framing Preview (Portrait 9:16 vs Landscape 16:9!) */}
+              <div className="flex flex-col items-center gap-3">
+                <div
+                  className={`relative rounded-[24px] overflow-hidden bg-[#111116] border border-white/[0.14] shadow-2xl transition-all duration-300 flex items-center justify-center ${
+                    goLiveOrientation === 'landscape'
+                      ? 'w-full aspect-video max-h-[260px]'
+                      : 'w-[180px] sm:w-[210px] aspect-[9/16] max-h-[300px]'
+                  }`}
+                >
+                  <video
+                    ref={studioPreviewVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
+                  <div className="pointer-events-none absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-[10px] font-mono-num text-white">
+                    {goLiveOrientation === 'landscape' ? '16:9 · HD' : '9:16 · LIVE'}
+                  </div>
                 </div>
-                <CloseOrbButton onClick={() => setGoLiveOpen(false)} />
+
+                {/* Orientation Switcher: Portrait (9:16) vs Landscape (16:9 بالعرض) */}
+                <div className="inline-flex items-center gap-1.5 p-1 rounded-full bg-[#121218] border border-white/[0.1]">
+                  <button
+                    type="button"
+                    onClick={() => setGoLiveOrientation('portrait')}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      goLiveOrientation === 'portrait'
+                        ? 'bg-white text-black'
+                        : 'text-[#A1A1AA] hover:text-white'
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>{t(lang, 'portrait_mode')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGoLiveOrientation('landscape')}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      goLiveOrientation === 'landscape'
+                        ? 'bg-white text-black'
+                        : 'text-[#A1A1AA] hover:text-white'
+                    }`}
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                    <span>{t(lang, 'landscape_mode')}</span>
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-[#A1A1AA] block">عنوان البث</label>
+                <label className="text-xs font-semibold text-[#C4C4CC] block">
+                  {lang === 'en' ? 'Broadcast Title' : 'عنوان البث المباشر'}
+                </label>
                 <input
                   autoFocus
                   value={goLiveTitle}
                   onChange={e => setGoLiveTitle(e.target.value)}
-                  placeholder="مثال: جلسة نقاش مفتوحة حول الذكاء الاصطناعي..."
-                  className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#EF4444]/50 px-3.5 text-xs text-white placeholder:text-[#585860] outline-none transition-colors"
+                  placeholder={
+                    lang === 'en'
+                      ? 'e.g. Live tech Q&A and open chat...'
+                      : 'مثال: جلسة نقاش مفتوحة حول الذكاء الاصطناعي...'
+                  }
+                  className="w-full h-12 rounded-2xl bg-[#111116] border border-white/[0.12] focus:border-[#EF4444]/60 px-4 text-sm text-white placeholder:text-[#585860] outline-none transition-colors"
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-[#A1A1AA] block">التصنيف</label>
-                <div className="flex flex-wrap gap-1.5">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-[#C4C4CC] block">
+                  {lang === 'en' ? 'Category' : 'التصنيف'}
+                </label>
+                <div className="flex flex-wrap gap-2">
                   {LIVE_CATEGORIES.map(cat => (
                     <button
                       key={cat}
                       type="button"
                       onClick={() => setGoLiveCategory(cat)}
-                      className={`px-3 py-1.5 rounded-full text-xs cursor-pointer transition-colors ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs cursor-pointer transition-colors ${
                         goLiveCategory === cat
                           ? 'bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white font-semibold'
-                          : 'bg-white/[0.05] border border-white/[0.09] text-[#A1A1AA] hover:text-white'
+                          : 'bg-white/[0.06] border border-white/[0.1] text-[#A1A1AA] hover:text-white'
                       }`}
                     >
                       {cat}
@@ -1105,37 +1282,34 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 </div>
               </div>
 
-              <p className="text-[11px] text-[#8E8E93] leading-relaxed">
-                سيتم بث الكاميرا والميكروفون مباشرة لأي مستخدم ينضم لغرفتك عبر WebRTC لحظيًا، ويمكنك تثبيت التعليقات وإنهاء البث في أي وقت.
-              </p>
-
-              <div className="flex items-center justify-end gap-2 pt-1">
+              <div className="pt-2 flex items-center justify-end gap-2.5">
                 <button
                   type="button"
                   onClick={() => setGoLiveOpen(false)}
-                  className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer transition-colors"
+                  className="h-11 px-5 rounded-full bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-[#D4D4D8] hover:text-white cursor-pointer transition-colors"
                 >
-                  إلغاء
+                  {t(lang, 'cancel')}
                 </button>
                 <PublishActionButton
                   type="submit"
                   variant="live"
                   loading={startingLive}
                   disabled={!goLiveTitle.trim()}
-                  label="بدء البث الآن"
-                  loadingLabel="جارٍ التشغيل..."
-                  icon={<Radio className="w-3.5 h-3.5" />}
+                  label={t(lang, 'start_broadcast_now')}
+                  loadingLabel={lang === 'en' ? 'Starting...' : 'جارٍ التشغيل...'}
+                  icon={<Radio className="w-4 h-4" />}
                 />
               </div>
             </form>
-          </StudioModalOverlay>
+          </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Universal Sensitive Content Reporting Modal */}
+      {/* Universal Discreet Content Reporting Sheet/Modal */}
       <ReportContentModal
         request={reportRequest}
         reporterId={user.id}
+        lang={lang}
         onClose={() => setReportRequest(null)}
         onReported={res => {
           if (res.targetType === 'live') {

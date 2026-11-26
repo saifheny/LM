@@ -355,9 +355,41 @@ export function initDatabase() {
       created_at TEXT DEFAULT (datetime('now')),
       UNIQUE(story_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS post_reposts (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(post_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_audio_tracks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      duration_sec INTEGER DEFAULT 15,
+      kind TEXT DEFAULT 'upload',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS call_logs (
+      id TEXT PRIMARY KEY,
+      room_code TEXT UNIQUE NOT NULL,
+      conv_id TEXT,
+      host_id TEXT NOT NULL,
+      peer_id TEXT,
+      title TEXT NOT NULL,
+      call_scope TEXT DEFAULT 'dm',
+      join_mode TEXT DEFAULT 'open',
+      invited_json TEXT DEFAULT '[]',
+      status TEXT DEFAULT 'active',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
-  // Safe non-destructive migrations for V15/V19/V20 columns on existing databases
+  // Safe non-destructive migrations for V15/V19/V20/V21 columns on existing databases
   try {
     db.exec('ALTER TABLE video_comments ADD COLUMN is_edited INTEGER DEFAULT 0;');
   } catch {
@@ -379,7 +411,17 @@ export function initDatabase() {
     // column already exists
   }
   try {
+    db.exec("ALTER TABLE live_rooms ADD COLUMN orientation TEXT DEFAULT 'portrait';");
+  } catch {
+    // column already exists
+  }
+  try {
     db.exec('ALTER TABLE ai_messages ADD COLUMN attachment_url TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE conversations ADD COLUMN max_members INTEGER DEFAULT 1000;');
   } catch {
     // column already exists
   }

@@ -524,15 +524,30 @@ app.get('/api/users/:id/profile', (req, res) => {
     : false;
 
   const postRows = db.prepare(`
-    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified, 0 as is_repost, p.rowid as sort_ord
     FROM posts p JOIN users u ON p.user_id = u.id
-    WHERE p.user_id = ? ORDER BY p.rowid DESC
-  `).all(targetId) as Array<Record<string, unknown>>;
+    WHERE p.user_id = ?
+    UNION ALL
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified, 1 as is_repost, (pr.rowid + 1000000) as sort_ord
+    FROM post_reposts pr
+    JOIN posts p ON pr.post_id = p.id
+    JOIN users u ON p.user_id = u.id
+    WHERE pr.user_id = ? AND p.user_id != ?
+    ORDER BY sort_ord DESC
+  `).all(targetId, targetId, targetId) as Array<Record<string, unknown>>;
+
+  const viewerRepostSet = new Set(
+    (viewerId
+      ? (db.prepare('SELECT post_id FROM post_reposts WHERE user_id = ?').all(viewerId) as Array<{ post_id: string }>)
+      : []
+    ).map(r => r.post_id)
+  );
 
   const posts = postRows.map(r => {
     let mediaUrls: string[] = [];
     try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
     if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    const isRepost = Number(r.is_repost || 0) === 1;
     return {
       id: r.id,
       userId: r.user_id,
@@ -546,6 +561,8 @@ app.get('/api/users/:id/profile', (req, res) => {
       content: r.content,
       mediaUrl: r.media_url,
       mediaUrls,
+      musicUrl: r.music_url ? String(r.music_url) : null,
+      musicTitle: r.music_title ? String(r.music_title) : null,
       location: r.location || 'القاهرة',
       poll: null,
       score: Number(r.score ?? r.likes_count ?? 0),
@@ -556,6 +573,10 @@ app.get('/api/users/:id/profile', (req, res) => {
       commentsCount: Number(r.comments_count || 0),
       sharesCount: Number(r.shares_count || 0),
       likedByMe: false,
+      repostedByMe: viewerRepostSet.has(String(r.id)),
+      repostedBy: isRepost
+        ? { userId: user.id, displayName: user.displayName, username: user.username }
+        : null,
       isEdited: Boolean(r.is_edited),
       createdAt: r.created_at,
     };
@@ -846,8 +867,98 @@ app.get('/api/search', (req, res) => {
 // ============================================================
 // LICENSED ROYALTY-FREE MUSIC, AI RECOMMENDATIONS, REPORTS & UNIFIED HASHTAGS
 // ============================================================
-app.get('/api/music/library', (_req, res) => {
-  res.json({ ok: true, tracks: LICENSED_MUSIC_LIBRARY });
+app.get('/api/music/library', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const userRows = (
+    userId
+      ? db.prepare(`
+          SELECT t.*, u.display_name
+          FROM user_audio_tracks t LEFT JOIN users u ON t.user_id = u.id
+          WHERE t.user_id = ?
+          ORDER BY t.rowid DESC LIMIT 40
+        `).all(userId)
+      : []
+  ) as Array<Record<string, unknown>>;
+
+  const userTracks = userRows.map(r => ({
+    id: String(r.id),
+    title: String(r.title),
+    artist: `${String(r.display_name || 'مستخدم')} · LM`,
+    mood: String(r.kind) === 'voice' ? 'صوتي' : 'مرفوعاتي',
+    durationSec: Number(r.duration_sec || 15),
+    license: 'LM Audio',
+    accent: String(r.kind) === 'voice' ? '#FB7185' : '#34D399',
+    isUserTrack: true,
+    kind: (String(r.kind) === 'voice' ? 'voice' : 'upload') as 'voice' | 'upload',
+    url: String(r.url),
+  }));
+
+  const studioTracks = LICENSED_MUSIC_LIBRARY.map(t => ({
+    ...t,
+    isUserTrack: false,
+    kind: 'studio' as const,
+  }));
+
+  res.json({ ok: true, userTracks, tracks: [...userTracks, ...studioTracks] });
+});
+
+app.post('/api/music/user-tracks', (req, res) => {
+  const { userId, url, title, durationSec, kind } = req.body as {
+    userId?: string;
+    url?: string;
+    title?: string;
+    durationSec?: number;
+    kind?: 'upload' | 'voice';
+  };
+  if (!userId || !url) return res.status(400).json({ ok: false, error: 'بيانات المقطع الصوتي غير مكتملة.' });
+  const u = getUserOrNull(userId);
+  if (!u) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  const trackKind = kind === 'voice' ? 'voice' : 'upload';
+  const dur = Math.max(1, Math.min(trackKind === 'voice' ? 60 : 300, Math.round(Number(durationSec || 15))));
+  if (trackKind === 'voice' && Number(durationSec || 0) > 61) {
+    return res.status(400).json({ ok: false, error: 'الحد الأقصى للتسجيل الصوتي هو 60 ثانية (دقيقة واحدة).' });
+  }
+
+  // Always brand user voice/uploads cleanly with user name + LM signature!
+  const cleanCustom = (title || '').trim();
+  const brandedTitle =
+    trackKind === 'voice'
+      ? `${u.displayName} · LM`
+      : cleanCustom
+        ? `${cleanCustom.slice(0, 38)} · ${u.displayName} · LM`
+        : `${u.displayName} · LM`;
+
+  const id = `utrk_${uuid().slice(0, 8)}`;
+  db.prepare(`
+    INSERT INTO user_audio_tracks (id, user_id, title, url, duration_sec, kind)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, userId, brandedTitle, url, dur, trackKind);
+
+  res.json({
+    ok: true,
+    track: {
+      id,
+      title: brandedTitle,
+      artist: `${u.displayName} · LM`,
+      mood: trackKind === 'voice' ? 'صوتي' : 'مرفوعاتي',
+      durationSec: dur,
+      license: 'LM Audio',
+      accent: trackKind === 'voice' ? '#FB7185' : '#34D399',
+      isUserTrack: true,
+      kind: trackKind,
+      url,
+    },
+  });
+});
+
+app.delete('/api/music/user-tracks/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const row = db.prepare('SELECT user_id FROM user_audio_tracks WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false });
+  db.prepare('DELETE FROM user_audio_tracks WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/recommendations/profile', (req, res) => {
@@ -869,6 +980,20 @@ app.post('/api/reports', (req, res) => {
   };
   if (!targetType || !targetId || !reporterId) {
     return res.status(400).json({ ok: false, error: 'بيانات الإبلاغ غير مكتملة.' });
+  }
+  // Never allow reporting your own content!
+  const ownerRow =
+    targetType === 'post'
+      ? (db.prepare('SELECT user_id as owner_id FROM posts WHERE id = ?').get(targetId) as { owner_id?: string } | undefined)
+      : targetType === 'post_comment'
+        ? (db.prepare('SELECT user_id as owner_id FROM post_comments WHERE id = ?').get(targetId) as { owner_id?: string } | undefined)
+        : targetType === 'video'
+          ? (db.prepare('SELECT user_id as owner_id FROM short_videos WHERE id = ?').get(targetId) as { owner_id?: string } | undefined)
+          : targetType === 'video_comment'
+            ? (db.prepare('SELECT user_id as owner_id FROM video_comments WHERE id = ?').get(targetId) as { owner_id?: string } | undefined)
+            : (db.prepare('SELECT host_id as owner_id FROM live_rooms WHERE id = ?').get(targetId) as { owner_id?: string } | undefined);
+  if (ownerRow?.owner_id && ownerRow.owner_id === reporterId) {
+    return res.status(400).json({ ok: false, error: 'لا يمكنك الإبلاغ عن المحتوى الخاص بك.' });
   }
   const cleanReason = (reason || 'sensitive').trim();
   db.prepare(`
@@ -1267,6 +1392,28 @@ app.get('/api/posts', (req, res) => {
 
   const postReports = getReportCountsMap('post');
   const storyUsers = getActiveStoryUserSet();
+  const myRepostSet = new Set(
+    (viewerId
+      ? (db.prepare('SELECT post_id FROM post_reposts WHERE user_id = ?').all(viewerId) as Array<{ post_id: string }>)
+      : []
+    ).map(r => r.post_id)
+  );
+  // Latest reposter per post (preferring viewer or someone the viewer follows) for X-style attribution
+  const latestRepostMap = new Map<string, { userId: string; displayName: string; username: string }>();
+  const allReposts = db.prepare(`
+    SELECT pr.post_id, pr.user_id, u.display_name, u.username
+    FROM post_reposts pr JOIN users u ON pr.user_id = u.id
+    ORDER BY pr.rowid DESC
+  `).all() as Array<{ post_id: string; user_id: string; display_name: string; username: string }>;
+  for (const rp of allReposts) {
+    if (!latestRepostMap.has(rp.post_id) || rp.user_id === viewerId) {
+      latestRepostMap.set(rp.post_id, {
+        userId: rp.user_id,
+        displayName: rp.display_name,
+        username: rp.username,
+      });
+    }
+  }
 
   const rawPosts = rows.map((r, idx) => {
     let mediaUrls: string[] = [];
@@ -1285,6 +1432,7 @@ app.get('/api/posts', (req, res) => {
 
     const rCnt = postReports.get(String(r.id)) || 0;
     const isSensitive = rCnt >= SENSITIVE_REPORT_THRESHOLD;
+    const reposter = latestRepostMap.get(String(r.id)) || null;
 
     return {
       id: String(r.id),
@@ -1313,6 +1461,8 @@ app.get('/api/posts', (req, res) => {
       sharesCount: Number(r.shares_count || 0),
       likedByMe: likedSet.has(String(r.id)) || myReactionMap.has(String(r.id)),
       savedByMe: savedSet.has(String(r.id)),
+      repostedByMe: myRepostSet.has(String(r.id)),
+      repostedBy: reposter && reposter.userId !== String(r.user_id) ? reposter : null,
       isEdited: Boolean(r.is_edited),
       reportsCount: rCnt,
       isSensitive,
@@ -1559,9 +1709,60 @@ app.post('/api/posts/:id/poll-vote', (req, res) => {
 });
 
 app.post('/api/posts/:id/repost', (req, res) => {
-  db.prepare('UPDATE posts SET shares_count = shares_count + 1 WHERE id = ?').run(req.params.id);
-  const row = db.prepare('SELECT shares_count FROM posts WHERE id = ?').get(req.params.id) as { shares_count: number } | undefined;
-  res.json({ ok: true, sharesCount: Number(row?.shares_count || 0) });
+  const { userId } = req.body as { userId?: string };
+  const postId = req.params.id;
+  if (!userId) return res.status(400).json({ ok: false, error: 'المستخدم مطلوب.' });
+
+  const postRow = db.prepare('SELECT id, user_id, content, shares_count FROM posts WHERE id = ?').get(postId) as
+    | { id: string; user_id: string; content: string; shares_count: number }
+    | undefined;
+  if (!postRow) return res.status(404).json({ ok: false, error: 'المنشور غير موجود.' });
+
+  const existing = db.prepare('SELECT id FROM post_reposts WHERE post_id = ? AND user_id = ?').get(postId, userId) as
+    | { id: string }
+    | undefined;
+
+  let reposted = false;
+  if (existing) {
+    db.prepare('DELETE FROM post_reposts WHERE id = ?').run(existing.id);
+    db.prepare('UPDATE posts SET shares_count = MAX(0, shares_count - 1) WHERE id = ?').run(postId);
+    reposted = false;
+  } else {
+    db.prepare('INSERT INTO post_reposts (id, post_id, user_id) VALUES (?, ?, ?)').run(
+      `rp_${uuid().slice(0, 8)}`,
+      postId,
+      userId
+    );
+    db.prepare('UPDATE posts SET shares_count = shares_count + 1 WHERE id = ?').run(postId);
+    reposted = true;
+    recordUserInteraction({
+      userId,
+      targetType: 'post',
+      targetId: postId,
+      authorId: postRow.user_id,
+      text: postRow.content || '',
+      action: 'share',
+      weight: 5,
+    });
+    createNotification({
+      userId: postRow.user_id,
+      actorId: userId,
+      type: 'react',
+      text: 'أعاد نشر منشورك على حسابه',
+      refTab: 'social',
+      refId: postId,
+    });
+  }
+
+  const updated = db.prepare('SELECT shares_count FROM posts WHERE id = ?').get(postId) as { shares_count: number } | undefined;
+  const actor = getUserOrNull(userId);
+  broadcast('social:new_post', { id: postId, reposted });
+  res.json({
+    ok: true,
+    reposted,
+    sharesCount: Number(updated?.shares_count || 0),
+    repostedBy: reposted && actor ? { userId: actor.id, displayName: actor.displayName, username: actor.username } : null,
+  });
 });
 
 app.get('/api/posts/:id/comments', (req, res) => {
@@ -2113,6 +2314,7 @@ app.get('/api/conversations', (req, res) => {
       unreadCount: Number(c.unread_count || 0),
       isEncrypted: Boolean(c.is_encrypted),
       memberCount: Number(c.member_count),
+      maxMembers: Number(c.max_members || (c.type === 'community' ? 100000 : c.type === 'group' ? 1000 : 2)),
       aiEnabled: Boolean(c.ai_enabled),
       creatorId: String(c.creator_id || 'u_youssef'),
       peerUserId,
@@ -2150,51 +2352,247 @@ app.post('/api/conversations/dm', (req, res) => {
 });
 
 app.post('/api/conversations', (req, res) => {
-  const { title, type, description, creatorId, aiEnabled } = req.body as {
+  const { title, type, description, creatorId, aiEnabled, avatarUrl, memberCount } = req.body as {
     title: string;
     type?: 'dm' | 'group' | 'community';
     description?: string;
     creatorId?: string;
     aiEnabled?: boolean;
+    avatarUrl?: string | null;
+    memberCount?: number;
   };
   if (!title?.trim()) return res.status(400).json({ ok: false, error: 'اسم المحادثة مطلوب.' });
   const id = `c_${uuid().slice(0, 8)}`;
   const convType = type || 'group';
   const folder = convType === 'community' ? 'channels' : convType === 'group' ? 'groups' : 'personal';
+  const maxMembers = convType === 'community' ? 100000 : convType === 'group' ? 1000 : 2;
+  const initCount = Math.min(maxMembers, Math.max(1, Number(memberCount || (convType === 'community' ? 1 : 2))));
   db.prepare(`
-    INSERT INTO conversations (id, type, folder, title, description, avatar_color, is_encrypted, member_count, ai_enabled, creator_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO conversations (id, type, folder, title, description, avatar_color, avatar_url, is_encrypted, member_count, max_members, ai_enabled, creator_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     convType,
     folder,
     title.trim(),
-    description || 'مساحة جديدة',
+    (description || '').trim() || (convType === 'community' ? 'مجتمع مفتوح حتى 100,000 عضو' : 'مجموعة حتى 1,000 عضو'),
     '#27272A',
+    avatarUrl || null,
     1,
-    convType === 'community' ? 120 : 5,
+    initCount,
+    maxMembers,
     convType !== 'dm' && aiEnabled ? 1 : 0,
     creatorId || 'u_youssef'
   );
-  res.json({ ok: true, id });
+  broadcast('chat:message', { conversationId: id, created: true });
+  res.json({ ok: true, id, maxMembers });
+});
+
+app.post('/api/conversations/:id/pin', (req, res) => {
+  const row = db.prepare('SELECT id, is_pinned FROM conversations WHERE id = ?').get(req.params.id) as
+    | { id: string; is_pinned: number }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
+  const nextPinned = row.is_pinned ? 0 : 1;
+  db.prepare('UPDATE conversations SET is_pinned = ? WHERE id = ?').run(nextPinned, req.params.id);
+  broadcast('chat:message', { conversationId: req.params.id, isPinned: Boolean(nextPinned) });
+  res.json({ ok: true, isPinned: Boolean(nextPinned) });
+});
+
+app.patch('/api/conversations/:id', (req, res) => {
+  const { userId, title, description, avatarUrl } = req.body as {
+    userId?: string;
+    title?: string;
+    description?: string;
+    avatarUrl?: string | null;
+  };
+  const conv = db.prepare('SELECT id, type, creator_id, title, description, avatar_url FROM conversations WHERE id = ?').get(req.params.id) as
+    | { id: string; type: string; creator_id?: string; title: string; description?: string; avatar_url?: string | null }
+    | undefined;
+  if (!conv) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
+  if (conv.type !== 'dm' && userId && conv.creator_id && conv.creator_id !== userId) {
+    return res.status(403).json({ ok: false, error: 'منشئ المجموعة فقط يمكنه تعديل بياناتها.' });
+  }
+  const nextTitle = (title ?? conv.title).trim() || conv.title;
+  const nextDesc = (description ?? conv.description ?? '').trim();
+  const nextAvatar = avatarUrl !== undefined ? avatarUrl : (conv.avatar_url ?? null);
+  db.prepare('UPDATE conversations SET title = ?, description = ?, avatar_url = ? WHERE id = ?').run(
+    nextTitle,
+    nextDesc,
+    nextAvatar,
+    req.params.id
+  );
+  broadcast('chat:message', { conversationId: req.params.id, updated: true });
+  res.json({ ok: true });
+});
+
+app.delete('/api/conversations/:id/messages', (req, res) => {
+  const conv = db.prepare('SELECT id FROM conversations WHERE id = ?').get(req.params.id);
+  if (!conv) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
+  db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(req.params.id);
+  broadcast('chat:message', { conversationId: req.params.id, cleared: true });
+  res.json({ ok: true });
+});
+
+app.delete('/api/conversations/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const conv = db.prepare('SELECT id, type, creator_id FROM conversations WHERE id = ?').get(req.params.id) as
+    | { id: string; type: string; creator_id?: string }
+    | undefined;
+  if (!conv) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
+  if (conv.type !== 'dm' && userId && conv.creator_id && conv.creator_id !== userId) {
+    return res.status(403).json({ ok: false, error: 'منشئ المجموعة فقط يمكنه حذفها بالكامل.' });
+  }
+  db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM conversations WHERE id = ?').run(req.params.id);
+  broadcast('chat:message', { conversationId: req.params.id, deletedConv: true });
+  res.json({ ok: true });
 });
 
 app.post('/api/conversations/:id/ai-mode', (req, res) => {
   const { userId, aiEnabled } = req.body as { userId?: string; aiEnabled?: boolean };
-  const conv = db.prepare('SELECT id, type, creator_id FROM conversations WHERE id = ?').get(req.params.id) as
-    | { id: string; type: string; creator_id?: string }
+  const conv = db.prepare('SELECT id, type, creator_id, ai_enabled FROM conversations WHERE id = ?').get(req.params.id) as
+    | { id: string; type: string; creator_id?: string; ai_enabled?: number }
     | undefined;
   if (!conv) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
   if (conv.type === 'dm') {
     return res.status(403).json({ ok: false, error: 'وضع العضو التلقائي متاح فقط للمجموعات والمجتمعات.' });
   }
   if (userId && conv.creator_id && conv.creator_id !== userId) {
-    return res.status(403).json({ ok: false, error: 'منشئ المجموعة فقط يمكنه تفعيل أو تعطيل AI كعضو أساسي.' });
+    return res.status(403).json({ ok: false, error: 'منشئ المجموعة فقط يمكنه تفعيل AI كعضو أساسي.' });
+  }
+  // One-time permanent activation rule: once enabled, it stays enabled permanently!
+  if (conv.ai_enabled && !aiEnabled) {
+    return res.status(400).json({ ok: false, error: 'تم تفعيل LM AI كعضو دائم في هذه المجموعة ولا يمكن تعطيله.' });
   }
   const nextVal = aiEnabled ? 1 : 0;
   db.prepare('UPDATE conversations SET ai_enabled = ? WHERE id = ?').run(nextVal, req.params.id);
   broadcast('chat:message', { conversationId: req.params.id, aiEnabled: Boolean(nextVal) });
   res.json({ ok: true, aiEnabled: Boolean(nextVal) });
+});
+
+// ============================================================
+// VOICE CALLS LOGS & SHAREABLE VOICE CALL ROOMS (Voice ONLY!)
+// ============================================================
+function mapCallRow(r: Record<string, unknown>) {
+  let invitedUserIds: string[] = [];
+  try { invitedUserIds = JSON.parse(String(r.invited_json || '[]')); } catch { invitedUserIds = []; }
+  return {
+    id: String(r.id),
+    roomCode: String(r.room_code),
+    convId: r.conv_id ? String(r.conv_id) : null,
+    hostId: String(r.host_id),
+    hostName: String(r.host_name || 'مستخدم'),
+    hostAvatarUrl: r.host_avatar ? String(r.host_avatar) : null,
+    hostInitials: String(r.host_initials || 'LM'),
+    peerId: r.peer_id ? String(r.peer_id) : null,
+    peerName: r.peer_name ? String(r.peer_name) : null,
+    peerAvatarUrl: r.peer_avatar ? String(r.peer_avatar) : null,
+    title: String(r.title || 'مكالمة صوتية'),
+    callScope: (String(r.call_scope || 'dm') as 'dm' | 'group' | 'community'),
+    joinMode: (String(r.join_mode || 'open') as 'open' | 'approval' | 'invited'),
+    invitedUserIds,
+    status: (String(r.status || 'ended') as 'active' | 'ended' | 'missed'),
+    createdAt: String(r.created_at || 'الآن'),
+  };
+}
+
+app.get('/api/calls', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const rows = db.prepare(`
+    SELECT c.*,
+      hu.display_name as host_name, hu.avatar_url as host_avatar, hu.avatar_initials as host_initials,
+      pu.display_name as peer_name, pu.avatar_url as peer_avatar
+    FROM call_logs c
+    LEFT JOIN users hu ON c.host_id = hu.id
+    LEFT JOIN users pu ON c.peer_id = pu.id
+    ORDER BY CASE WHEN c.status = 'active' THEN 0 ELSE 1 END, c.rowid DESC
+    LIMIT 60
+  `).all() as Array<Record<string, unknown>>;
+
+  const calls = rows
+    .map(mapCallRow)
+    .filter(c => {
+      if (!userId) return true;
+      if (c.hostId === userId || c.peerId === userId) return true;
+      if (c.callScope !== 'dm' && (c.joinMode !== 'invited' || c.invitedUserIds.includes(userId))) return true;
+      return false;
+    });
+  res.json({ ok: true, calls });
+});
+
+app.get('/api/calls/:code', (req, res) => {
+  const row = db.prepare(`
+    SELECT c.*,
+      hu.display_name as host_name, hu.avatar_url as host_avatar, hu.avatar_initials as host_initials,
+      pu.display_name as peer_name, pu.avatar_url as peer_avatar
+    FROM call_logs c
+    LEFT JOIN users hu ON c.host_id = hu.id
+    LEFT JOIN users pu ON c.peer_id = pu.id
+    WHERE c.room_code = ? OR c.id = ?
+  `).get(req.params.code, req.params.code) as Record<string, unknown> | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'المكالمة غير موجودة أو انتهت.' });
+  res.json({ ok: true, call: mapCallRow(row) });
+});
+
+app.post('/api/calls', (req, res) => {
+  const { convId, hostId, peerId, title, callScope, joinMode, invitedUserIds } = req.body as {
+    convId?: string | null;
+    hostId?: string;
+    peerId?: string | null;
+    title?: string;
+    callScope?: 'dm' | 'group' | 'community';
+    joinMode?: 'open' | 'approval' | 'invited';
+    invitedUserIds?: string[];
+  };
+  if (!hostId) return res.status(400).json({ ok: false, error: 'معرف المتصل مطلوب.' });
+  const host = getUserOrNull(hostId);
+  if (!host) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  const id = `call_${uuid().slice(0, 8)}`;
+  const roomCode = `lm-${uuid().slice(0, 8)}`;
+  const scope = callScope === 'community' || callScope === 'group' ? callScope : 'dm';
+  const mode = joinMode === 'approval' || joinMode === 'invited' ? joinMode : 'open';
+  const cleanInvited = Array.isArray(invitedUserIds) ? invitedUserIds.slice(0, 100) : [];
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
+  db.prepare(`
+    INSERT INTO call_logs (id, room_code, conv_id, host_id, peer_id, title, call_scope, join_mode, invited_json, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+  `).run(
+    id,
+    roomCode,
+    convId || null,
+    hostId,
+    peerId || null,
+    (title || `مكالمة ${host.displayName}`).trim(),
+    scope,
+    mode,
+    JSON.stringify(cleanInvited),
+    timeStr
+  );
+
+  const row = db.prepare(`
+    SELECT c.*,
+      hu.display_name as host_name, hu.avatar_url as host_avatar, hu.avatar_initials as host_initials,
+      pu.display_name as peer_name, pu.avatar_url as peer_avatar
+    FROM call_logs c
+    LEFT JOIN users hu ON c.host_id = hu.id
+    LEFT JOIN users pu ON c.peer_id = pu.id
+    WHERE c.id = ?
+  `).get(id) as Record<string, unknown>;
+
+  const call = mapCallRow(row);
+  broadcast('call:updated', { call });
+  res.json({ ok: true, call });
+});
+
+app.patch('/api/calls/:id', (req, res) => {
+  const { status } = req.body as { status?: 'active' | 'ended' | 'missed' };
+  const nextStatus = status === 'missed' ? 'missed' : status === 'active' ? 'active' : 'ended';
+  db.prepare('UPDATE call_logs SET status = ? WHERE id = ? OR room_code = ?').run(nextStatus, req.params.id, req.params.id);
+  broadcast('call:updated', { id: req.params.id, status: nextStatus });
+  res.json({ ok: true, status: nextStatus });
 });
 
 app.get('/api/conversations/:id/messages', (req, res) => {
@@ -2488,6 +2886,7 @@ app.get('/api/live/rooms', (req, res) => {
       category: String(r.category || 'عام'),
       videoUrl: r.video_url,
       scenePreset: r.scene_preset,
+      orientation: (String(r.orientation || 'portrait') === 'landscape' ? 'landscape' : 'portrait') as 'portrait' | 'landscape',
       viewersCount: runtime.viewersCount,
       likesCount: runtime.likesCount,
       totalGiftsEgp: runtime.totalGiftsEgp,
@@ -2515,10 +2914,11 @@ app.get('/api/live/rooms', (req, res) => {
 });
 
 app.post('/api/live/rooms', (req, res) => {
-  const { hostId, title, category } = req.body as {
+  const { hostId, title, category, orientation } = req.body as {
     hostId?: string;
     title?: string;
     category?: string;
+    orientation?: 'portrait' | 'landscape';
   };
   if (!hostId || !title?.trim()) {
     return res.status(400).json({ ok: false, error: 'عنوان البث المباشر مطلوب.' });
@@ -2530,10 +2930,11 @@ app.post('/api/live/rooms', (req, res) => {
   db.prepare("UPDATE live_rooms SET is_active = 0 WHERE host_id = ? AND scene_preset = 'webrtc_live'").run(hostId);
 
   const id = `live_u_${uuid().slice(0, 8)}`;
+  const orient = orientation === 'landscape' ? 'landscape' : 'portrait';
   db.prepare(`
-    INSERT INTO live_rooms (id, host_id, title, category, video_url, scene_preset, viewers_count, is_active)
-    VALUES (?, ?, ?, ?, NULL, 'webrtc_live', 1, 1)
-  `).run(id, hostId, title.trim(), (category || 'عام').trim());
+    INSERT INTO live_rooms (id, host_id, title, category, video_url, scene_preset, orientation, viewers_count, is_active)
+    VALUES (?, ?, ?, ?, NULL, 'webrtc_live', ?, 1, 1)
+  `).run(id, hostId, title.trim(), (category || 'عام').trim(), orient);
 
   const runtime = liveEngine.getPublicState(id);
   const room = {
@@ -2548,7 +2949,9 @@ app.post('/api/live/rooms', (req, res) => {
     category: (category || 'عام').trim(),
     videoUrl: null,
     scenePreset: 'webrtc_live',
+    orientation: orient,
     viewersCount: runtime.viewersCount,
+    likesCount: 0,
     totalGiftsEgp: 0,
     highlightsEnabled: true,
     cooldownSec: 10,
@@ -3301,6 +3704,22 @@ function buildDynamicOgMeta(req: express.Request): {
       description = `شاهد البث المباشر الآن على LM (${String(lr.category || 'عام')})`;
       image = toAbs(lr.avatar_url as string | null);
       type = 'video.other';
+      return { title, description, image, url: fullUrl, type };
+    }
+  }
+
+  const callMatch = req.path.match(/^\/call\/([^/]+)$/);
+  const callCode = callMatch ? decodeURIComponent(callMatch[1]) : String(req.query.call || '').trim();
+  if (callCode) {
+    const cr = db.prepare(`
+      SELECT c.title, c.call_scope, u.display_name, u.avatar_url
+      FROM call_logs c JOIN users u ON c.host_id = u.id WHERE c.room_code = ?
+    `).get(callCode) as Record<string, unknown> | undefined;
+    if (cr) {
+      title = `مكالمة صوتية: ${String(cr.title)} • LM`;
+      description = `انضم الآن إلى المكالمة الصوتية مع ${String(cr.display_name)} على منصة LM`;
+      image = toAbs(cr.avatar_url as string | null);
+      type = 'website';
       return { title, description, image, url: fullUrl, type };
     }
   }
