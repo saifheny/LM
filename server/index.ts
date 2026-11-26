@@ -58,6 +58,23 @@ function getUserOrNull(id: string) {
   return row ? mapUserRow(row) : null;
 }
 
+function createNotification(params: {
+  userId: string;
+  actorId: string;
+  type: 'follow' | 'react' | 'comment' | 'message';
+  text: string;
+  refTab: 'social' | 'videos' | 'chat' | 'profile';
+  refId?: string | null;
+}) {
+  if (!params.userId || !params.actorId || params.userId === params.actorId) return;
+  const id = `n_${uuid().slice(0, 8)}`;
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, actor_id, type, text, ref_tab, ref_id, is_read, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'الآن')
+  `).run(id, params.userId, params.actorId, params.type, params.text, params.refTab, params.refId || null);
+  broadcast('notification:new', { id, userId: params.userId, type: params.type });
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'LM Core v6', wsClients: wsClients.size });
 });
@@ -366,6 +383,202 @@ app.get('/api/users/:id', (req, res) => {
   res.json({ ok: true, user });
 });
 
+app.get('/api/users/:id/profile', (req, res) => {
+  const targetId = req.params.id;
+  const viewerId = String(req.query.viewerId || '');
+  const user = getUserOrNull(targetId);
+  if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  const isFollowing = viewerId
+    ? Boolean(db.prepare('SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?').get(viewerId, targetId))
+    : false;
+
+  const postRows = db.prepare(`
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM posts p JOIN users u ON p.user_id = u.id
+    WHERE p.user_id = ? ORDER BY p.rowid DESC
+  `).all(targetId) as Array<Record<string, unknown>>;
+
+  const posts = postRows.map(r => {
+    let mediaUrls: string[] = [];
+    try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
+    if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    return {
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      verified: Boolean(r.verified),
+      topic: r.topic || 'عام',
+      content: r.content,
+      mediaUrl: r.media_url,
+      mediaUrls,
+      location: r.location || 'القاهرة',
+      poll: null,
+      score: Number(r.score ?? r.likes_count ?? 0),
+      myVote: 0,
+      reactions: {},
+      myReaction: null,
+      likesCount: Number(r.likes_count || 0),
+      commentsCount: Number(r.comments_count || 0),
+      sharesCount: Number(r.shares_count || 0),
+      likedByMe: false,
+      isEdited: Boolean(r.is_edited),
+      createdAt: r.created_at,
+    };
+  });
+
+  const videoRows = db.prepare(`
+    SELECT v.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM short_videos v JOIN users u ON v.user_id = u.id
+    WHERE v.user_id = ? ORDER BY v.rowid DESC
+  `).all(targetId) as Array<Record<string, unknown>>;
+
+  const videos = videoRows.map(r => ({
+    id: r.id,
+    userId: r.user_id,
+    displayName: r.display_name,
+    username: r.username,
+    avatarColor: r.avatar_color,
+    avatarInitials: r.avatar_initials,
+    avatarUrl: r.avatar_url,
+    verified: Boolean(r.verified),
+    title: r.title,
+    description: r.description,
+    tags: r.tags,
+    audioTitle: r.audio_title || 'الصوت الأصلي',
+    videoUrl: r.video_url,
+    posterUrl: r.poster_url,
+    scenePreset: r.scene_preset,
+    durationSec: Number(r.duration_sec),
+    likesCount: Number(r.likes_count),
+    commentsCount: Number(r.comments_count),
+    savesCount: Number(r.saves_count),
+    sharesCount: Number(r.shares_count || 0),
+    viewsCount: Number(r.views_count),
+    likedByMe: false,
+    savedByMe: false,
+    createdAt: r.created_at,
+  }));
+
+  res.json({ ok: true, user, isFollowing, posts, videos });
+});
+
+app.patch('/api/users/:id', (req, res) => {
+  const targetId = req.params.id;
+  const { displayName, bio, avatarUrl } = req.body as {
+    displayName?: string;
+    bio?: string;
+    avatarUrl?: string | null;
+  };
+  const existing = getUserOrNull(targetId);
+  if (!existing) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  const nextName = (displayName ?? existing.displayName).trim() || existing.displayName;
+  const nextBio = (bio ?? existing.bio).trim();
+  const nextAvatar = avatarUrl !== undefined ? avatarUrl : existing.avatarUrl;
+  const nextInitials =
+    nextName
+      .split(/\s+/)
+      .slice(0, 2)
+      .map(p => p[0])
+      .join('') || existing.avatarInitials;
+
+  db.prepare(`
+    UPDATE users
+    SET display_name = ?, bio = ?, avatar_url = ?, avatar_initials = ?
+    WHERE id = ?
+  `).run(nextName, nextBio, nextAvatar, nextInitials, targetId);
+
+  // Keep DM conversation display names/avatars synced if user updated their profile
+  db.prepare(`
+    UPDATE conversations SET title = ?, avatar_url = ?
+    WHERE type = 'dm' AND peer_user_id = ?
+  `).run(nextName, nextAvatar, targetId);
+
+  res.json({ ok: true, user: getUserOrNull(targetId) });
+});
+
+app.post('/api/users/:id/follow', (req, res) => {
+  const targetId = req.params.id;
+  const { followerId } = req.body as { followerId?: string };
+  if (!followerId || followerId === targetId) {
+    return res.status(400).json({ ok: false, error: 'عملية متابعة غير صالحة.' });
+  }
+  const target = getUserOrNull(targetId);
+  if (!target) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  const exists = db.prepare('SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?').get(followerId, targetId);
+  let following = false;
+  if (exists) {
+    db.prepare('DELETE FROM user_follows WHERE follower_id = ? AND following_id = ?').run(followerId, targetId);
+    db.prepare('UPDATE users SET followers_count = MAX(0, followers_count - 1) WHERE id = ?').run(targetId);
+    db.prepare('UPDATE users SET following_count = MAX(0, following_count - 1) WHERE id = ?').run(followerId);
+    following = false;
+  } else {
+    db.prepare('INSERT INTO user_follows (follower_id, following_id) VALUES (?, ?)').run(followerId, targetId);
+    db.prepare('UPDATE users SET followers_count = followers_count + 1 WHERE id = ?').run(targetId);
+    db.prepare('UPDATE users SET following_count = following_count + 1 WHERE id = ?').run(followerId);
+    following = true;
+    createNotification({
+      userId: targetId,
+      actorId: followerId,
+      type: 'follow',
+      text: 'بدأ بمتابعتك الآن',
+      refTab: 'profile',
+      refId: followerId,
+    });
+  }
+
+  const updated = getUserOrNull(targetId);
+  res.json({ ok: true, following, followersCount: updated?.followersCount || 0 });
+});
+
+// ============================================================
+// SIMPLE REAL-TIME NOTIFICATIONS
+// ============================================================
+app.get('/api/notifications', (req, res) => {
+  const userId = String(req.query.userId || '');
+  if (!userId) return res.json({ ok: true, notifications: [], unreadCount: 0 });
+  const rows = db.prepare(`
+    SELECT n.*, u.display_name as actor_name, u.avatar_initials as actor_initials, u.avatar_url as actor_avatar
+    FROM notifications n LEFT JOIN users u ON n.actor_id = u.id
+    WHERE n.user_id = ?
+    ORDER BY n.rowid DESC LIMIT 40
+  `).all(userId) as Array<Record<string, unknown>>;
+
+  const notifications = rows.map(r => ({
+    id: String(r.id),
+    userId: String(r.user_id),
+    actorId: String(r.actor_id),
+    actorName: r.actor_id === 'lm_ai' ? 'LM AI' : String(r.actor_name || 'مستخدم'),
+    actorInitials: r.actor_id === 'lm_ai' ? 'AI' : String(r.actor_initials || 'LM'),
+    actorAvatarUrl: r.actor_avatar ? String(r.actor_avatar) : null,
+    type: String(r.type) as 'follow' | 'react' | 'comment' | 'message',
+    text: String(r.text),
+    refTab: String(r.ref_tab || 'social'),
+    refId: r.ref_id ? String(r.ref_id) : null,
+    isRead: Boolean(r.is_read),
+    createdAt: String(r.created_at || 'الآن'),
+  }));
+  const unreadCount = notifications.filter(n => !n.isRead).length;
+  res.json({ ok: true, notifications, unreadCount });
+});
+
+app.post('/api/notifications/read', (req, res) => {
+  const { userId, id } = req.body as { userId?: string; id?: string };
+  if (!userId) return res.status(400).json({ ok: false });
+  if (id) {
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(id, userId);
+  } else {
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(userId);
+  }
+  res.json({ ok: true });
+});
+
 // ============================================================
 // SEARCH
 // ============================================================
@@ -500,6 +713,7 @@ app.get('/api/posts', (req, res) => {
       commentsCount: Number(r.comments_count || 0),
       sharesCount: Number(r.shares_count || 0),
       likedByMe: likedSet.has(String(r.id)) || myReactionMap.has(String(r.id)),
+      isEdited: Boolean(r.is_edited),
       createdAt: r.created_at,
     };
   });
@@ -547,6 +761,39 @@ app.post('/api/posts', (req, res) => {
   db.prepare('INSERT OR REPLACE INTO post_votes (post_id, user_id, vote) VALUES (?, ?, 1)').run(id, userId);
   broadcast('social:new_post', { id });
   res.json({ ok: true, id });
+});
+
+app.patch('/api/posts/:id', (req, res) => {
+  const { userId, content } = req.body as { userId?: string; content?: string };
+  const row = db.prepare('SELECT user_id FROM posts WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'المنشور غير موجود.' });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'لا يمكنك تعديل منشور شخص آخر.' });
+  if (!content?.trim()) return res.status(400).json({ ok: false, error: 'المحتوى مطلوب.' });
+  db.prepare('UPDATE posts SET content = ?, is_edited = 1 WHERE id = ?').run(content.trim(), req.params.id);
+  broadcast('social:new_post', { id: req.params.id });
+  res.json({ ok: true });
+});
+
+app.delete('/api/posts/:id', (req, res) => {
+  const userId = String(req.query.userId || (req.body as { userId?: string })?.userId || '');
+  const row = db.prepare('SELECT user_id FROM posts WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'المنشور غير موجود.' });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'لا يمكنك حذف منشور شخص آخر.' });
+  db.prepare('DELETE FROM posts WHERE id = ?').run(req.params.id);
+  broadcast('social:new_post', { id: req.params.id, deleted: true });
+  res.json({ ok: true });
+});
+
+app.delete('/api/post-comments/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const row = db.prepare('SELECT post_id, user_id FROM post_comments WHERE id = ?').get(req.params.id) as
+    | { post_id: string; user_id: string }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false });
+  if (userId && row.user_id !== userId) return res.status(403).json({ ok: false });
+  db.prepare('DELETE FROM post_comments WHERE id = ? OR parent_id = ?').run(req.params.id, req.params.id);
+  db.prepare('UPDATE posts SET comments_count = (SELECT COUNT(*) FROM post_comments WHERE post_id = posts.id) WHERE id = ?').run(row.post_id);
+  res.json({ ok: true });
 });
 
 app.post('/api/posts/:id/vote', (req, res) => {
@@ -613,9 +860,20 @@ app.post('/api/posts/:id/react', (req, res) => {
   const rxRows = db.prepare('SELECT reaction FROM post_reactions WHERE post_id = ?').all(postId) as Array<{ reaction: string }>;
   const reactions: Record<string, number> = {};
   for (const r of rxRows) reactions[r.reaction] = (reactions[r.reaction] || 0) + 1;
-  const postRow = db.prepare('SELECT score, likes_count FROM posts WHERE id = ?').get(postId) as
-    | { score: number; likes_count: number }
+  const postRow = db.prepare('SELECT user_id, score, likes_count FROM posts WHERE id = ?').get(postId) as
+    | { user_id: string; score: number; likes_count: number }
     | undefined;
+
+  if (myReaction && postRow?.user_id) {
+    createNotification({
+      userId: postRow.user_id,
+      actorId: userId,
+      type: 'react',
+      text: 'تفاعل مع منشورك في المجتمع',
+      refTab: 'social',
+      refId: postId,
+    });
+  }
 
   res.json({
     ok: true,
@@ -744,6 +1002,29 @@ app.post('/api/posts/:id/comments', async (req, res) => {
     'الآن'
   );
   db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
+
+  // Notify post owner (and parent comment author if replying)
+  const postOwnerRow = db.prepare('SELECT user_id FROM posts WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (postOwnerRow?.user_id) {
+    createNotification({
+      userId: postOwnerRow.user_id,
+      actorId: userId,
+      type: 'comment',
+      text: audioUrl ? 'أضاف ردًا صوتيًا على منشورك' : `علّق على منشورك: ${(content || '').trim().slice(0, 40)}`,
+      refTab: 'social',
+      refId: req.params.id,
+    });
+  }
+  if (parentRow && parentRow.user_id !== 'lm_ai' && parentRow.user_id !== postOwnerRow?.user_id) {
+    createNotification({
+      userId: parentRow.user_id,
+      actorId: userId,
+      type: 'comment',
+      text: 'ردّ على تعليقك في المجتمع',
+      refTab: 'social',
+      refId: req.params.id,
+    });
+  }
 
   let aiReply = null;
   if (shouldCallAi) {
@@ -1019,18 +1300,37 @@ app.post('/api/video-comments/:commentId/like', (req, res) => {
 // ============================================================
 // MONOCHROME MESSAGING
 // ============================================================
-app.get('/api/conversations', (_req, res) => {
+app.get('/api/conversations', (req, res) => {
+  const viewerId = String(req.query.userId || '');
   const convs = db.prepare('SELECT * FROM conversations ORDER BY is_pinned DESC, created_at DESC').all() as Array<Record<string, unknown>>;
   const enriched = convs.map(c => {
     const last = db.prepare('SELECT content, created_at, msg_type FROM messages WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1').get(String(c.id)) as Record<string, unknown> | undefined;
+
+    // For 1-on-1 DMs, dynamically resolve the OTHER participant's live name & avatar when viewerId is provided!
+    let title = String(c.title);
+    let avatarUrl = c.avatar_url ? String(c.avatar_url) : null;
+    let peerUserId = c.peer_user_id ? String(c.peer_user_id) : null;
+    if (c.type === 'dm' && c.dm_key && viewerId) {
+      const pair = String(c.dm_key).split('::');
+      const otherId = pair.find(uid => uid !== viewerId);
+      if (otherId) {
+        const peer = getUserOrNull(otherId);
+        if (peer) {
+          title = peer.displayName;
+          avatarUrl = peer.avatarUrl;
+          peerUserId = peer.id;
+        }
+      }
+    }
+
     return {
       id: c.id,
       type: c.type,
       folder: c.folder || 'personal',
-      title: c.title,
+      title,
       description: c.description,
       avatarColor: c.avatar_color,
-      avatarUrl: c.avatar_url,
+      avatarUrl,
       onlineText: c.online_text || 'متصل الآن',
       pinnedMessage: c.pinned_message,
       isPinned: Boolean(c.is_pinned),
@@ -1039,11 +1339,38 @@ app.get('/api/conversations', (_req, res) => {
       memberCount: Number(c.member_count),
       aiEnabled: Boolean(c.ai_enabled),
       creatorId: String(c.creator_id || 'u_youssef'),
+      peerUserId,
       lastMessage: last ? String(last.content) : '',
       lastMessageAt: last ? String(last.created_at) : 'الآن',
     };
   });
   res.json({ ok: true, conversations: enriched });
+});
+
+app.post('/api/conversations/dm', (req, res) => {
+  const { userId, targetUserId } = req.body as { userId?: string; targetUserId?: string };
+  if (!userId || !targetUserId || userId === targetUserId) {
+    return res.status(400).json({ ok: false, error: 'اختر مستخدمًا آخر لبدء المحادثة.' });
+  }
+  const target = getUserOrNull(targetUserId);
+  if (!target) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  const dmKey = [userId, targetUserId].sort().join('::');
+  const existing = db.prepare("SELECT id FROM conversations WHERE type = 'dm' AND dm_key = ?").get(dmKey) as { id: string } | undefined;
+  if (existing) {
+    return res.json({ ok: true, id: existing.id, created: false });
+  }
+
+  const id = `c_dm_${uuid().slice(0, 8)}`;
+  db.prepare(`
+    INSERT INTO conversations (
+      id, type, folder, title, description, avatar_color, avatar_url,
+      online_text, is_pinned, unread_count, is_encrypted, member_count, ai_enabled, creator_id, dm_key, peer_user_id
+    ) VALUES (?, 'dm', 'personal', ?, ?, '#27272A', ?, 'متصل الآن', 0, 0, 1, 2, 0, ?, ?, ?)
+  `).run(id, target.displayName, target.bio || `@${target.username}`, target.avatarUrl, userId, dmKey, target.id);
+
+  broadcast('chat:message', { conversationId: id, created: true });
+  res.json({ ok: true, id, created: true });
 });
 
 app.post('/api/conversations', (req, res) => {
@@ -1123,6 +1450,7 @@ app.get('/api/conversations/:id/messages', (req, res) => {
         mediaUrl: r.media_url,
         transcript: r.transcript ? String(r.transcript) : null,
         isSpoiler: Boolean(r.is_spoiler),
+        isEdited: Boolean(r.is_edited),
         aiSummoned: Boolean(r.ai_summoned),
         replyToId: r.reply_to_id ? String(r.reply_to_id) : null,
         replySender: r.reply_sender ? String(r.reply_sender) : null,
@@ -1201,6 +1529,29 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   );
 
   broadcast('chat:message', { conversationId: req.params.id, msgId });
+
+  // Notify DM recipient immediately when a new direct message arrives
+  const dmConvRow = db.prepare('SELECT type, dm_key FROM conversations WHERE id = ?').get(req.params.id) as
+    | { type?: string; dm_key?: string | null }
+    | undefined;
+  if (dmConvRow?.type === 'dm' && dmConvRow.dm_key) {
+    const recipientId = dmConvRow.dm_key.split('::').find(uid => uid !== senderId);
+    if (recipientId) {
+      createNotification({
+        userId: recipientId,
+        actorId: senderId,
+        type: 'message',
+        text:
+          msgType === 'audio'
+            ? 'أرسل لك رسالة صوتية في الدردشة'
+            : msgType === 'video_note'
+            ? 'أرسل لك رسالة فيديو دائرية'
+            : `أرسل لك رسالة: ${(content || '').trim().slice(0, 42)}`,
+        refTab: 'chat',
+        refId: req.params.id,
+      });
+    }
+  }
 
   let aiReply = null;
   if (shouldInvokeAi) {
@@ -1293,6 +1644,31 @@ app.post('/api/messages/:id/react', (req, res) => {
   db.prepare('UPDATE messages SET reactions_json = ? WHERE id = ?').run(JSON.stringify(reactions), req.params.id);
   broadcast('chat:message', { conversationId: row.conversation_id, msgId: req.params.id });
   res.json({ ok: true, reactions });
+});
+
+app.patch('/api/messages/:id', (req, res) => {
+  const { userId, content } = req.body as { userId?: string; content?: string };
+  const row = db.prepare('SELECT conversation_id, sender_id FROM messages WHERE id = ?').get(req.params.id) as
+    | { conversation_id: string; sender_id: string }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'الرسالة غير موجودة.' });
+  if (userId && row.sender_id !== userId) return res.status(403).json({ ok: false, error: 'لا يمكنك تعديل رسالة شخص آخر.' });
+  if (!content?.trim()) return res.status(400).json({ ok: false, error: 'النص فارغ.' });
+  db.prepare('UPDATE messages SET content = ?, is_edited = 1 WHERE id = ?').run(content.trim(), req.params.id);
+  broadcast('chat:message', { conversationId: row.conversation_id, msgId: req.params.id });
+  res.json({ ok: true });
+});
+
+app.delete('/api/messages/:id', (req, res) => {
+  const userId = String(req.query.userId || '');
+  const row = db.prepare('SELECT conversation_id, sender_id FROM messages WHERE id = ?').get(req.params.id) as
+    | { conversation_id: string; sender_id: string }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false });
+  if (userId && row.sender_id !== userId) return res.status(403).json({ ok: false });
+  db.prepare('DELETE FROM messages WHERE id = ?').run(req.params.id);
+  broadcast('chat:message', { conversationId: row.conversation_id, msgId: req.params.id, deleted: true });
+  res.json({ ok: true });
 });
 
 // ============================================================

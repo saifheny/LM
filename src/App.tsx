@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Lang, NavTab, UserProfile } from './types';
-import { apiGet } from './lib/api';
+import { Lang, NavTab, NotificationItem, UserProfile } from './types';
+import { apiGet, apiPost } from './lib/api';
 import { LayoutProvider } from './context/LayoutContext';
 import { AppShell } from './components/layout/AppShell';
 import { AuthScreen } from './components/auth/AuthScreen';
@@ -9,9 +9,10 @@ import { ShortVideosView } from './components/videos/ShortVideosView';
 import { LiveView } from './components/live/LiveView';
 import { ChatView } from './components/chat/ChatView';
 import { AiView } from './components/ai/AiView';
+import { ProfileView } from './components/profile/ProfileView';
 import { ApiHubView } from './components/settings/ApiHubView';
 
-const VALID_TABS: NavTab[] = ['social', 'videos', 'live', 'chat', 'ai', 'settings'];
+const VALID_TABS: NavTab[] = ['social', 'videos', 'live', 'chat', 'ai', 'profile', 'settings'];
 
 function readInitialTab(): NavTab {
   try {
@@ -43,6 +44,17 @@ export function App() {
   const [wsOnline, setWsOnline] = useState(false);
   const [lastWsEvent, setLastWsEvent] = useState<{ event: string; payload: unknown; ts: number } | null>(null);
 
+  const [profileUserId, setProfileUserId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_profile_user_id') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [pendingChatConvId, setPendingChatConvId] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+
   const setActiveTab = useCallback((t: NavTab) => {
     setActiveTabState(t);
     try {
@@ -51,6 +63,44 @@ export function App() {
       // ignore
     }
   }, []);
+
+  const openProfile = useCallback(
+    (uid: string) => {
+      setProfileUserId(uid);
+      try {
+        localStorage.setItem('lm_profile_user_id', uid);
+      } catch {
+        // ignore
+      }
+      setActiveTab('profile');
+    },
+    [setActiveTab]
+  );
+
+  const openDirectChatWithUser = useCallback(
+    async (targetUserId: string) => {
+      if (!currentUser) return;
+      try {
+        const res = await apiPost<{ ok: boolean; id: string }>('/api/conversations/dm', {
+          userId: currentUser.id,
+          targetUserId,
+        });
+        if (res.id) {
+          setPendingChatConvId(res.id);
+          try {
+            localStorage.setItem('lm_chat_conv_id', res.id);
+            localStorage.setItem('lm_chat_in_thread', '1');
+          } catch {
+            // ignore
+          }
+          setActiveTab('chat');
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [currentUser, setActiveTab]
+  );
 
   const toggleLang = useCallback(() => {
     setLangState(prev => {
@@ -98,9 +148,64 @@ export function App() {
     }
   }, []);
 
+  const loadNotifications = useCallback(async (uid: string) => {
+    try {
+      const res = await apiGet<{ ok: boolean; notifications: NotificationItem[]; unreadCount: number }>(
+        `/api/notifications?userId=${uid}`
+      );
+      setNotifications(res.notifications);
+      setUnreadNotifications(res.unreadCount);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const markNotificationsRead = useCallback(
+    async (id?: string) => {
+      if (!currentUser) return;
+      await apiPost('/api/notifications/read', { userId: currentUser.id, id });
+      loadNotifications(currentUser.id);
+    },
+    [currentUser, loadNotifications]
+  );
+
+  const handleOpenNotification = useCallback(
+    (n: NotificationItem) => {
+      markNotificationsRead(n.id);
+      if (n.refTab === 'chat' && n.refId) {
+        setPendingChatConvId(n.refId);
+        try {
+          localStorage.setItem('lm_chat_conv_id', n.refId);
+          localStorage.setItem('lm_chat_in_thread', '1');
+        } catch {
+          // ignore
+        }
+        setActiveTab('chat');
+      } else if (n.refTab === 'profile' && n.refId) {
+        openProfile(n.refId);
+      } else {
+        setActiveTab(n.refTab || 'social');
+      }
+    },
+    [markNotificationsRead, openProfile, setActiveTab]
+  );
+
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  useEffect(() => {
+    if (currentUser?.id) loadNotifications(currentUser.id);
+  }, [currentUser?.id, loadNotifications]);
+
+  useEffect(() => {
+    if (lastWsEvent?.event === 'notification:new' && currentUser?.id) {
+      const payload = lastWsEvent.payload as { userId?: string };
+      if (!payload?.userId || payload.userId === currentUser.id) {
+        loadNotifications(currentUser.id);
+      }
+    }
+  }, [lastWsEvent, currentUser?.id, loadNotifications]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -160,10 +265,20 @@ export function App() {
         onToggleLang={toggleLang}
         wsOnline={wsOnline}
         onSwitchUser={selectUser}
+        onOpenProfile={openProfile}
+        notifications={notifications}
+        unreadNotifications={unreadNotifications}
+        onMarkNotificationsRead={markNotificationsRead}
+        onOpenNotification={handleOpenNotification}
         onLogout={() => setLoggedOut(true)}
       >
         {activeTab === 'social' && (
-          <SocialView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
+          <SocialView
+            user={currentUser}
+            lang={lang}
+            lastWsEvent={lastWsEvent}
+            onOpenProfile={openProfile}
+          />
         )}
         {activeTab === 'videos' && (
           <ShortVideosView user={currentUser} lang={lang} />
@@ -172,10 +287,30 @@ export function App() {
           <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
         )}
         {activeTab === 'chat' && (
-          <ChatView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />
+          <ChatView
+            user={currentUser}
+            lang={lang}
+            lastWsEvent={lastWsEvent}
+            openConvId={pendingChatConvId}
+            onConsumedOpenConv={() => setPendingChatConvId(null)}
+            onOpenProfile={openProfile}
+          />
         )}
         {activeTab === 'ai' && (
           <AiView user={currentUser} lang={lang} />
+        )}
+        {activeTab === 'profile' && (
+          <ProfileView
+            profileUserId={profileUserId || currentUser.id}
+            currentUser={currentUser}
+            lang={lang}
+            onProfileUpdated={updated => {
+              setCurrentUser(updated);
+              loadUsers();
+            }}
+            onMessageUser={openDirectChatWithUser}
+            onOpenVideos={() => setActiveTab('videos')}
+          />
         )}
         {activeTab === 'settings' && (
           <ApiHubView lang={lang} />

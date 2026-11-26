@@ -14,6 +14,9 @@ import {
   Pin,
   ArrowRight,
   Languages,
+  Pencil,
+  Trash2,
+  Check,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile } from '../../types';
@@ -24,12 +27,15 @@ import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { NavAiIcon, TelegramVideoNoteIcon } from '../shared/Icons2026Pro';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
-import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
+import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface ChatViewProps {
   user: UserProfile;
   lang: Lang;
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
+  openConvId?: string | null;
+  onConsumedOpenConv?: () => void;
+  onOpenProfile?: (userId: string) => void;
 }
 
 const WORLD_LANGUAGES = [
@@ -58,7 +64,7 @@ function isMostlyLatin(text: string): boolean {
   return latin / letters.length > 0.65;
 }
 
-export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
+export function ChatView({ user, lang, lastWsEvent, openConvId, onConsumedOpenConv, onOpenProfile }: ChatViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded, setChatInThread, setBottomDockHidden } = useLayout();
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [activeConvId, setActiveConvIdState] = useState<string>(() => {
@@ -140,10 +146,25 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   const [callOverlay, setCallOverlay] = useState<'audio' | 'video' | null>(null);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newChatTitle, setNewChatTitle] = useState('');
-  const [newChatType, setNewChatType] = useState<'group' | 'community'>('group');
+  const [newChatType, setNewChatType] = useState<'dm' | 'group' | 'community'>('dm');
   const [newChatAiEnabled, setNewChatAiEnabled] = useState(true);
+  const [dmSearch, setDmSearch] = useState('');
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [aiTypingConvId, setAiTypingConvId] = useState<string | null>(null);
   const [togglingAiMode, setTogglingAiMode] = useState(false);
+
+  // Real Circular Video Note MediaRecorder state
+  const [videoNoteError, setVideoNoteError] = useState<string | null>(null);
+  const [videoNoteSec, setVideoNoteSec] = useState(0);
+  const [uploadingVideoNote, setUploadingVideoNote] = useState(false);
+  const noteRecorderRef = useRef<MediaRecorder | null>(null);
+  const noteChunksRef = useRef<Blob[]>([]);
+  const noteTimerRef = useRef<number | null>(null);
+  const noteSendFlagRef = useRef<boolean>(false);
+
+  // Inline Edit Message state
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editingMsgText, setEditingMsgText] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -162,9 +183,9 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   }, [mobileShowList, setChatInThread]);
 
   const loadConversations = useCallback(async () => {
-    const res = await apiGet<{ ok: boolean; conversations: ConversationItem[] }>('/api/conversations');
+    const res = await apiGet<{ ok: boolean; conversations: ConversationItem[] }>(`/api/conversations?userId=${user.id}`);
     setConversations(res.conversations);
-  }, []);
+  }, [user.id]);
 
   const loadMessages = useCallback(async (convId: string) => {
     const res = await apiGet<{ ok: boolean; messages: ChatMessageItem[] }>(`/api/conversations/${convId}/messages`);
@@ -174,6 +195,24 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  useEffect(() => {
+    if (openConvId) {
+      loadConversations().then(() => {
+        setActiveConvId(openConvId);
+        setMobileShowList(false);
+        onConsumedOpenConv?.();
+      });
+    }
+  }, [openConvId, loadConversations, setActiveConvId, setMobileShowList, onConsumedOpenConv]);
+
+  useEffect(() => {
+    if (newChatOpen) {
+      apiGet<{ ok: boolean; users: UserProfile[] }>('/api/auth/users')
+        .then(r => setAllUsers(r.users))
+        .catch(() => {});
+    }
+  }, [newChatOpen]);
 
   useEffect(() => {
     if (activeConvId) loadMessages(activeConvId);
@@ -248,31 +287,134 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
 
   async function startVideoNoteCapture() {
     setShowQuickRecordHint(false);
+    setVideoNoteError(null);
+    setVideoNoteSec(0);
+    setUploadingVideoNote(false);
     setRecordingVideoNote(true);
+    noteChunksRef.current = [];
+    noteSendFlagRef.current = false;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVideoNoteError('المتصفح لا يدعم تسجيل الفيديو من الكاميرا.');
+      return;
+    }
+
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } },
+        audio: true,
+      });
       noteStreamRef.current = s;
       setTimeout(() => {
         if (noteVideoRef.current) noteVideoRef.current.srcObject = s;
       }, 60);
+
+      const mimeCandidates = ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+      const mimeType = mimeCandidates.find(m => {
+        try {
+          return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m);
+        } catch {
+          return false;
+        }
+      }) || '';
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const rec = mimeType ? new MediaRecorder(s, { mimeType }) : new MediaRecorder(s);
+
+      rec.ondataavailable = ev => {
+        if (ev.data && ev.data.size > 0) noteChunksRef.current.push(ev.data);
+      };
+
+      rec.onstop = async () => {
+        if (noteTimerRef.current) {
+          window.clearInterval(noteTimerRef.current);
+          noteTimerRef.current = null;
+        }
+        s.getTracks().forEach(t => t.stop());
+        noteStreamRef.current = null;
+
+        if (noteSendFlagRef.current && noteChunksRef.current.length > 0 && activeConvId) {
+          setUploadingVideoNote(true);
+          try {
+            const actualType = mimeType || rec.mimeType || 'video/webm';
+            const blob = new Blob(noteChunksRef.current, { type: actualType });
+            const file = new File([blob], `videonote-${Date.now()}.${ext}`, { type: actualType });
+            const up = await apiUploadFile(file);
+            await apiPost(`/api/conversations/${activeConvId}/messages`, {
+              senderId: user.id,
+              content: 'رسالة فيديو دائرية',
+              msgType: 'video_note',
+              mediaUrl: up.url,
+            });
+            await loadMessages(activeConvId);
+            loadConversations();
+          } finally {
+            setUploadingVideoNote(false);
+            setRecordingVideoNote(false);
+          }
+        } else {
+          setRecordingVideoNote(false);
+        }
+      };
+
+      noteRecorderRef.current = rec;
+      rec.start(200);
+      noteTimerRef.current = window.setInterval(() => setVideoNoteSec(sec => sec + 1), 1000);
     } catch {
-      // clean fallback
+      setVideoNoteError('يرجى السماح بالوصول للكاميرا والميكروفون لتسجيل فيديو دائري.');
     }
   }
 
-  async function finishVideoNoteCapture(send: boolean) {
-    noteStreamRef.current?.getTracks().forEach(t => t.stop());
-    noteStreamRef.current = null;
-    setRecordingVideoNote(false);
-    if (send && activeConvId) {
-      await apiPost(`/api/conversations/${activeConvId}/messages`, {
-        senderId: user.id,
-        content: 'رسالة فيديو دائرية',
-        msgType: 'video_note',
-        mediaUrl: '/uploads/seed/reel4.mp4',
-      });
-      loadMessages(activeConvId);
+  function finishVideoNoteCapture(send: boolean) {
+    noteSendFlagRef.current = send;
+    if (noteTimerRef.current) {
+      window.clearInterval(noteTimerRef.current);
+      noteTimerRef.current = null;
     }
+    const rec = noteRecorderRef.current;
+    if (rec && rec.state !== 'inactive') {
+      try {
+        rec.requestData();
+      } catch {
+        // ignore
+      }
+      window.setTimeout(() => {
+        if (rec.state !== 'inactive') rec.stop();
+      }, 90);
+    } else {
+      noteStreamRef.current?.getTracks().forEach(t => t.stop());
+      noteStreamRef.current = null;
+      setRecordingVideoNote(false);
+    }
+  }
+
+  async function saveEditedMessage(msgId: string) {
+    if (!editingMsgText.trim()) return;
+    await api(`/api/messages/${msgId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ userId: user.id, content: editingMsgText.trim() }),
+    });
+    setEditingMsgId(null);
+    setEditingMsgText('');
+    await loadMessages(activeConvId);
+    loadConversations();
+  }
+
+  async function deleteMessage(msgId: string) {
+    await api(`/api/messages/${msgId}?userId=${user.id}`, { method: 'DELETE' });
+    setMessages(prev => prev.filter(m => m.id !== msgId));
+    loadConversations();
+  }
+
+  async function startDirectDmWith(targetUser: UserProfile) {
+    const res = await apiPost<{ ok: boolean; id: string }>('/api/conversations/dm', {
+      userId: user.id,
+      targetUserId: targetUser.id,
+    });
+    setNewChatOpen(false);
+    setDmSearch('');
+    await loadConversations();
+    setActiveConvId(res.id);
+    setMobileShowList(false);
   }
 
   function handleMediaBtnDown() {
@@ -607,18 +749,30 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
               >
                 <ArrowRight className="w-4 h-4" />
               </button>
-              <UserAvatar
-                initials={activeConv.title.slice(0, 2)}
-                avatarUrl={activeConv.avatarUrl}
-                size={34}
-                online={activeConv.onlineText.includes('متصل')}
-              />
-              <div className="min-w-0">
-                <div className="text-[13px] font-semibold text-white truncate max-w-[160px] sm:max-w-[240px]">
-                  {activeConv.title}
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeConv.type === 'dm' && activeConv.peerUserId && onOpenProfile) {
+                    onOpenProfile(activeConv.peerUserId);
+                  }
+                }}
+                className={`flex items-center gap-2.5 min-w-0 text-start ${
+                  activeConv.type === 'dm' && activeConv.peerUserId ? 'cursor-pointer' : 'cursor-default'
+                }`}
+              >
+                <UserAvatar
+                  initials={activeConv.title.slice(0, 2)}
+                  avatarUrl={activeConv.avatarUrl}
+                  size={34}
+                  online={activeConv.onlineText.includes('متصل')}
+                />
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-white truncate max-w-[160px] sm:max-w-[240px]">
+                    {activeConv.title}
+                  </div>
+                  <div className="text-[10.5px] text-[#9E9EA8] truncate">{activeConv.onlineText}</div>
                 </div>
-                <div className="text-[10.5px] text-[#9E9EA8] truncate">{activeConv.onlineText}</div>
-              </div>
+              </button>
             </div>
 
             <div className="pointer-events-auto flex items-center gap-1.5">
@@ -818,6 +972,32 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           >
                             محتوى مخفي
                           </button>
+                        ) : editingMsgId === msg.id ? (
+                          <div className="space-y-2 min-w-[220px]">
+                            <textarea
+                              rows={2}
+                              value={editingMsgText}
+                              onChange={e => setEditingMsgText(e.target.value)}
+                              className="w-full rounded-xl bg-[#0A0A0C] border border-white/[0.15] p-2 text-xs text-white outline-none resize-none"
+                            />
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingMsgId(null)}
+                                className="px-2.5 py-1 rounded-full bg-white/[0.08] text-[11px] text-[#A1A1AA] hover:text-white cursor-pointer"
+                              >
+                                إلغاء
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => saveEditedMessage(msg.id)}
+                                className="px-2.5 py-1 rounded-full bg-white text-black text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                              >
+                                <Check className="w-3 h-3" />
+                                <span>حفظ</span>
+                              </button>
+                            </div>
+                          </div>
                         ) : (
                           <div>
                             {isAi && !translated ? (
@@ -852,7 +1032,8 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           </button>
                         )}
 
-                        <div className="mt-1 flex items-center justify-end text-[10px] font-mono-num text-[#7A7A85]">
+                        <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px] font-mono-num text-[#7A7A85]">
+                          {msg.isEdited && <span>معدّلة ·</span>}
                           <span>{msg.createdAt}</span>
                         </div>
                       </div>
@@ -912,6 +1093,31 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     >
                       <Sparkles className="w-3.5 h-3.5" />
                     </button>
+
+                    {isMine && msg.msgType === 'text' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingMsgId(msg.id);
+                          setEditingMsgText(msg.content);
+                        }}
+                        title="تعديل"
+                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {isMine && (
+                      <button
+                        type="button"
+                        onClick={() => deleteMessage(msg.id)}
+                        title="حذف"
+                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-[#EF4444] flex items-center justify-center cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -952,27 +1158,42 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Circular Video Note Live Recorder Overlay */}
+        {/* Circular Video Note REAL MediaRecorder Live Capture Overlay */}
         {recordingVideoNote && (
-          <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center gap-5">
-            <div className="w-56 h-56 rounded-full overflow-hidden border-2 border-white/30 bg-[#131317] flex items-center justify-center">
-              <video ref={noteVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+          <div className="absolute inset-0 z-30 bg-black/88 backdrop-blur-md flex flex-col items-center justify-center gap-5 p-4">
+            <div className="relative w-60 h-60 rounded-full overflow-hidden border-2 border-white/30 bg-[#131317] flex items-center justify-center shadow-2xl">
+              {videoNoteError ? (
+                <div className="px-6 text-center text-xs text-[#F87171] leading-relaxed">{videoNoteError}</div>
+              ) : (
+                <video ref={noteVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+              )}
+              {!videoNoteError && (
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/75 border border-white/15 flex items-center gap-1.5 text-xs font-mono-num text-white">
+                  <span className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
+                  <span>{`${Math.floor(videoNoteSec / 60)}:${String(videoNoteSec % 60).padStart(2, '0')}`}</span>
+                </div>
+              )}
             </div>
+
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                disabled={uploadingVideoNote}
                 onClick={() => finishVideoNoteCapture(false)}
-                className="px-5 py-2 rounded-full bg-white/[0.08] text-xs text-white cursor-pointer"
+                className="px-5 py-2 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-xs text-white cursor-pointer"
               >
                 إلغاء
               </button>
-              <button
-                type="button"
-                onClick={() => finishVideoNoteCapture(true)}
-                className="px-6 py-2 rounded-full bg-white text-black text-xs font-semibold cursor-pointer"
-              >
-                إرسال
-              </button>
+              {!videoNoteError && (
+                <button
+                  type="button"
+                  disabled={uploadingVideoNote}
+                  onClick={() => finishVideoNoteCapture(true)}
+                  className="px-6 py-2 rounded-full bg-white text-black text-xs font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {uploadingVideoNote ? 'جارٍ الإرسال...' : 'إرسال الفيديو'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1144,13 +1365,12 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         </div>
       )}
 
-      {/* New Chat Modal */}
+      {/* New Chat Modal: Real 1-on-1 DM User Search + Group + Community */}
       {newChatOpen && (
-        <div onClick={() => setNewChatOpen(false)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <form
+        <div onClick={() => setNewChatOpen(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
             onClick={e => e.stopPropagation()}
-            onSubmit={createConversation}
-            className="w-full max-w-[380px] rounded-2xl bg-[#131318] border border-white/[0.12] p-5 space-y-3"
+            className="w-full max-w-[400px] rounded-[24px] bg-[#131318] border border-white/[0.12] p-5 space-y-3.5 shadow-2xl"
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
               <span className="text-sm font-semibold text-white">محادثة جديدة</span>
@@ -1158,51 +1378,96 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <input
-              value={newChatTitle}
-              onChange={e => setNewChatTitle(e.target.value)}
-              placeholder="الاسم..."
-              className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => setNewChatAiEnabled(v => !v)}
-              className={`w-full px-3.5 py-2.5 rounded-xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
-                newChatAiEnabled
-                  ? 'bg-white/[0.08] border-white/25 text-white'
-                  : 'bg-[#0A0A0C] border-white/[0.08] text-[#8E8E93]'
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>تفعيل LM AI كعضو أساسي يرى المحادثة</span>
-              </span>
-              <span className={`w-2.5 h-2.5 rounded-full ${newChatAiEnabled ? 'bg-[#22C55E]' : 'bg-[#585860]'}`} />
-            </button>
-            <div className="flex items-center justify-between pt-1">
-              <div className="flex items-center gap-2 text-xs">
+
+            <div className="flex items-center gap-1.5 text-xs">
+              {[
+                { id: 'dm' as const, label: 'محادثة فردية' },
+                { id: 'group' as const, label: 'مجموعة' },
+                { id: 'community' as const, label: 'مجتمع' },
+              ].map(t => (
                 <button
+                  key={t.id}
                   type="button"
-                  onClick={() => setNewChatType('group')}
-                  className={`px-3 py-1.5 rounded-full border cursor-pointer ${
-                    newChatType === 'group' ? 'bg-white text-black border-white font-semibold' : 'border-white/[0.1] text-[#A1A1AA]'
+                  onClick={() => setNewChatType(t.id)}
+                  className={`flex-1 py-2 rounded-full border cursor-pointer transition-colors ${
+                    newChatType === t.id
+                      ? 'bg-white text-black border-white font-semibold'
+                      : 'border-white/[0.1] text-[#A1A1AA] hover:text-white'
                   }`}
                 >
-                  مجموعة
+                  {t.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setNewChatType('community')}
-                  className={`px-3 py-1.5 rounded-full border cursor-pointer ${
-                    newChatType === 'community' ? 'bg-white text-black border-white font-semibold' : 'border-white/[0.1] text-[#A1A1AA]'
-                  }`}
-                >
-                  مجتمع
-                </button>
-              </div>
-              <ChromeArrowButton type="submit" disabled={!newChatTitle.trim()} size={36} />
+              ))}
             </div>
-          </form>
+
+            {newChatType === 'dm' ? (
+              <div className="space-y-2.5">
+                <div className="h-10 rounded-full bg-[#0A0A0C] border border-white/[0.1] px-3.5 flex items-center gap-2">
+                  <Search className="w-3.5 h-3.5 text-[#7A7A85]" />
+                  <input
+                    autoFocus
+                    value={dmSearch}
+                    onChange={e => setDmSearch(e.target.value)}
+                    placeholder="ابحث بالاسم أو @اسم_المستخدم..."
+                    className="flex-1 bg-transparent text-xs text-white placeholder:text-[#585860] outline-none"
+                  />
+                </div>
+
+                <div className="max-h-[260px] overflow-y-auto divide-y divide-white/[0.06] rounded-2xl border border-white/[0.07] bg-[#0B0B0F]">
+                  {allUsers
+                    .filter(u => u.id !== user.id)
+                    .filter(
+                      u =>
+                        !dmSearch.trim() ||
+                        u.displayName.toLowerCase().includes(dmSearch.toLowerCase()) ||
+                        u.username.toLowerCase().includes(dmSearch.toLowerCase())
+                    )
+                    .map(u => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => startDirectDmWith(u)}
+                        className="w-full px-3.5 py-2.5 flex items-center gap-3 hover:bg-white/[0.05] text-start cursor-pointer transition-colors"
+                      >
+                        <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={36} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-semibold text-white truncate">{u.displayName}</div>
+                          <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{u.username}</div>
+                        </div>
+                        <span className="text-[11px] text-[#A1A1AA]">مراسلة</span>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={createConversation} className="space-y-3">
+                <input
+                  value={newChatTitle}
+                  onChange={e => setNewChatTitle(e.target.value)}
+                  placeholder={newChatType === 'group' ? 'اسم المجموعة...' : 'اسم المجتمع...'}
+                  className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setNewChatAiEnabled(v => !v)}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                    newChatAiEnabled
+                      ? 'bg-white/[0.08] border-white/25 text-white'
+                      : 'bg-[#0A0A0C] border-white/[0.08] text-[#8E8E93]'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>تفعيل LM AI كعضو أساسي يرى المحادثة</span>
+                  </span>
+                  <span className={`w-2.5 h-2.5 rounded-full ${newChatAiEnabled ? 'bg-[#22C55E]' : 'bg-[#585860]'}`} />
+                </button>
+                <div className="flex justify-end pt-1">
+                  <ChromeArrowButton type="submit" disabled={!newChatTitle.trim()} size={38} />
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       )}
     </div>

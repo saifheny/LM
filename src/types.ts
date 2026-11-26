@@ -6,6 +6,7 @@ export type NavTab =
   | 'live'
   | 'chat'
   | 'ai'
+  | 'profile'
   | 'settings';
 
 export type Lang = 'ar' | 'en';
@@ -76,6 +77,7 @@ export interface SocialPost {
   commentsCount: number;
   sharesCount: number;
   likedByMe: boolean;
+  isEdited?: boolean;
   createdAt: string;
 }
 
@@ -142,6 +144,7 @@ export interface ConversationItem {
   memberCount: number;
   aiEnabled?: boolean;
   creatorId?: string;
+  peerUserId?: string | null;
   lastMessage: string;
   lastMessageAt: string;
 }
@@ -163,6 +166,7 @@ export interface ChatMessageItem {
   mediaUrl: string | null;
   transcript: string | null;
   isSpoiler: boolean;
+  isEdited?: boolean;
   replyToId: string | null;
   replySender: string | null;
   replyText: string | null;
@@ -190,6 +194,7 @@ export interface VideoCommentItem {
   transcript: string | null;
   likesCount: number;
   likedByMe: boolean;
+  isEdited?: boolean;
   createdAt: string;
 }
 
@@ -252,4 +257,19 @@ export interface LiveRoomState {
   platformCutPct: number;
   totalGiftsEgp: number;
   viewersCount: number;
+}
+
+export interface NotificationItem {
+  id: string;
+  userId: string;
+  actorId: string;
+  actorName: string;
+  actorInitials: string;
+  actorAvatarUrl: string | null;
+  type: 'follow' | 'react' | 'comment' | 'message';
+  text: string;
+  refTab: NavTab;
+  refId: string | null;
+  isRead: boolean;
+  createdAt: string;
 }

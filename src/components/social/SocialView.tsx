@@ -20,6 +20,9 @@ import {
   Minimize2,
   Plus,
   Sparkles,
+  Pencil,
+  Trash2,
+  Check,
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination } from 'swiper/modules';
@@ -32,12 +35,13 @@ import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReactions';
 import { NavAiIcon } from '../shared/Icons2026Pro';
-import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
+import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface SocialViewProps {
   user: UserProfile;
   lang: Lang;
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
+  onOpenProfile?: (userId: string) => void;
 }
 
 function formatCount(n: number): string {
@@ -46,8 +50,10 @@ function formatCount(n: number): string {
   return String(n);
 }
 
-export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
+export function SocialView({ user, lang, lastWsEvent, onOpenProfile }: SocialViewProps) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [editingPostText, setEditingPostText] = useState('');
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [activeStory, setActiveStory] = useState<StoryItem | null>(null);
 
@@ -278,6 +284,29 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   async function handleRepost(postId: string) {
     const res = await apiPost<{ ok: boolean; sharesCount: number }>(`/api/posts/${postId}/repost`, {});
     setPosts(prev => prev.map(p => (p.id === postId ? { ...p, sharesCount: res.sharesCount } : p)));
+  }
+
+  async function saveEditedPost(postId: string) {
+    if (!editingPostText.trim()) return;
+    await api(`/api/posts/${postId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ userId: user.id, content: editingPostText.trim() }),
+    });
+    setEditingPostId(null);
+    setEditingPostText('');
+    await loadFeed();
+  }
+
+  async function deletePost(postId: string) {
+    await api(`/api/posts/${postId}?userId=${user.id}`, { method: 'DELETE' });
+    setPosts(prev => prev.filter(p => p.id !== postId));
+  }
+
+  async function deleteComment(postId: string, commentId: string) {
+    await api(`/api/post-comments/${commentId}?userId=${user.id}`, { method: 'DELETE' });
+    const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
+    setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
+    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: res.comments.length } : p)));
   }
 
   async function toggleThread(postId: string) {
@@ -552,26 +581,99 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
               <article key={post.id} className="px-4 py-5">
                 <div className="flex gap-3">
                   <div className="flex flex-col items-center">
-                    <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onOpenProfile?.(post.userId);
+                      }}
+                      className="cursor-pointer rounded-full"
+                    >
+                      <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
+                    </button>
                     {isThreadOpen && <div className="w-[1.5px] flex-1 bg-white/[0.12] mt-2" />}
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                      <span className="text-[14px] font-semibold text-[#F2F2F5] truncate">{post.displayName}</span>
-                      {post.verified && <VerifiedIcon />}
-                      <span className="text-xs text-[#7A7A85] font-mono-num">@{post.username}</span>
-                      <span className="text-[#585860]">·</span>
-                      <span className="text-xs text-[#7A7A85]">{post.createdAt}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onOpenProfile?.(post.userId);
+                          }}
+                          className="text-[14px] font-semibold text-[#F2F2F5] hover:underline truncate cursor-pointer"
+                        >
+                          {post.displayName}
+                        </button>
+                        {post.verified && <VerifiedIcon />}
+                        <span className="text-xs text-[#7A7A85] font-mono-num">@{post.username}</span>
+                        <span className="text-[#585860]">·</span>
+                        <span className="text-xs text-[#7A7A85]">{post.createdAt}</span>
+                        {post.isEdited && <span className="text-[10.5px] text-[#7A7A85]">(معدّل)</span>}
+                      </div>
+
+                      {post.userId === user.id && (
+                        <div onClick={e => e.stopPropagation()} className="flex items-center gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPostId(post.id);
+                              setEditingPostText(post.content);
+                            }}
+                            title="تعديل المنشور"
+                            className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deletePost(post.id)}
+                            title="حذف المنشور"
+                            className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-[#EF4444] flex items-center justify-center cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    {post.content && (
-                      <div
-                        onDoubleClick={() => handlePostReact(post.id, 'love', true)}
-                        className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
-                      >
-                        <RichMessageText text={post.content} />
+                    {editingPostId === post.id ? (
+                      <div onClick={e => e.stopPropagation()} className="mt-2 space-y-2">
+                        <textarea
+                          rows={3}
+                          value={editingPostText}
+                          onChange={e => setEditingPostText(e.target.value)}
+                          className="w-full rounded-2xl bg-[#131318] border border-white/[0.15] p-3 text-sm text-white outline-none resize-none"
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingPostId(null)}
+                            className="px-3 py-1.5 rounded-full bg-white/[0.07] text-xs text-[#A1A1AA] hover:text-white cursor-pointer"
+                          >
+                            إلغاء
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => saveEditedPost(post.id)}
+                            className="px-3.5 py-1.5 rounded-full bg-white text-black text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>حفظ</span>
+                          </button>
+                        </div>
                       </div>
+                    ) : (
+                      post.content && (
+                        <div
+                          onDoubleClick={() => handlePostReact(post.id, 'love', true)}
+                          className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
+                        >
+                          <RichMessageText text={post.content} />
+                        </div>
+                      )
                     )}
 
                     {/* Media: Single-Tap opens Lightbox | Double-Tap triggers Upvote + Pulse */}
@@ -740,25 +842,37 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                     </div>
                                   )}
 
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setReplyParentByPost(prev => ({
-                                        ...prev,
-                                        [post.id]: {
-                                          id: c.id,
-                                          name: c.displayName,
-                                          snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
-                                          isAi: Boolean(c.isAi),
-                                        },
-                                      }));
-                                      if (c.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
-                                    }}
-                                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
-                                  >
-                                    <CornerDownLeft className="w-3 h-3" />
-                                    <span>رد</span>
-                                  </button>
+                                  <div className="mt-1 flex items-center gap-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setReplyParentByPost(prev => ({
+                                          ...prev,
+                                          [post.id]: {
+                                            id: c.id,
+                                            name: c.displayName,
+                                            snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
+                                            isAi: Boolean(c.isAi),
+                                          },
+                                        }));
+                                        if (c.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
+                                    >
+                                      <CornerDownLeft className="w-3 h-3" />
+                                      <span>رد</span>
+                                    </button>
+                                    {c.userId === user.id && (
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteComment(post.id, c.id)}
+                                        className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#EF4444] cursor-pointer"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                        <span>حذف</span>
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
 

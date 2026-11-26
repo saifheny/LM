@@ -14,13 +14,15 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 11;
+const TARGET_DB_VERSION = 12;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
   if (verRow.user_version < TARGET_DB_VERSION) {
     db.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE IF EXISTS notifications;
+      DROP TABLE IF EXISTS user_follows;
       DROP TABLE IF EXISTS ai_messages;
       DROP TABLE IF EXISTS ai_sessions;
       DROP TABLE IF EXISTS post_reactions;
@@ -101,6 +103,7 @@ export function initDatabase() {
       likes_count INTEGER DEFAULT 0,
       comments_count INTEGER DEFAULT 0,
       shares_count INTEGER DEFAULT 0,
+      is_edited INTEGER DEFAULT 0,
       created_at TEXT DEFAULT 'منذ 18 د',
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
@@ -208,6 +211,8 @@ export function initDatabase() {
       is_encrypted INTEGER DEFAULT 1,
       ai_enabled INTEGER DEFAULT 0,
       creator_id TEXT DEFAULT 'u_youssef',
+      dm_key TEXT,
+      peer_user_id TEXT,
       member_count INTEGER DEFAULT 2,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -221,6 +226,7 @@ export function initDatabase() {
       media_url TEXT,
       transcript TEXT,
       is_spoiler INTEGER DEFAULT 0,
+      is_edited INTEGER DEFAULT 0,
       ai_summoned INTEGER DEFAULT 0,
       reply_to_id TEXT,
       reply_sender TEXT,
@@ -287,6 +293,25 @@ export function initDatabase() {
       model_label TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (session_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS user_follows (
+      follower_id TEXT NOT NULL,
+      following_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (follower_id, following_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      text TEXT NOT NULL,
+      ref_tab TEXT DEFAULT 'social',
+      ref_id TEXT,
+      is_read INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT 'الآن'
     );
   `);
 
@@ -422,14 +447,26 @@ function seedInitialData() {
   const insertConv = db.prepare(`
     INSERT INTO conversations (
       id, type, folder, title, description, avatar_color, avatar_url,
-      online_text, pinned_message, is_pinned, unread_count, is_encrypted, member_count, ai_enabled, creator_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      online_text, pinned_message, is_pinned, unread_count, is_encrypted, member_count, ai_enabled, creator_id, dm_key, peer_user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertConv.run('c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Host', '#27272A', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن', 'بروفة الصوت الساعة 8:30 قبل البث المباشر', 1, 2, 1, 2, 0, 'u_youssef');
-  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo', '#27272A', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 1, 1, 2, 0, 'u_youssef');
-  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#27272A', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 0, 1, 2, 0, 'u_youssef');
-  insertConv.run('c_founders', 'community', 'channels', 'Cairo Builders & Tech', 'مجتمع المطورين وصناع المحتوى', '#27272A', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل', 'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً', 0, 3, 0, 18940, 1, 'u_youssef');
-  insertConv.run('c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير', 'تنسيق التصوير والموسيقى', '#27272A', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين', null, 0, 0, 1, 14, 0, 'u_youssef');
+  insertConv.run('c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Host', '#27272A', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن', 'بروفة الصوت الساعة 8:30 قبل البث المباشر', 1, 2, 1, 2, 0, 'u_youssef', 'u_mariam::u_youssef', 'u_mariam');
+  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo', '#27272A', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 1, 1, 2, 0, 'u_youssef', 'u_karim::u_youssef', 'u_karim');
+  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#27272A', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 0, 1, 2, 0, 'u_youssef', 'u_nour::u_youssef', 'u_nour');
+  insertConv.run('c_founders', 'community', 'channels', 'Cairo Builders & Tech', 'مجتمع المطورين وصناع المحتوى', '#27272A', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل', 'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً', 0, 3, 0, 18940, 1, 'u_youssef', null, null);
+  insertConv.run('c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير', 'تنسيق التصوير والموسيقى', '#27272A', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين', null, 0, 0, 1, 14, 0, 'u_youssef', null, null);
+
+  const insertFollow = db.prepare('INSERT OR REPLACE INTO user_follows (follower_id, following_id) VALUES (?, ?)');
+  insertFollow.run('u_youssef', 'u_mariam');
+  insertFollow.run('u_mariam', 'u_youssef');
+  insertFollow.run('u_karim', 'u_youssef');
+
+  const insertNotif = db.prepare(`
+    INSERT INTO notifications (id, user_id, actor_id, type, text, ref_tab, ref_id, is_read, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertNotif.run('n_seed_1', 'u_youssef', 'u_mariam', 'message', 'أرسلت لك رسالة صوتية جديدة في الدردشة', 'chat', 'c_mariam', 0, 'منذ 5 د');
+  insertNotif.run('n_seed_2', 'u_youssef', 'u_karim', 'react', 'تفاعل مع منشورك الأخير في المجتمع', 'social', 'p_1', 0, 'منذ 14 د');
 
   const insertPostRx = db.prepare('INSERT OR REPLACE INTO post_reactions (post_id, user_id, reaction) VALUES (?, ?, ?)');
   insertPostRx.run('p_1', 'u_mariam', 'love');

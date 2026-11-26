@@ -10,8 +10,11 @@ import {
   LayoutGrid,
   PanelRightClose,
   PanelLeftClose,
+  Bell,
+  CheckCheck,
+  User,
 } from 'lucide-react';
-import { Lang, NavTab, UserProfile } from '../../types';
+import { Lang, NavTab, NotificationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import {
   NavCommunityIcon,
@@ -32,6 +35,11 @@ interface AppShellProps {
   onToggleLang: () => void;
   wsOnline: boolean;
   onSwitchUser: (u: UserProfile) => void;
+  onOpenProfile: (userId: string) => void;
+  notifications: NotificationItem[];
+  unreadNotifications: number;
+  onMarkNotificationsRead: (id?: string) => void;
+  onOpenNotification: (n: NotificationItem) => void;
   onLogout: () => void;
   children: React.ReactNode;
 }
@@ -176,6 +184,11 @@ export function AppShell({
   onToggleLang,
   wsOnline,
   onSwitchUser,
+  onOpenProfile,
+  notifications,
+  unreadNotifications,
+  onMarkNotificationsRead,
+  onOpenNotification,
   onLogout,
   children,
 }: AppShellProps) {
@@ -208,6 +221,7 @@ export function AppShell({
   }
 
   const [accountOpen, setAccountOpen] = useState(false);
+  const [notifsOpen, setNotifsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [searchRes, setSearchRes] = useState<{
@@ -235,6 +249,7 @@ export function AppShell({
       if (e.key === 'Escape') {
         setSearchOpen(false);
         setAccountOpen(false);
+        setNotifsOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -359,6 +374,29 @@ export function AppShell({
               <Search className="w-[20px] h-[20px] shrink-0" strokeWidth={1.75} />
               {!sidebarCollapsed && <span className="truncate">{lang === 'ar' ? 'بحث' : 'Search'}</span>}
             </button>
+
+            <button
+              type="button"
+              onClick={() => setNotifsOpen(v => !v)}
+              title={lang === 'ar' ? 'الإشعارات' : 'Notifications'}
+              className={`w-full h-11 rounded-2xl flex items-center text-[14px] transition-colors cursor-pointer ${
+                sidebarCollapsed ? 'justify-center px-0' : 'gap-3.5 px-3'
+              } ${
+                notifsOpen ? 'bg-white/[0.11] text-white font-semibold' : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <span className="relative flex items-center justify-center shrink-0">
+                <Bell className="w-[20px] h-[20px]" strokeWidth={1.75} />
+                {unreadNotifications > 0 && (
+                  <span className="absolute -top-1 -end-1 min-w-[14px] h-[14px] px-1 rounded-full bg-[#EF4444] text-white text-[9px] font-mono-num font-bold flex items-center justify-center">
+                    {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                  </span>
+                )}
+              </span>
+              {!sidebarCollapsed && (
+                <span className="truncate flex-1 text-start">{lang === 'ar' ? 'الإشعارات' : 'Notifications'}</span>
+              )}
+            </button>
           </nav>
         </div>
 
@@ -379,21 +417,35 @@ export function AppShell({
             {!sidebarCollapsed && <span className="truncate">API Hub</span>}
           </button>
 
-          <button
-            type="button"
-            onClick={() => setAccountOpen(true)}
-            className={`w-full p-2 rounded-2xl hover:bg-white/[0.05] flex items-center cursor-pointer transition-colors text-start ${
-              sidebarCollapsed ? 'justify-center' : 'gap-2.5'
-            }`}
-          >
-            <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={34} online={wsOnline} />
+          <div className={`flex items-center gap-1 ${sidebarCollapsed ? 'justify-center' : ''}`}>
+            <button
+              type="button"
+              onClick={() => onOpenProfile(user.id)}
+              title="الملف الشخصي"
+              className={`flex-1 min-w-0 p-2 rounded-2xl flex items-center cursor-pointer transition-colors text-start ${
+                sidebarCollapsed ? 'justify-center' : 'gap-2.5'
+              } ${activeTab === 'profile' ? 'bg-white/[0.11]' : 'hover:bg-white/[0.05]'}`}
+            >
+              <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={34} online={wsOnline} />
+              {!sidebarCollapsed && (
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-white truncate">{user.displayName}</div>
+                  <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{user.username}</div>
+                </div>
+              )}
+            </button>
+
             {!sidebarCollapsed && (
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold text-white truncate">{user.displayName}</div>
-                <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{user.username}</div>
-              </div>
+              <button
+                type="button"
+                onClick={() => setAccountOpen(true)}
+                title="الحسابات والإعدادات"
+                className="w-8 h-8 rounded-xl hover:bg-white/[0.07] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+              >
+                <User className="w-4 h-4" />
+              </button>
             )}
-          </button>
+          </div>
         </div>
       </aside>
 
@@ -479,9 +531,14 @@ export function AppShell({
               <button
                 type="button"
                 onClick={() => setAccountOpen(true)}
-                className="flex flex-col items-center justify-center gap-1 px-2 py-1 rounded-2xl cursor-pointer"
+                className="relative flex flex-col items-center justify-center gap-1 px-2 py-1 rounded-2xl cursor-pointer"
               >
-                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={24} online={wsOnline} />
+                <span className="relative">
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={24} online={wsOnline} />
+                  {unreadNotifications > 0 && (
+                    <span className="absolute -top-1 -end-1 w-2.5 h-2.5 rounded-full bg-[#EF4444] border border-black" />
+                  )}
+                </span>
                 <span className="text-[10px] leading-none text-[#7A7A85]">{lang === 'ar' ? 'حسابي' : 'Me'}</span>
               </button>
             </div>
@@ -532,6 +589,36 @@ export function AppShell({
                   <div className="text-xs text-[#7A7A85] font-mono-num">@{user.username}</div>
                 </div>
               </div>
+            </div>
+
+            <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenProfile(user.id);
+                  setAccountOpen(false);
+                }}
+                className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>ملفي الشخصي</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountOpen(false);
+                  setNotifsOpen(true);
+                }}
+                className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer relative"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>الإشعارات</span>
+                {unreadNotifications > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-[#EF4444] text-white text-[10px] font-mono-num">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </button>
             </div>
 
             <div className="py-1 border-b border-white/[0.08]">
@@ -628,7 +715,7 @@ export function AppShell({
                       key={u.id}
                       type="button"
                       onClick={() => {
-                        onSwitchUser(u);
+                        onOpenProfile(u.id);
                         setSearchOpen(false);
                       }}
                       className="w-full px-4 py-2 flex items-center gap-3 hover:bg-white/[0.04] cursor-pointer text-start"
@@ -678,6 +765,70 @@ export function AppShell({
                     </button>
                   ))}
                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Floating Simple Notifications Drawer */}
+      {notifsOpen && (
+        <div
+          onClick={() => setNotifsOpen(false)}
+          className="fixed inset-0 z-50 bg-black/55 backdrop-blur-xs flex items-end md:items-start md:justify-start justify-center p-4 md:pt-16 md:ps-[240px]"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-[360px] max-h-[68vh] rounded-[24px] bg-[#131319]/96 backdrop-blur-2xl border border-white/[0.12] overflow-hidden shadow-2xl flex flex-col text-start"
+          >
+            <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white">
+                <Bell className="w-3.5 h-3.5" />
+                <span>الإشعارات</span>
+                {unreadNotifications > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-[#EF4444] text-white text-[10px] font-mono-num">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </div>
+              {unreadNotifications > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onMarkNotificationsRead()}
+                  className="text-[11px] text-[#A1A1AA] hover:text-white flex items-center gap-1 cursor-pointer"
+                >
+                  <CheckCheck className="w-3.5 h-3.5" />
+                  <span>قراءة الكل</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
+              {notifications.length === 0 ? (
+                <div className="py-12 text-center text-xs text-[#7A7A85]">لا توجد إشعارات جديدة</div>
+              ) : (
+                notifications.map(n => (
+                  <button
+                    key={n.id}
+                    type="button"
+                    onClick={() => {
+                      onOpenNotification(n);
+                      setNotifsOpen(false);
+                    }}
+                    className={`w-full px-4 py-3 flex items-start gap-3 text-start hover:bg-white/[0.05] transition-colors cursor-pointer ${
+                      !n.isRead ? 'bg-white/[0.03]' : ''
+                    }`}
+                  >
+                    <UserAvatar initials={n.actorInitials} avatarUrl={n.actorAvatarUrl} size={34} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-[#F2F2F5] leading-snug">
+                        <span className="font-semibold me-1">{n.actorName}</span>
+                        <span className="text-[#C4C4CC]">{n.text}</span>
+                      </div>
+                      <div className="mt-1 text-[10.5px] text-[#7A7A85]">{n.createdAt}</div>
+                    </div>
+                    {!n.isRead && <span className="mt-1.5 w-2 h-2 rounded-full bg-[#EF4444] shrink-0" />}
+                  </button>
+                ))
               )}
             </div>
           </div>
