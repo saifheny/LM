@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile } from '../../types';
-import { UserAvatar, RichMessageText } from '../shared/LmBrandMark';
+import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, UserAvatar, RichMessageText } from '../shared/LmBrandMark';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramReactions';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
@@ -61,17 +61,66 @@ function isMostlyLatin(text: string): boolean {
 export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded, setChatInThread, setBottomDockHidden } = useLayout();
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
-  const [activeConvId, setActiveConvId] = useState<string>('c_mariam');
-  const [mobileShowList, setMobileShowList] = useState(true);
+  const [activeConvId, setActiveConvIdState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_chat_conv_id') || 'c_mariam';
+    } catch {
+      return 'c_mariam';
+    }
+  });
+  const [mobileShowList, setMobileShowListState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('lm_chat_in_thread') !== '1';
+    } catch {
+      return true;
+    }
+  });
   const [folder, setFolder] = useState<'all' | 'personal' | 'groups' | 'channels'>('all');
   const [search, setSearch] = useState('');
 
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraftState] = useState<string>(() => {
+    try {
+      const cid = localStorage.getItem('lm_chat_conv_id') || 'c_mariam';
+      return localStorage.getItem(`lm_draft_chat_${cid}`) || '';
+    } catch {
+      return '';
+    }
+  });
   const [replyTarget, setReplyTarget] = useState<ChatMessageItem | null>(null);
   const [sharedForAi, setSharedForAi] = useState<ChatMessageItem | null>(null);
   const [invokeAiMode, setInvokeAiMode] = useState(false);
-  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+
+  const setActiveConvId = useCallback((cid: string) => {
+    setActiveConvIdState(cid);
+    try {
+      localStorage.setItem('lm_chat_conv_id', cid);
+      setDraftState(localStorage.getItem(`lm_draft_chat_${cid}`) || '');
+    } catch {
+      setDraftState('');
+    }
+  }, []);
+
+  const setMobileShowList = useCallback((showList: boolean) => {
+    setMobileShowListState(showList);
+    try {
+      localStorage.setItem('lm_chat_in_thread', showList ? '0' : '1');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setDraft = useCallback(
+    (v: string) => {
+      setDraftState(v);
+      try {
+        localStorage.setItem(`lm_draft_chat_${activeConvId}`, v);
+      } catch {
+        // ignore
+      }
+    },
+    [activeConvId]
+  );
 
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [openPickerMsgId, setOpenPickerMsgId] = useState<string | null>(null);
@@ -253,23 +302,14 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   function handleDraftChange(v: string) {
     setDraft(v);
     if (v.trim()) setShowQuickRecordHint(false);
-    // Open slash/dash command menu immediately when typing "/" or "-"
-    if (v === '/' || v === '-') {
-      setSlashMenuOpen(true);
-    } else if (!v.startsWith('/') && !v.startsWith('-')) {
-      setSlashMenuOpen(false);
-    }
   }
 
-  function applySlashCommand(cmd: 'ai' | 'summarize') {
-    setSlashMenuOpen(false);
-    setInvokeAiMode(true);
-    if (cmd === 'summarize') {
-      const lastOther = [...messages].reverse().find(m => m.senderId !== user.id && m.msgType === 'text');
-      if (lastOther) setSharedForAi(lastOther);
-      setDraft('لخّص هذه الرسالة باختصار');
-    } else {
-      setDraft('/ai ');
+  function handleSelectReply(msg: ChatMessageItem) {
+    setReplyTarget(msg);
+    setSharedForAi(null);
+    // Replying directly to LM AI automatically keeps AI mode ON so you converse seamlessly!
+    if (msg.senderId === 'lm_ai' || msg.msgType === 'ai_reply') {
+      setInvokeAiMode(true);
     }
   }
 
@@ -298,10 +338,15 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
     const convTargetId = activeConvId;
     const explicitShared = sharedForAi;
     const activeReply = replyTarget;
-    const shouldInvokeAi = invokeAiMode || /^(\/ai|-ai|@lm\s*ai|\/)/i.test(raw) || /@(lm\s*ai|ai)\b/i.test(raw) || Boolean(explicitShared);
+    const replyingToAi = Boolean(activeReply && (activeReply.senderId === 'lm_ai' || activeReply.msgType === 'ai_reply'));
+    const shouldInvokeAi =
+      invokeAiMode ||
+      replyingToAi ||
+      /^(\/ai|-ai|@lm\s*ai|\/)/i.test(raw) ||
+      /@(lm\s*ai|ai)\b/i.test(raw) ||
+      Boolean(explicitShared);
 
     setDraft('');
-    setSlashMenuOpen(false);
     setComposerFocused(false);
     setReplyTarget(null);
     setSharedForAi(null);
@@ -324,6 +369,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
       mediaUrl: null,
       transcript: null,
       isSpoiler: false,
+      aiSummoned: shouldInvokeAi,
       replyToId: activeReply?.id || null,
       replySender: activeReply?.displayName || null,
       replyText: activeReply?.content?.slice(0, 80) || null,
@@ -339,6 +385,13 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
     }
 
     try {
+      // When replying to a person AND summoning AI, pass that person's message as context automatically!
+      const contextSnippet = explicitShared
+        ? `${explicitShared.displayName}: ${explicitShared.transcript || explicitShared.content}`
+        : activeReply && shouldInvokeAi
+        ? `${activeReply.senderId === 'lm_ai' ? 'LM AI (ردك السابق)' : activeReply.displayName}: ${activeReply.transcript || activeReply.content}`
+        : undefined;
+
       await apiPost(`/api/conversations/${convTargetId}/messages`, {
         senderId: user.id,
         content: cleaned,
@@ -347,8 +400,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         replySender: activeReply?.displayName || null,
         replyText: activeReply?.content?.slice(0, 80) || null,
         invokeAi: shouldInvokeAi,
-        // ONLY attach a snippet when the user EXPLICITLY selected a message for AI!
-        sharedSnippet: explicitShared ? `${explicitShared.displayName}: ${explicitShared.content}` : undefined,
+        sharedSnippet: contextSnippet,
       });
       await loadMessages(convTargetId);
       loadConversations();
@@ -378,15 +430,42 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   async function handleSendVoice(file: File, _durationSec: number, liveTranscript?: string | null) {
     setRecordingVoice(false);
     if (!activeConvId) return;
-    const up = await apiUploadFile(file);
-    await apiPost(`/api/conversations/${activeConvId}/messages`, {
-      senderId: user.id,
-      content: 'رسالة صوتية',
-      msgType: 'audio',
-      mediaUrl: up.url,
-      transcript: liveTranscript || null,
-    });
-    loadMessages(activeConvId);
+    const convTargetId = activeConvId;
+    const activeReply = replyTarget;
+    const explicitShared = sharedForAi;
+    const replyingToAi = Boolean(activeReply && (activeReply.senderId === 'lm_ai' || activeReply.msgType === 'ai_reply'));
+    const shouldInvokeAi = invokeAiMode || replyingToAi || Boolean(explicitShared);
+
+    setReplyTarget(null);
+    setSharedForAi(null);
+    setInvokeAiMode(false);
+
+    if (shouldInvokeAi) setAiTypingConvId(convTargetId);
+    try {
+      const up = await apiUploadFile(file);
+      const contextSnippet = explicitShared
+        ? `${explicitShared.displayName}: ${explicitShared.transcript || explicitShared.content}`
+        : activeReply && shouldInvokeAi
+        ? `${activeReply.senderId === 'lm_ai' ? 'LM AI (ردك السابق)' : activeReply.displayName}: ${activeReply.transcript || activeReply.content}`
+        : undefined;
+
+      await apiPost(`/api/conversations/${convTargetId}/messages`, {
+        senderId: user.id,
+        content: 'رسالة صوتية',
+        msgType: 'audio',
+        mediaUrl: up.url,
+        transcript: liveTranscript || null,
+        replyToId: activeReply?.id || null,
+        replySender: activeReply?.displayName || null,
+        replyText: activeReply?.content?.slice(0, 80) || null,
+        invokeAi: shouldInvokeAi,
+        sharedSnippet: contextSnippet,
+      });
+      await loadMessages(convTargetId);
+      loadConversations();
+    } finally {
+      setAiTypingConvId(cur => (cur === convTargetId ? null : cur));
+    }
   }
 
   async function toggleReaction(msgId: string, reactionKey: string) {
@@ -428,44 +507,46 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
           mobileShowList ? 'flex' : 'hidden md:flex'
         } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#0A0A0C] border-e border-white/[0.07]`}
       >
-        <div className="p-3.5 border-b border-white/[0.07] space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-9 rounded-full bg-[#131317] border border-white/[0.08] px-3.5 flex items-center gap-2">
-              <Search className="w-3.5 h-3.5 text-[#71717A]" />
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder={lang === 'ar' ? 'بحث...' : 'Search...'}
-                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#585860] outline-none"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setNewChatOpen(true)}
-              className="w-9 h-9 rounded-full bg-[#131317] border border-white/[0.08] hover:border-white/25 text-[#E4E4E7] flex items-center justify-center cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="flex items-center gap-4 text-xs">
-            {[
-              { id: 'all' as const, ar: 'الكل', en: 'All' },
-              { id: 'personal' as const, ar: 'شخصي', en: 'Direct' },
-              { id: 'groups' as const, ar: 'مجموعات', en: 'Groups' },
-              { id: 'channels' as const, ar: 'مجتمعات', en: 'Communities' },
-            ].map(f => (
+        <div className="p-2.5">
+          <div className="p-3 rounded-[22px] bg-[#121217]/92 backdrop-blur-xl border border-white/[0.08] space-y-2.5 shadow-lg">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-9 rounded-full bg-[#0A0A0E] border border-white/[0.08] px-3.5 flex items-center gap-2">
+                <Search className="w-3.5 h-3.5 text-[#71717A]" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={lang === 'ar' ? 'بحث...' : 'Search...'}
+                  className="flex-1 bg-transparent text-xs text-white placeholder:text-[#585860] outline-none"
+                />
+              </div>
               <button
-                key={f.id}
                 type="button"
-                onClick={() => setFolder(f.id)}
-                className={`pb-1 border-b-2 transition-colors cursor-pointer ${
-                  folder === f.id ? 'border-white text-white font-semibold' : 'border-transparent text-[#7A7A85] hover:text-[#D4D4D8]'
-                }`}
+                onClick={() => setNewChatOpen(true)}
+                className="w-9 h-9 rounded-full bg-[#0A0A0E] border border-white/[0.08] hover:border-white/25 text-[#E4E4E7] flex items-center justify-center cursor-pointer shrink-0"
               >
-                {lang === 'ar' ? f.ar : f.en}
+                <Plus className="w-4 h-4" />
               </button>
-            ))}
+            </div>
+
+            <div className="flex items-center gap-3.5 text-xs px-1">
+              {[
+                { id: 'all' as const, ar: 'الكل', en: 'All' },
+                { id: 'personal' as const, ar: 'شخصي', en: 'Direct' },
+                { id: 'groups' as const, ar: 'مجموعات', en: 'Groups' },
+                { id: 'channels' as const, ar: 'مجتمعات', en: 'Communities' },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFolder(f.id)}
+                  className={`pb-1 border-b-2 transition-colors cursor-pointer ${
+                    folder === f.id ? 'border-white text-white font-semibold' : 'border-transparent text-[#7A7A85] hover:text-[#D4D4D8]'
+                  }`}
+                >
+                  {lang === 'ar' ? f.ar : f.en}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -598,7 +679,6 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
             setOpenPickerMsgId(null);
             setTranslateMenuMsgId(null);
             setTranslations({});
-            setSlashMenuOpen(false);
             setShowQuickRecordHint(false);
             setComposerFocused(false);
             setMobileNavExpanded(false);
@@ -690,15 +770,22 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                         className={`px-3.5 py-2.5 text-[14px] leading-relaxed ${
                           isAi
                             ? 'rounded-2xl bg-[#15151B] border border-white/[0.14] text-[#F2F2F5]'
+                            : msg.aiSummoned
+                            ? `rounded-2xl ${isMine ? 'rounded-ee-sm' : 'rounded-es-sm'} border lm-ai-summon-ring text-[#F2F2F5]`
                             : isMine
                             ? 'rounded-2xl rounded-ee-sm bg-[#1B1B21] text-[#F2F2F5]'
                             : 'rounded-2xl rounded-es-sm bg-[#131317] text-[#F2F2F5]'
                         }`}
                       >
                         {isAi && (
-                          <div className="text-[10.5px] font-mono-num text-[#A1A1AA] mb-1 flex items-center gap-1">
-                            <Sparkles className="w-3 h-3" />
-                            <span>LM AI</span>
+                          <div className="mb-1.5 flex items-center gap-1.5">
+                            <AiSummonBadge label="LM AI" compact />
+                          </div>
+                        )}
+
+                        {!isAi && msg.aiSummoned && (
+                          <div className="mb-1.5 flex items-center justify-end">
+                            <AiSummonBadge label="AI" compact />
                           </div>
                         )}
 
@@ -720,6 +807,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                             transcript={msg.transcript}
                             recordId={msg.id}
                             table="messages"
+                            accent={msg.aiSummoned ? 'ai' : 'default'}
                             isMine={isMine}
                           />
                         ) : msg.isSpoiler && !revealedSpoilers[msg.id] ? (
@@ -734,7 +822,9 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           <div>
                             {isAi && !translated ? (
                               <div className="prose-sm space-y-1.5 text-[#F2F2F5] leading-relaxed">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                  {msg.content}
+                                </ReactMarkdown>
                               </div>
                             ) : (
                               <RichMessageText text={translated ? translated.text : msg.content} />
@@ -803,7 +893,8 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
 
                     <button
                       type="button"
-                      onClick={() => setReplyTarget(msg)}
+                      onClick={() => handleSelectReply(msg)}
+                      title={isAi ? 'الرد على LM AI' : 'رد'}
                       className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
                     >
                       <CornerUpLeft className="w-3.5 h-3.5" />
@@ -812,9 +903,11 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     <button
                       type="button"
                       onClick={() => {
+                        setReplyTarget(msg);
                         setSharedForAi(msg);
                         setInvokeAiMode(true);
                       }}
+                      title="اسأل AI عن هذه الرسالة"
                       className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
@@ -925,30 +1018,6 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 </div>
               )}
 
-              {/* Slash / Dash Command Palette for Summoning AI */}
-              {slashMenuOpen && (
-                <div className="p-1.5 rounded-2xl bg-[#16161C]/96 backdrop-blur-xl border border-white/[0.14] w-fit space-y-0.5 shadow-2xl">
-                  <button
-                    type="button"
-                    onClick={() => applySlashCommand('ai')}
-                    className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs text-white cursor-pointer text-start"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span className="font-mono-num text-[#A1A1AA]">/ai</span>
-                    <span>استدعاء الذكاء الاصطناعي</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applySlashCommand('summarize')}
-                    className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs text-white cursor-pointer text-start"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span className="font-mono-num text-[#A1A1AA]">/summarize</span>
-                    <span>تلخيص آخر رسالة</span>
-                  </button>
-                </div>
-              )}
-
               {/* Quick Record Trigger Above Single Voice/Video Toggle */}
               {showQuickRecordHint && !hasText && !recordingVoice && (
                 <div className="flex justify-end px-1">
@@ -962,7 +1031,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                     className="px-3.5 py-1.5 rounded-full bg-[#16161C] border border-white/[0.15] text-xs text-white flex items-center gap-1.5 cursor-pointer hover:bg-white hover:text-black transition-colors"
                   >
                     {mediaBtnMode === 'voice' ? <Mic className="w-3.5 h-3.5" /> : <TelegramVideoNoteIcon className="w-4 h-4" />}
-                    <span>{mediaBtnMode === 'voice' ? 'تسجيل صوتي' : 'تسجيل فيديو دائري'}</span>
+                    <span>{mediaBtnMode === 'voice' ? (invokeAiMode ? 'تسجيل صوتي لـ AI' : 'تسجيل صوتي') : 'تسجيل فيديو دائري'}</span>
                   </button>
                 </div>
               )}
@@ -975,7 +1044,11 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
 
                 <div className="flex-1 min-w-0">
                   {recordingVoice ? (
-                    <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={handleSendVoice} />
+                    <LiveVoiceRecorder
+                      accent={invokeAiMode ? 'ai' : 'default'}
+                      onCancel={() => setRecordingVoice(false)}
+                      onSend={handleSendVoice}
+                    />
                   ) : (
                     <ObsidianComposerPill
                       value={draft}
@@ -985,7 +1058,9 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                       onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
                       placeholder={
                         invokeAiMode
-                          ? 'اسأل الذكاء الاصطناعي...'
+                          ? replyTarget
+                            ? `اسأل AI عن رسالة ${replyTarget.displayName}...`
+                            : 'اسأل الذكاء الاصطناعي...'
                           : lang === 'ar'
                           ? 'اكتب رسالة...'
                           : 'Message...'
@@ -993,26 +1068,29 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                       extraEnd={
                         <button
                           type="button"
-                          onClick={() => {
-                            if (invokeAiMode) {
-                              setInvokeAiMode(false);
-                              setSlashMenuOpen(false);
-                            } else {
-                              setInvokeAiMode(true);
-                              setSlashMenuOpen(true);
-                            }
-                          }}
-                          title="استدعاء الذكاء الاصطناعي"
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
-                            invokeAiMode || slashMenuOpen ? 'bg-white text-black' : 'text-[#7A7A85] hover:text-white'
+                          onClick={() => setInvokeAiMode(v => !v)}
+                          title={invokeAiMode ? 'إيقاف استدعاء AI' : 'تفعيل استدعاء الذكاء الاصطناعي'}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                            invokeAiMode
+                              ? 'bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white shadow-[0_2px_12px_rgba(99,102,241,0.5)]'
+                              : 'text-[#7A7A85] hover:text-white'
                           }`}
                         >
-                          <NavAiIcon active={invokeAiMode || slashMenuOpen} className="w-[18px] h-[18px]" />
+                          <NavAiIcon active={invokeAiMode} className="w-[18px] h-[18px]" />
                         </button>
                       }
                       customAction={
                         hasText ? (
                           <ChromeArrowButton type="submit" size={38} />
+                        ) : invokeAiMode ? (
+                          <button
+                            type="button"
+                            onClick={() => setRecordingVoice(true)}
+                            title="تسجيل رسالة صوتية للذكاء الاصطناعي"
+                            className="w-[38px] h-[38px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_16px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
+                          >
+                            <Mic className="w-[17px] h-[17px]" strokeWidth={2} />
+                          </button>
                         ) : (
                           <button
                             type="button"

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Sparkles } from 'lucide-react';
+import type { Components } from 'react-markdown';
 
 export function LmBrandMark({ size = 34 }: { size?: number }) {
   return (
@@ -12,6 +13,18 @@ export function LmBrandMark({ size = 34 }: { size?: number }) {
         <path d="M16.5 25V7L22 16.5L27.5 7V25" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </div>
+  );
+}
+
+/**
+ * Luxury Distinct AI Summon Emblem — unmistakably marks any user message/comment/voice calling LM AI
+ */
+export function AiSummonBadge({ label = 'AI', compact = false }: { label?: string; compact?: boolean }) {
+  return (
+    <span className={`lm-ai-badge ${compact ? '!px-1.5 !py-[1px] !text-[9px]' : ''}`}>
+      <Sparkles className={compact ? 'w-2.5 h-2.5 fill-current' : 'w-3 h-3 fill-current'} strokeWidth={1.8} />
+      <span className="font-mono-num leading-none">{label}</span>
+    </span>
   );
 }
 
@@ -72,9 +85,50 @@ export function VerifiedIcon() {
   );
 }
 
+/** Shared ReactMarkdown link renderer with bright white specular shine effect */
+export const MARKDOWN_LINK_COMPONENTS: Components = {
+  a: ({ href, children, ...props }) => (
+    <a
+      {...props}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={e => e.stopPropagation()}
+      className="lm-link-shine"
+    >
+      {children}
+    </a>
+  ),
+};
+
+const URL_TOKEN_RX = /(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+)/gi;
+
+function renderTextWithShiningLinks(str: string, keyPrefix: string) {
+  const parts = str.split(URL_TOKEN_RX);
+  return parts.map((part, idx) => {
+    if (/^(https?:\/\/|www\.)/i.test(part)) {
+      const href = /^https?:\/\//i.test(part) ? part : `https://${part}`;
+      return (
+        <a
+          key={`${keyPrefix}-lnk-${idx}`}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          dir="ltr"
+          className="lm-link-shine"
+        >
+          {part}
+        </a>
+      );
+    }
+    return <React.Fragment key={`${keyPrefix}-txt-${idx}`}>{part}</React.Fragment>;
+  });
+}
+
 export function RichMessageText({ text }: { text: string }) {
   const lines = text.split('\n');
-  const renderInline = (line: string) => {
+  const renderInline = (line: string, lineIdx: number) => {
     const tokens = line.split(/(\*\*[^*]+\*\*|`[^`]+`|_[^_]+_)/g);
     return tokens.map((tok, i) => {
       if (tok.startsWith('**') && tok.endsWith('**')) {
@@ -90,7 +144,7 @@ export function RichMessageText({ text }: { text: string }) {
       if (tok.startsWith('_') && tok.endsWith('_') && tok.length > 2) {
         return <em key={i} className="opacity-85">{tok.slice(1, -1)}</em>;
       }
-      return <React.Fragment key={i}>{tok}</React.Fragment>;
+      return <React.Fragment key={i}>{renderTextWithShiningLinks(tok, `${lineIdx}-${i}`)}</React.Fragment>;
     });
   };
 
@@ -102,11 +156,11 @@ export function RichMessageText({ text }: { text: string }) {
         if (line.startsWith('> ')) {
           return (
             <div key={idx} className="border-s-2 border-white/25 ps-2.5 py-0.5 text-[#A1A1AA]">
-              {renderInline(line.slice(2))}
+              {renderInline(line.slice(2), idx)}
             </div>
           );
         }
-        return <div key={idx}>{renderInline(line)}</div>;
+        return <div key={idx}>{renderInline(line, idx)}</div>;
       })}
     </div>
   );

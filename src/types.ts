@@ -91,6 +91,7 @@ export interface PostCommentItem {
   avatarUrl: string | null;
   verified: boolean;
   isAi?: boolean;
+  aiSummoned?: boolean;
   content: string;
   audioUrl: string | null;
   audioDurationSec: number;
@@ -154,6 +155,9 @@ export interface ChatMessageItem {
   avatarColor: string;
   avatarInitials: string;
   avatarUrl: string | null;
+  verified?: boolean;
+  isAi?: boolean;
+  aiSummoned?: boolean;
   content: string;
   msgType: 'text' | 'image' | 'audio' | 'video_note' | 'file' | 'ai_reply';
   mediaUrl: string | null;
@@ -177,6 +181,9 @@ export interface VideoCommentItem {
   avatarColor: string;
   avatarInitials: string;
   avatarUrl: string | null;
+  verified?: boolean;
+  isAi?: boolean;
+  aiSummoned?: boolean;
   content: string;
   audioUrl: string | null;
   audioDurationSec: number;

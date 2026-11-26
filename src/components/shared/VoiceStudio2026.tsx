@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Mic, X, Captions, Loader2, AlertCircle } from 'lucide-react';
+import { Play, Pause, Mic, X, Captions, Loader2, AlertCircle, Sparkles } from 'lucide-react';
 import { ChromeArrowButton } from './HardwareUI';
 import { apiPost } from '../../lib/api';
 
@@ -30,13 +30,15 @@ export function SmartVoicePill({
   table,
   isMine = false,
   compact = false,
+  accent = 'default',
 }: {
   url: string;
   transcript?: string | null;
   recordId?: string;
-  table?: 'messages' | 'post_comments' | 'video_comments';
+  table?: 'messages' | 'post_comments' | 'video_comments' | 'ai_messages';
   isMine?: boolean;
   compact?: boolean;
+  accent?: 'default' | 'ai';
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
@@ -64,8 +66,8 @@ export function SmartVoicePill({
 
     const ws = WaveSurfer.create({
       container: containerRef.current,
-      waveColor: 'rgba(255,255,255,0.24)',
-      progressColor: '#F5F5F7',
+      waveColor: accent === 'ai' ? 'rgba(129,140,248,0.34)' : 'rgba(255,255,255,0.24)',
+      progressColor: accent === 'ai' ? '#38BDF8' : '#F5F5F7',
       cursorWidth: 0,
       barWidth: 2,
       barGap: 2,
@@ -90,7 +92,7 @@ export function SmartVoicePill({
       ws.destroy();
       wsRef.current = null;
     };
-  }, [url, isMine, compact]);
+  }, [url, isMine, compact, accent]);
 
   function togglePlay(e: React.MouseEvent) {
     e.stopPropagation();
@@ -167,7 +169,11 @@ export function SmartVoicePill({
         <button
           type="button"
           onClick={togglePlay}
-          className="w-8 h-8 rounded-full bg-[#F5F5F7] text-black flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90"
+          className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90 ${
+            accent === 'ai'
+              ? 'bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white shadow-[0_2px_12px_rgba(99,102,241,0.45)]'
+              : 'bg-[#F5F5F7] text-black'
+          }`}
         >
           {playing ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ms-0.5" />}
         </button>
@@ -281,9 +287,11 @@ function pickSupportedAudioMime(): { mimeType: string; ext: string } {
 export function LiveVoiceRecorder({
   onCancel,
   onSend,
+  accent = 'default',
 }: {
   onCancel: () => void;
   onSend: (audioFile: File, durationSec: number, liveTranscript?: string | null) => void;
+  accent?: 'default' | 'ai';
 }) {
   const BAR_COUNT = 30;
   const [bars, setBars] = useState<number[]>(() => Array(BAR_COUNT).fill(12));
@@ -461,7 +469,13 @@ export function LiveVoiceRecorder({
   const secStr = (elapsedMs / 1000).toFixed(1);
 
   return (
-    <div className="w-full min-h-[52px] rounded-full bg-[#070709]/95 backdrop-blur-md border border-white/[0.11] ps-2.5 pe-1.5 py-1.5 flex items-center gap-3 text-[#F5F5F7]">
+    <div
+      className={`w-full min-h-[52px] rounded-full backdrop-blur-xl border ps-2.5 pe-1.5 py-1.5 flex items-center gap-3 text-[#F5F5F7] ${
+        accent === 'ai'
+          ? 'bg-[#0C0E18]/96 border-[#6366F1]/45 shadow-[0_8px_28px_rgba(99,102,241,0.22)]'
+          : 'bg-[#070709]/95 border-white/[0.11]'
+      }`}
+    >
       <button
         type="button"
         onClick={() => {
@@ -487,9 +501,9 @@ export function LiveVoiceRecorder({
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-1.5 text-xs font-mono-num text-[#EF4444] shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
-            <Mic className="w-3.5 h-3.5" />
+          <div className={`flex items-center gap-1.5 text-xs font-mono-num shrink-0 ${accent === 'ai' ? 'text-[#38BDF8]' : 'text-[#EF4444]'}`}>
+            <span className={`w-2 h-2 rounded-full animate-pulse ${accent === 'ai' ? 'bg-[#38BDF8]' : 'bg-[#EF4444]'}`} />
+            {accent === 'ai' ? <Sparkles className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
             <span>{secStr}s</span>
           </div>
 
@@ -499,7 +513,17 @@ export function LiveVoiceRecorder({
                 key={i}
                 style={{ height: `${h}%` }}
                 className={`w-[2.5px] rounded-full transition-[height] duration-75 ${
-                  h > 65 ? 'bg-white' : h > 28 ? 'bg-[#D4D4D8]' : 'bg-white/35'
+                  accent === 'ai'
+                    ? h > 65
+                      ? 'bg-[#38BDF8]'
+                      : h > 28
+                      ? 'bg-[#818CF8]'
+                      : 'bg-[#6366F1]/40'
+                    : h > 65
+                    ? 'bg-white'
+                    : h > 28
+                    ? 'bg-[#D4D4D8]'
+                    : 'bg-white/35'
                 }`}
               />
             ))}

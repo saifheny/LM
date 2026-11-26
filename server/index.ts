@@ -203,28 +203,15 @@ function detectAudioMime(filePath: string): string {
   return 'audio/webm';
 }
 
-app.post('/api/transcribe', async (req, res) => {
-  const { audioUrl, table, recordId } = req.body as {
-    audioUrl?: string;
-    table?: 'messages' | 'post_comments' | 'video_comments';
-    recordId?: string;
-  };
-
-  if (!audioUrl || !audioUrl.startsWith('/uploads/')) {
-    return res.status(400).json({ ok: false, error: 'رابط الملف الصوتي غير صالح.' });
-  }
-
+async function transcribeAudioFile(audioUrl: string): Promise<{ transcript: string; modelUsed: string } | null> {
+  if (!audioUrl || !audioUrl.startsWith('/uploads/')) return null;
   const rel = audioUrl.replace(/^\/uploads\//, '');
   const resolved = path.resolve(UPLOADS_DIR, rel);
-  if (!resolved.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(resolved)) {
-    return res.status(404).json({ ok: false, error: 'الملف الصوتي غير موجود.' });
-  }
+  if (!resolved.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(resolved)) return null;
 
   const cfg = loadProviderConfig();
   const audioBuffer = fs.readFileSync(resolved);
   const mimeType = detectAudioMime(resolved);
-  let transcript = '';
-  let modelUsed = '';
 
   // 1. Primary: Google Gemini multimodal native audio transcription (Arabic + English verbatim)
   if (cfg.geminiApiKey) {
@@ -258,11 +245,7 @@ app.post('/api/transcribe', async (req, res) => {
             candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
           };
           const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
-          if (out) {
-            transcript = out;
-            modelUsed = model;
-            break;
-          }
+          if (out) return { transcript: out, modelUsed: model };
         }
       } catch {
         // try next model
@@ -271,7 +254,7 @@ app.post('/api/transcribe', async (req, res) => {
   }
 
   // 2. Fallback: OpenAI or Groq Whisper
-  if (!transcript && (cfg.openaiApiKey || cfg.groqApiKey)) {
+  if (cfg.openaiApiKey || cfg.groqApiKey) {
     const useGroq = !cfg.openaiApiKey && Boolean(cfg.groqApiKey);
     const endpoint = useGroq
       ? 'https://api.groq.com/openai/v1/audio/transcriptions'
@@ -290,33 +273,47 @@ app.post('/api/transcribe', async (req, res) => {
       });
       if (resp.ok) {
         const d = (await resp.json()) as { text?: string };
-        if (d.text?.trim()) {
-          transcript = d.text.trim();
-          modelUsed = whisperModel;
-        }
+        if (d.text?.trim()) return { transcript: d.text.trim(), modelUsed: whisperModel };
       }
     } catch {
       // handled below
     }
   }
 
-  if (!transcript) {
+  return null;
+}
+
+app.post('/api/transcribe', async (req, res) => {
+  const { audioUrl, table, recordId } = req.body as {
+    audioUrl?: string;
+    table?: 'messages' | 'post_comments' | 'video_comments' | 'ai_messages';
+    recordId?: string;
+  };
+
+  if (!audioUrl || !audioUrl.startsWith('/uploads/')) {
+    return res.status(400).json({ ok: false, error: 'رابط الملف الصوتي غير صالح.' });
+  }
+
+  const out = await transcribeAudioFile(audioUrl);
+  if (!out) {
     return res.status(503).json({
       ok: false,
       error: 'تعذر تحويل الصوت إلى نص الآن. تأكد من إضافة مفتاح Gemini أو OpenAI أو Groq في الإعدادات.',
     });
   }
 
-  // Persist real transcript to SQLite so future clicks are instantaneous
-  if (recordId && (table === 'messages' || table === 'post_comments' || table === 'video_comments')) {
+  if (
+    recordId &&
+    (table === 'messages' || table === 'post_comments' || table === 'video_comments' || table === 'ai_messages')
+  ) {
     try {
-      db.prepare(`UPDATE ${table} SET transcript = ? WHERE id = ?`).run(transcript, recordId);
+      db.prepare(`UPDATE ${table} SET transcript = ? WHERE id = ?`).run(out.transcript, recordId);
     } catch {
       // ignore if record not found
     }
   }
 
-  return res.json({ ok: true, transcript, modelUsed });
+  return res.json({ ok: true, transcript: out.transcript, modelUsed: out.modelUsed });
 });
 
 // ============================================================
@@ -681,6 +678,7 @@ app.get('/api/posts/:id/comments', (req, res) => {
         avatarUrl: isAi ? null : (r.avatar_url ? String(r.avatar_url) : null),
         verified: isAi ? true : Boolean(r.verified),
         isAi,
+        aiSummoned: Boolean(r.ai_summoned),
         content: r.content || '',
         audioUrl: r.audio_url ? String(r.audio_url) : null,
         audioDurationSec: Number(r.audio_duration_sec || 6),
@@ -704,34 +702,76 @@ app.post('/api/posts/:id/comments', async (req, res) => {
   if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف ردًا.' });
 
   const id = `pc_${uuid().slice(0, 8)}`;
-  const cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+  let cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+
+  // Check if replying directly to LM AI comment -> automatically summon AI to continue conversation!
+  let parentRow: { id: string; user_id: string; parent_id?: string | null; content?: string; transcript?: string | null; display_name?: string } | undefined;
+  if (parentId) {
+    parentRow = db.prepare(`
+      SELECT c.id, c.user_id, c.parent_id, c.content, c.transcript, u.display_name
+      FROM post_comments c LEFT JOIN users u ON c.user_id = u.id
+      WHERE c.id = ?
+    `).get(parentId) as typeof parentRow;
+  }
+
+  const shouldCallAi =
+    Boolean(invokeAi) ||
+    Boolean(content && /@(lm\s*ai|ai)\b/i.test(content)) ||
+    parentRow?.user_id === 'lm_ai';
+
+  // If voice note summons AI and doesn't have a transcript yet, transcribe it automatically first!
+  if (shouldCallAi && audioUrl && !cleanTranscript) {
+    const tr = await transcribeAudioFile(audioUrl);
+    if (tr?.transcript) cleanTranscript = tr.transcript;
+  }
+
+  // Keep nested replies flat under root thread parent if replying to a sub-reply
+  const effectiveParentId = parentRow?.parent_id ? parentRow.parent_id : parentId || null;
+
   db.prepare(`
-    INSERT INTO post_comments (id, post_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO post_comments (id, post_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, ai_summoned, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    id, req.params.id, userId, parentId || null, (content || '').trim(),
-    audioUrl || null, Number(audioDurationSec || 5), cleanTranscript, 'الآن'
+    id,
+    req.params.id,
+    userId,
+    effectiveParentId,
+    (content || '').trim(),
+    audioUrl || null,
+    Number(audioDurationSec || 5),
+    cleanTranscript,
+    shouldCallAi ? 1 : 0,
+    'الآن'
   );
   db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
 
-  // Summon LM AI directly inside community comments when invoked or tagged with @LM AI
   let aiReply = null;
-  const shouldCallAi = Boolean(invokeAi) || (content && /@(lm\s*ai|ai)/i.test(content));
-  if (shouldCallAi && content?.trim()) {
+  if (shouldCallAi) {
     const postRow = db.prepare('SELECT content FROM posts WHERE id = ?').get(req.params.id) as { content?: string } | undefined;
-    const cleanQuestion = content.replace(/@(lm\s*ai|ai)/gi, '').trim() || 'اشرح هذا المنشور باختصار';
+    const rawQuestion = (content || '').trim() || cleanTranscript || '';
+    const cleanQuestion = rawQuestion.replace(/@(lm\s*ai|ai)/gi, '').trim() || 'اشرح هذا المنشور باختصار';
+
+    const ctxParts: string[] = [];
+    if (postRow?.content) ctxParts.push(`محتوى المنشور: ${postRow.content}`);
+    if (parentRow) {
+      const pName = parentRow.user_id === 'lm_ai' ? 'LM AI (ردك السابق)' : (parentRow.display_name || 'مستخدم');
+      const pBody = parentRow.content || parentRow.transcript || '';
+      if (pBody) ctxParts.push(`التعليق الذي يرد عليه المستخدم (${pName}): ${pBody}`);
+    }
+
     const aiOut = await runLmAi({
       userId,
       prompt: cleanQuestion,
       source: 'social',
       explicitUserConsent: true,
-      sharedContext: postRow?.content || undefined,
+      sharedContext: ctxParts.join('\n') || undefined,
     });
     const aiId = `pc_${uuid().slice(0, 8)}`;
+    const aiReplyParent = effectiveParentId || id;
     db.prepare(`
-      INSERT INTO post_comments (id, post_id, user_id, parent_id, content, created_at)
-      VALUES (?, ?, 'lm_ai', ?, ?, 'الآن')
-    `).run(aiId, req.params.id, id, aiOut.reply);
+      INSERT INTO post_comments (id, post_id, user_id, parent_id, content, ai_summoned, created_at)
+      VALUES (?, ?, 'lm_ai', ?, ?, 0, 'الآن')
+    `).run(aiId, req.params.id, aiReplyParent, aiOut.reply);
     db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
     aiReply = { id: aiId, ...aiOut };
   }
@@ -835,12 +875,13 @@ app.post('/api/videos/:id/save', (req, res) => {
 app.get('/api/videos/:id/comments', (req, res) => {
   const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
-    SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url
-    FROM video_comments c JOIN users u ON c.user_id = u.id
+    SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM video_comments c LEFT JOIN users u ON c.user_id = u.id
     WHERE c.video_id = ? ORDER BY c.rowid ASC
   `).all(req.params.id) as Array<Record<string, unknown>>;
 
   const comments = rows.map(r => {
+    const isAi = r.user_id === 'lm_ai';
     let likedBy: string[] = [];
     try { likedBy = JSON.parse(String(r.liked_by_json || '[]')); } catch { likedBy = []; }
     return {
@@ -848,11 +889,14 @@ app.get('/api/videos/:id/comments', (req, res) => {
       videoId: r.video_id,
       userId: r.user_id,
       parentId: r.parent_id ? String(r.parent_id) : null,
-      displayName: r.display_name,
-      username: r.username,
-      avatarColor: r.avatar_color,
-      avatarInitials: r.avatar_initials,
-      avatarUrl: r.avatar_url,
+      displayName: isAi ? 'LM AI' : (r.display_name || 'مستخدم'),
+      username: isAi ? 'lm_ai' : (r.username || 'user'),
+      avatarColor: '#27272A',
+      avatarInitials: isAi ? 'AI' : (r.avatar_initials || 'LM'),
+      avatarUrl: isAi ? null : (r.avatar_url ? String(r.avatar_url) : null),
+      verified: isAi ? true : Boolean(r.verified),
+      isAi,
+      aiSummoned: Boolean(r.ai_summoned),
       content: r.content || '',
       audioUrl: r.audio_url ? String(r.audio_url) : null,
       audioDurationSec: Number(r.audio_duration_sec || 6),
@@ -865,27 +909,93 @@ app.get('/api/videos/:id/comments', (req, res) => {
   res.json({ ok: true, comments });
 });
 
-app.post('/api/videos/:id/comments', (req, res) => {
-  const { userId, content, parentId, audioUrl, audioDurationSec, transcript } = req.body as {
+app.post('/api/videos/:id/comments', async (req, res) => {
+  const { userId, content, parentId, audioUrl, audioDurationSec, transcript, invokeAi } = req.body as {
     userId: string;
     content?: string;
     parentId?: string | null;
     audioUrl?: string | null;
     audioDurationSec?: number;
     transcript?: string | null;
+    invokeAi?: boolean;
   };
   if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف تعليقًا.' });
+
   const id = `vc_${uuid().slice(0, 8)}`;
-  const cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+  let cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+
+  let parentRow: { id: string; user_id: string; parent_id?: string | null; content?: string; transcript?: string | null; display_name?: string } | undefined;
+  if (parentId) {
+    parentRow = db.prepare(`
+      SELECT c.id, c.user_id, c.parent_id, c.content, c.transcript, u.display_name
+      FROM video_comments c LEFT JOIN users u ON c.user_id = u.id
+      WHERE c.id = ?
+    `).get(parentId) as typeof parentRow;
+  }
+
+  const shouldCallAi =
+    Boolean(invokeAi) ||
+    Boolean(content && /@(lm\s*ai|ai)\b/i.test(content)) ||
+    parentRow?.user_id === 'lm_ai';
+
+  if (shouldCallAi && audioUrl && !cleanTranscript) {
+    const tr = await transcribeAudioFile(audioUrl);
+    if (tr?.transcript) cleanTranscript = tr.transcript;
+  }
+
+  const effectiveParentId = parentRow?.parent_id ? parentRow.parent_id : parentId || null;
+
   db.prepare(`
-    INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, ai_summoned, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    id, req.params.id, userId, parentId || null, (content || '').trim(),
-    audioUrl || null, Number(audioDurationSec || 5), cleanTranscript, 'الآن'
+    id,
+    req.params.id,
+    userId,
+    effectiveParentId,
+    (content || '').trim(),
+    audioUrl || null,
+    Number(audioDurationSec || 5),
+    cleanTranscript,
+    shouldCallAi ? 1 : 0,
+    'الآن'
   );
   db.prepare('UPDATE short_videos SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
-  res.json({ ok: true, id });
+
+  let aiReply = null;
+  if (shouldCallAi) {
+    const vidRow = db.prepare('SELECT title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
+      | { title?: string; description?: string; tags?: string }
+      | undefined;
+    const rawQ = (content || '').trim() || cleanTranscript || '';
+    const cleanQ = rawQ.replace(/@(lm\s*ai|ai)/gi, '').trim() || 'اشرح محتوى هذا الفيديو باختصار';
+
+    const ctxParts: string[] = [];
+    if (vidRow?.title) ctxParts.push(`فيديو نبض: ${vidRow.title} ${vidRow.description || ''}`.trim());
+    if (parentRow) {
+      const pName = parentRow.user_id === 'lm_ai' ? 'LM AI (ردك السابق)' : (parentRow.display_name || 'مستخدم');
+      const pBody = parentRow.content || parentRow.transcript || '';
+      if (pBody) ctxParts.push(`التعليق الذي يرد عليه المستخدم (${pName}): ${pBody}`);
+    }
+
+    const aiOut = await runLmAi({
+      userId,
+      prompt: cleanQ,
+      source: 'video_summary',
+      explicitUserConsent: true,
+      sharedContext: ctxParts.join('\n') || undefined,
+    });
+    const aiId = `vc_${uuid().slice(0, 8)}`;
+    const aiReplyParent = effectiveParentId || id;
+    db.prepare(`
+      INSERT INTO video_comments (id, video_id, user_id, parent_id, content, ai_summoned, created_at)
+      VALUES (?, ?, 'lm_ai', ?, ?, 0, 'الآن')
+    `).run(aiId, req.params.id, aiReplyParent, aiOut.reply);
+    db.prepare('UPDATE short_videos SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
+    aiReply = { id: aiId, ...aiOut };
+  }
+
+  res.json({ ok: true, id, aiReply });
 });
 
 app.post('/api/video-comments/:commentId/like', (req, res) => {
@@ -1013,6 +1123,7 @@ app.get('/api/conversations/:id/messages', (req, res) => {
         mediaUrl: r.media_url,
         transcript: r.transcript ? String(r.transcript) : null,
         isSpoiler: Boolean(r.is_spoiler),
+        aiSummoned: Boolean(r.ai_summoned),
         replyToId: r.reply_to_id ? String(r.reply_to_id) : null,
         replySender: r.reply_sender ? String(r.reply_sender) : null,
         replyText: r.reply_text ? String(r.reply_text) : null,
@@ -1047,23 +1158,51 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const nowStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
   const msgId = `m_${uuid().slice(0, 8)}`;
 
-  const cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+  // Check if user is replying to an existing message (including replying directly to LM AI!)
+  let repliedMsg: { sender_id: string; content: string; transcript?: string | null; display_name?: string } | undefined;
+  if (replyToId) {
+    repliedMsg = db.prepare(`
+      SELECT m.sender_id, m.content, m.transcript, u.display_name
+      FROM messages m LEFT JOIN users u ON m.sender_id = u.id
+      WHERE m.id = ?
+    `).get(replyToId) as typeof repliedMsg;
+  }
+
+  const shouldInvokeAi =
+    Boolean(invokeAi) ||
+    /@(lm\s*ai|ai)\b/i.test(content || '') ||
+    repliedMsg?.sender_id === 'lm_ai';
+
+  let cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+  if (shouldInvokeAi && msgType === 'audio' && mediaUrl && !cleanTranscript) {
+    const tr = await transcribeAudioFile(mediaUrl);
+    if (tr?.transcript) cleanTranscript = tr.transcript;
+  }
+
   db.prepare(`
     INSERT INTO messages (
       id, conversation_id, sender_id, content, msg_type, media_url, transcript,
-      is_spoiler, reply_to_id, reply_sender, reply_text, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      is_spoiler, ai_summoned, reply_to_id, reply_sender, reply_text, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null,
+    msgId,
+    req.params.id,
+    senderId,
+    (content || '').trim(),
+    msgType || 'text',
+    mediaUrl || null,
     cleanTranscript,
     isSpoiler ? 1 : 0,
-    replyToId || null, replySender || null, replyText || null, nowStr
+    shouldInvokeAi ? 1 : 0,
+    replyToId || null,
+    replySender || null,
+    replyText || null,
+    nowStr
   );
 
   broadcast('chat:message', { conversationId: req.params.id, msgId });
 
   let aiReply = null;
-  const shouldInvokeAi = Boolean(invokeAi) || /@(lm\s*ai|ai)\b/i.test(content || '');
   if (shouldInvokeAi) {
     const conv = db.prepare('SELECT type, ai_enabled FROM conversations WHERE id = ?').get(req.params.id) as
       | { type?: string; ai_enabled?: number }
@@ -1072,20 +1211,33 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
     let groupHistoryContext: string | undefined;
     if (conv && conv.type !== 'dm' && Number(conv.ai_enabled) === 1) {
       const recent = db.prepare(`
-        SELECT m.sender_id, m.content, u.display_name
+        SELECT m.sender_id, m.content, m.transcript, u.display_name
         FROM messages m LEFT JOIN users u ON m.sender_id = u.id
-        WHERE m.conversation_id = ? AND m.id != ? AND m.msg_type IN ('text', 'ai_reply')
+        WHERE m.conversation_id = ? AND m.id != ? AND m.msg_type IN ('text', 'ai_reply', 'audio')
         ORDER BY m.rowid DESC LIMIT 14
-      `).all(req.params.id, msgId) as Array<{ sender_id: string; content: string; display_name?: string }>;
+      `).all(req.params.id, msgId) as Array<{ sender_id: string; content: string; transcript?: string | null; display_name?: string }>;
       if (recent.length > 0) {
         groupHistoryContext = recent
           .reverse()
-          .map(r => `${r.sender_id === 'lm_ai' ? 'LM AI' : r.display_name || 'عضو'}: ${r.content}`)
+          .map(r => `${r.sender_id === 'lm_ai' ? 'LM AI' : r.display_name || 'عضو'}: ${r.transcript || r.content}`)
           .join('\n');
       }
     }
 
-    const cleanPrompt = (content || '')
+    // Build shared context from either explicitly shared snippet OR the replied message (person OR previous LM AI message!)
+    let effectiveShared = sharedSnippet || undefined;
+    if (!effectiveShared && repliedMsg) {
+      const rSender = repliedMsg.sender_id === 'lm_ai' ? 'LM AI (ردك السابق)' : (repliedMsg.display_name || replySender || 'شخص في المحادثة');
+      const rBody = repliedMsg.transcript || repliedMsg.content || replyText || '';
+      if (rBody) effectiveShared = `${rSender}: ${rBody}`;
+    }
+
+    const rawPrompt =
+      msgType === 'audio'
+        ? (cleanTranscript || 'أجب على الرسالة الصوتية.')
+        : (content || '');
+
+    const cleanPrompt = rawPrompt
       .replace(/^(\/ai|-ai|\/|-)\s*/i, '')
       .replace(/@(lm\s*ai|ai)/gi, '')
       .trim() || 'مرحبًا، كيف يمكنك مساعدتي؟';
@@ -1094,11 +1246,12 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
       userId: senderId,
       prompt: cleanPrompt,
       source: 'chat',
-      explicitUserConsent: Boolean(sharedSnippet) || Boolean(groupHistoryContext),
-      sharedContext: sharedSnippet || undefined,
+      explicitUserConsent: Boolean(effectiveShared) || Boolean(groupHistoryContext),
+      sharedContext: effectiveShared,
       groupHistoryContext,
     });
     const aiMsgId = `m_${uuid().slice(0, 8)}`;
+    const senderRow = getUserOrNull(senderId);
     db.prepare(`
       INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, reply_to_id, reply_sender, reply_text, ai_consent_ref, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1109,8 +1262,8 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
       aiResult.reply,
       'ai_reply',
       msgId,
-      'LM AI',
-      sharedSnippet ? sharedSnippet.slice(0, 50) : null,
+      senderRow?.displayName || 'المستخدم',
+      cleanPrompt.slice(0, 60),
       aiResult.securityAuditId,
       nowStr
     );
@@ -1242,22 +1395,52 @@ app.delete('/api/ai/sessions/:id', (req, res) => {
 });
 
 app.post('/api/ai/chat', async (req, res) => {
-  const { userId, prompt, provider, model, sessionId } = req.body as {
+  const { userId, prompt, provider, model, sessionId, audioUrl, transcript } = req.body as {
     userId: string;
-    prompt: string;
+    prompt?: string;
     provider?: string;
     model?: string;
     sessionId?: string | null;
+    audioUrl?: string | null;
+    transcript?: string | null;
   };
-  const result = await runLmAi(req.body);
 
-  // Persist AI conversation history automatically for ai_tab sessions
+  let resolvedTranscript = transcript && transcript.trim() ? transcript.trim() : null;
+  if (audioUrl && !resolvedTranscript) {
+    const tr = await transcribeAudioFile(audioUrl);
+    if (tr?.transcript) resolvedTranscript = tr.transcript;
+  }
+
+  const effectivePrompt = (prompt || '').trim() || resolvedTranscript || 'مرحبًا';
+
+  // Include recent turns from the active AI session so LM AI remembers conversation history!
+  let sessionHistoryContext: string | undefined;
+  if (sessionId) {
+    const prevRows = db.prepare(
+      'SELECT role, content, transcript FROM ai_messages WHERE session_id = ? ORDER BY rowid DESC LIMIT 10'
+    ).all(sessionId) as Array<{ role: string; content: string; transcript?: string | null }>;
+    if (prevRows.length > 0) {
+      sessionHistoryContext = prevRows
+        .reverse()
+        .map(r => `${r.role === 'user' ? 'المستخدم' : 'LM AI'}: ${r.transcript || r.content}`)
+        .join('\n');
+    }
+  }
+
+  const result = await runLmAi({
+    ...req.body,
+    prompt: effectivePrompt,
+    sharedContext: sessionHistoryContext || req.body.sharedContext,
+  });
+
+  // Persist AI conversation history automatically for ai_tab sessions (including voice turns!)
   let activeSessionId = sessionId || null;
-  if (req.body.source === 'ai_tab' && userId && prompt?.trim()) {
+  let userMsgId: string | null = null;
+  if (req.body.source === 'ai_tab' && userId && (effectivePrompt || audioUrl)) {
     const nowIso = new Date().toISOString();
     if (!activeSessionId) {
       activeSessionId = `ais_${uuid().slice(0, 8)}`;
-      const title = prompt.trim().slice(0, 48);
+      const title = (resolvedTranscript || effectivePrompt || 'رسالة صوتية').trim().slice(0, 48);
       db.prepare(
         'INSERT INTO ai_sessions (id, user_id, title, company_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(activeSessionId, userId, title, provider || 'gemini', model || '', nowIso);
@@ -1267,16 +1450,26 @@ app.post('/api/ai/chat', async (req, res) => {
       ).run(provider || 'gemini', model || '', nowIso, activeSessionId);
     }
 
+    userMsgId = `aim_${uuid().slice(0, 8)}`;
     db.prepare(
-      'INSERT INTO ai_messages (id, session_id, role, content, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(`aim_${uuid().slice(0, 8)}`, activeSessionId, 'user', prompt.trim(), provider || 'gemini', model || '');
+      'INSERT INTO ai_messages (id, session_id, role, content, audio_url, transcript, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      userMsgId,
+      activeSessionId,
+      'user',
+      (prompt || '').trim() || (audioUrl ? 'رسالة صوتية' : effectivePrompt),
+      audioUrl || null,
+      resolvedTranscript,
+      provider || 'gemini',
+      model || ''
+    );
 
     db.prepare(
       'INSERT INTO ai_messages (id, session_id, role, content, company_id, model_label) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(`aim_${uuid().slice(0, 8)}`, activeSessionId, 'assistant', result.reply, provider || 'gemini', result.modelUsed || model || '');
   }
 
-  res.json({ ...result, sessionId: activeSessionId });
+  res.json({ ...result, sessionId: activeSessionId, userMsgId, transcribedPrompt: resolvedTranscript });
 });
 
 // ============================================================

@@ -14,7 +14,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 10;
+const TARGET_DB_VERSION = 11;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -141,6 +141,7 @@ export function initDatabase() {
       audio_url TEXT,
       audio_duration_sec INTEGER DEFAULT 6,
       transcript TEXT,
+      ai_summoned INTEGER DEFAULT 0,
       created_at TEXT DEFAULT 'منذ 5 د',
       FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
     );
@@ -185,6 +186,7 @@ export function initDatabase() {
       audio_url TEXT,
       audio_duration_sec INTEGER DEFAULT 6,
       transcript TEXT,
+      ai_summoned INTEGER DEFAULT 0,
       likes_count INTEGER DEFAULT 0,
       liked_by_json TEXT DEFAULT '[]',
       created_at TEXT DEFAULT 'منذ دقيقتين'
@@ -219,6 +221,7 @@ export function initDatabase() {
       media_url TEXT,
       transcript TEXT,
       is_spoiler INTEGER DEFAULT 0,
+      ai_summoned INTEGER DEFAULT 0,
       reply_to_id TEXT,
       reply_sender TEXT,
       reply_text TEXT,
@@ -278,6 +281,8 @@ export function initDatabase() {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      audio_url TEXT,
+      transcript TEXT,
       company_id TEXT,
       model_label TEXT,
       created_at TEXT DEFAULT (datetime('now')),

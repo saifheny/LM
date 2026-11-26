@@ -28,9 +28,39 @@ interface LiveViewProps {
 export function LiveView({ user, lang, lastWsEvent }: LiveViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
-  const [activeRoomId, setActiveRoomId] = useState<string>('live_1');
+  const [activeRoomId, setActiveRoomIdState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_live_room_id') || 'live_1';
+    } catch {
+      return 'live_1';
+    }
+  });
   const [roomState, setRoomState] = useState<LiveRoomState | null>(null);
-  const [commentText, setCommentText] = useState('');
+  const [commentText, setCommentTextState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_draft_live') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  const setActiveRoomId = useCallback((id: string) => {
+    setActiveRoomIdState(id);
+    try {
+      localStorage.setItem('lm_live_room_id', id);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setCommentText = useCallback((v: string) => {
+    setCommentTextState(v);
+    try {
+      localStorage.setItem('lm_draft_live', v);
+    } catch {
+      // ignore
+    }
+  }, []);
   const [pinMode, setPinMode] = useState(false);
   const [muted, setMuted] = useState(true);
   const [giftTrayOpen, setGiftTrayOpen] = useState(false);

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Keyboard } from 'swiper/modules';
 import type { Swiper as SwiperClass } from 'swiper';
@@ -22,14 +24,16 @@ import {
   Check,
   Send,
   FastForward,
+  Sparkles,
+  X,
 } from 'lucide-react';
 
 import { ConversationItem, Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
-import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
+import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { TapBurstItem, TapBurstOverlay, createTapBurst } from '../shared/TapComboBurst';
-import { PulsePlayGlyph, SharePlatformIcons } from '../shared/Icons2026Pro';
+import { NavAiIcon, PulsePlayGlyph, SharePlatformIcons } from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
@@ -62,8 +66,41 @@ const SHARE_PLATFORMS: Array<{ id: keyof typeof SharePlatformIcons; label: strin
 export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
   const { setBottomDockHidden } = useLayout();
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
-  const [feedTab, setFeedTab] = useState<'following' | 'friends' | 'for_you'>('for_you');
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [feedTab, setFeedTabState] = useState<'following' | 'friends' | 'for_you'>(() => {
+    try {
+      const saved = localStorage.getItem('lm_pulse_tab');
+      if (saved === 'following' || saved === 'friends' || saved === 'for_you') return saved;
+    } catch {
+      // ignore
+    }
+    return 'for_you';
+  });
+  const [activeIndex, setActiveIndexState] = useState<number>(() => {
+    try {
+      const n = Number(localStorage.getItem('lm_pulse_index') || '0');
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const setFeedTab = useCallback((t: 'following' | 'friends' | 'for_you') => {
+    setFeedTabState(t);
+    try {
+      localStorage.setItem('lm_pulse_tab', t);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setActiveIndex = useCallback((i: number) => {
+    setActiveIndexState(i);
+    try {
+      localStorage.setItem('lm_pulse_index', String(i));
+    } catch {
+      // ignore
+    }
+  }, []);
   const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(false);
   const [speed2x, setSpeed2x] = useState(false);
@@ -101,12 +138,39 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
     }
   }
 
-  // Comments Sheet (NO X button — tap outside to close!)
+  // Comments Sheet (Centered inside video stage like Live — NO X button, floating composer, AI summon + Voice-to-AI + persistent drafts!)
   const [drawerVideo, setDrawerVideo] = useState<ShortVideoItem | null>(null);
   const [comments, setComments] = useState<VideoCommentItem[]>([]);
-  const [commentDraft, setCommentDraft] = useState('');
-  const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
+  const [commentDraftsByVideo, setCommentDraftsByVideo] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('lm_draft_pulse_comments');
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [replyTo, setReplyTo] = useState<{ id: string; name: string; snippet?: string; isAi?: boolean } | null>(null);
+  const [aiMode, setAiMode] = useState(false);
+  const [aiTyping, setAiTyping] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
   const [recordingVoice, setRecordingVoice] = useState(false);
+
+  const commentDraft = drawerVideo ? commentDraftsByVideo[drawerVideo.id] || '' : '';
+  const setCommentDraft = useCallback(
+    (val: string) => {
+      if (!drawerVideo) return;
+      setCommentDraftsByVideo(prev => {
+        const next = { ...prev, [drawerVideo.id]: val };
+        try {
+          localStorage.setItem('lm_draft_pulse_comments', JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    },
+    [drawerVideo]
+  );
 
   // Share Sheet (NO X button, Authentic Brand Vector Icons — ZERO emojis!)
   const [shareVideo, setShareVideo] = useState<ShortVideoItem | null>(null);
@@ -309,35 +373,85 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
 
   async function submitTextComment(e: React.FormEvent) {
     e.preventDefault();
-    if (!drawerVideo || !commentDraft.trim()) return;
-    await apiPost(`/api/videos/${drawerVideo.id}/comments`, {
-      userId: user.id,
-      content: commentDraft.trim(),
-      parentId: replyTo?.id || null,
-    });
+    if (!drawerVideo || !commentDraft.trim() || submittingComment) return;
+    const raw = commentDraft.trim();
+    const cleaned = raw.replace(/^(\/ai|-ai|\/)\s*/i, '').trim() || raw;
+    const activeReply = replyTo;
+    const shouldInvokeAi = aiMode || Boolean(activeReply?.isAi) || /^(\/ai|-ai|\/|@(lm\s*ai|ai))/i.test(raw);
+    const vidId = drawerVideo.id;
+
     setCommentDraft('');
     setReplyTo(null);
-    const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${drawerVideo.id}/comments?userId=${user.id}`);
-    setComments(res.comments);
-    setVideos(prev => prev.map(v => (v.id === drawerVideo.id ? { ...v, commentsCount: v.commentsCount + 1 } : v)));
+    setAiMode(false);
+    setSubmittingComment(true);
+    if (shouldInvokeAi) setAiTyping(true);
+
+    const tempComment: VideoCommentItem = {
+      id: `tmp_vc_${Date.now()}`,
+      videoId: vidId,
+      userId: user.id,
+      parentId: activeReply?.id || null,
+      displayName: user.displayName,
+      username: user.username,
+      avatarColor: user.avatarColor,
+      avatarInitials: user.avatarInitials,
+      avatarUrl: user.avatarUrl,
+      verified: user.verified,
+      aiSummoned: shouldInvokeAi,
+      content: cleaned,
+      audioUrl: null,
+      audioDurationSec: 0,
+      transcript: null,
+      likesCount: 0,
+      likedByMe: false,
+      createdAt: 'الآن',
+    };
+    setComments(prev => [...prev, tempComment]);
+
+    try {
+      await apiPost(`/api/videos/${vidId}/comments`, {
+        userId: user.id,
+        content: cleaned,
+        parentId: activeReply?.id || null,
+        invokeAi: shouldInvokeAi,
+      });
+      const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${vidId}/comments?userId=${user.id}`);
+      setComments(res.comments);
+      setVideos(prev => prev.map(v => (v.id === vidId ? { ...v, commentsCount: res.comments.length } : v)));
+    } finally {
+      setSubmittingComment(false);
+      setAiTyping(false);
+    }
   }
 
   async function submitVoiceComment(file: File, durationSec: number, liveTranscript?: string | null) {
     if (!drawerVideo) return;
     setRecordingVoice(false);
-    const up = await apiUploadFile(file);
-    await apiPost(`/api/videos/${drawerVideo.id}/comments`, {
-      userId: user.id,
-      content: '',
-      parentId: replyTo?.id || null,
-      audioUrl: up.url,
-      audioDurationSec: durationSec,
-      transcript: liveTranscript || null,
-    });
+    const activeReply = replyTo;
+    const shouldInvokeAi = aiMode || Boolean(activeReply?.isAi);
+    const vidId = drawerVideo.id;
+
     setReplyTo(null);
-    const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${drawerVideo.id}/comments?userId=${user.id}`);
-    setComments(res.comments);
-    setVideos(prev => prev.map(v => (v.id === drawerVideo.id ? { ...v, commentsCount: v.commentsCount + 1 } : v)));
+    setAiMode(false);
+    if (shouldInvokeAi) setAiTyping(true);
+
+    try {
+      const up = await apiUploadFile(file);
+      await apiPost(`/api/videos/${vidId}/comments`, {
+        userId: user.id,
+        content: '',
+        parentId: activeReply?.id || null,
+        audioUrl: up.url,
+        audioDurationSec: durationSec,
+        transcript: liveTranscript || null,
+        invokeAi: shouldInvokeAi,
+      });
+      const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${vidId}/comments?userId=${user.id}`);
+      setComments(res.comments);
+      setVideos(prev => prev.map(v => (v.id === vidId ? { ...v, commentsCount: res.comments.length } : v)));
+    } finally {
+      setAiTyping(false);
+    }
   }
 
   async function toggleCommentLike(commentId: string) {
@@ -436,6 +550,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
           direction="vertical"
           modules={[Keyboard]}
           keyboard={{ enabled: true }}
+          initialSlide={activeIndex}
           speed={400}
           slidesPerView={1}
           onSwiper={(sw: SwiperClass) => {
@@ -607,15 +722,14 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
             {shareToast}
           </div>
         )}
-      </div>
 
-      {/* FULL TIKTOK BOTTOM SHARE SHEET (ZERO X Button — Tap Any Empty Area Outside to Close! Authentic Vector Icons!) */}
-      {shareVideo && (
-        <div onClick={() => setShareVideo(null)} className="fixed inset-0 z-50 bg-black/65 flex items-end justify-center">
-          <div
-            onClick={e => e.stopPropagation()}
-            className="w-full max-w-[500px] rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pb-6 pt-2.5 px-4 space-y-4"
-          >
+        {/* FULL TIKTOK BOTTOM SHARE SHEET (Centered Inside Video Stage Like Live — ZERO X Button!) */}
+        {shareVideo && (
+          <div onClick={() => setShareVideo(null)} className="absolute inset-0 z-50 bg-black/65 flex items-end justify-center">
+            <div
+              onClick={e => e.stopPropagation()}
+              className="w-full rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pb-6 pt-2.5 px-4 space-y-4"
+            >
             {/* Drag Handle Pill (NO X Button!) */}
             <div className="flex flex-col items-center gap-2">
               <div className="w-10 h-1 rounded-full bg-white/25" />
@@ -749,19 +863,25 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
         </div>
       )}
 
-      {/* Comments & Voice-Replies Sheet (ZERO X Button — Tap Empty Backdrop to Close!) */}
+      {/* Comments & Voice-Replies & AI Sheet (Centered Dead-On Over Video Column Like Live — Floating Composer!) */}
       {drawerVideo && (
-        <div onClick={() => setDrawerVideo(null)} className="fixed inset-0 z-50 bg-black/65 flex items-end justify-center">
+        <div
+          onClick={() => {
+            setDrawerVideo(null);
+            setRecordingVoice(false);
+          }}
+          className="absolute inset-0 z-50 bg-black/65 flex items-end justify-center"
+        >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[520px] h-[68vh] rounded-t-[26px] bg-[#121216] border-t border-x border-white/[0.12] flex flex-col overflow-hidden"
+            className="relative w-full h-[72%] rounded-t-[26px] bg-[#121216]/97 backdrop-blur-2xl border-t border-x border-white/[0.12] flex flex-col overflow-hidden"
           >
-            <div className="px-4 pt-2.5 pb-3 border-b border-white/[0.08] flex flex-col items-center gap-2">
+            <div className="px-4 pt-2.5 pb-3 border-b border-white/[0.08] flex flex-col items-center gap-2 shrink-0">
               <div className="w-10 h-1 rounded-full bg-white/25" />
               <span className="text-xs font-semibold text-white">{comments.length} تعليق</span>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+            <div className="flex-1 overflow-y-auto px-4 pt-3 pb-28 space-y-4">
               {rootComments.map(c => {
                 const sub = repliesOf(c.id);
                 return (
@@ -769,24 +889,54 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                     <div className="flex items-start gap-2.5">
                       <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={32} />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 text-xs">
+                        <div className="flex items-center gap-1.5 text-xs flex-wrap">
                           <span className="font-semibold text-[#F2F2F5]">{c.displayName}</span>
+                          {c.verified && <VerifiedIcon />}
+                          {c.isAi && <AiSummonBadge label="LM AI" compact />}
+                          {!c.isAi && c.aiSummoned && <AiSummonBadge label="AI" compact />}
                           <span className="text-[#7A7A85]">{c.createdAt}</span>
                         </div>
                         {c.audioUrl ? (
-                          <div className="mt-1.5 p-2.5 rounded-2xl bg-[#1A1A20] border border-white/[0.08]">
-                            <SmartVoicePill url={c.audioUrl} transcript={c.transcript} recordId={c.id} table="video_comments" compact />
+                          <div
+                            className={`mt-1.5 p-2.5 rounded-2xl border ${
+                              c.aiSummoned ? 'lm-ai-summon-ring' : 'bg-[#1A1A20] border-white/[0.08]'
+                            }`}
+                          >
+                            <SmartVoicePill
+                              url={c.audioUrl}
+                              transcript={c.transcript}
+                              recordId={c.id}
+                              table="video_comments"
+                              accent={c.aiSummoned ? 'ai' : 'default'}
+                              compact
+                            />
+                          </div>
+                        ) : c.isAi ? (
+                          <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                              {c.content}
+                            </ReactMarkdown>
                           </div>
                         ) : (
-                          <p className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">{c.content}</p>
+                          <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
+                            <RichMessageText text={c.content} />
+                          </div>
                         )}
                         <button
                           type="button"
-                          onClick={() => setReplyTo({ id: c.id, name: c.displayName })}
+                          onClick={() => {
+                            setReplyTo({
+                              id: c.id,
+                              name: c.displayName,
+                              snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
+                              isAi: Boolean(c.isAi),
+                            });
+                            if (c.isAi) setAiMode(true);
+                          }}
                           className="mt-1.5 text-[11px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
                         >
                           <CornerDownLeft className="w-3 h-3" />
-                          <span>رد</span>
+                          <span>{c.isAi ? 'الرد على AI' : 'رد'}</span>
                         </button>
                       </div>
                       <button
@@ -805,17 +955,54 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                           <div key={rep.id} className="flex items-start gap-2">
                             <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={24} />
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 text-[11.5px]">
+                              <div className="flex items-center gap-1.5 text-[11.5px] flex-wrap">
                                 <span className="font-semibold text-[#F2F2F5]">{rep.displayName}</span>
+                                {rep.isAi && <AiSummonBadge label="LM AI" compact />}
+                                {!rep.isAi && rep.aiSummoned && <AiSummonBadge label="AI" compact />}
                                 <span className="text-[#7A7A85]">{rep.createdAt}</span>
                               </div>
                               {rep.audioUrl ? (
-                                <div className="mt-1 p-2 rounded-xl bg-[#1A1A20] border border-white/[0.08]">
-                                  <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} recordId={rep.id} table="video_comments" compact />
+                                <div
+                                  className={`mt-1 p-2 rounded-xl border ${
+                                    rep.aiSummoned ? 'lm-ai-summon-ring' : 'bg-[#1A1A20] border-white/[0.08]'
+                                  }`}
+                                >
+                                  <SmartVoicePill
+                                    url={rep.audioUrl}
+                                    transcript={rep.transcript}
+                                    recordId={rep.id}
+                                    table="video_comments"
+                                    accent={rep.aiSummoned ? 'ai' : 'default'}
+                                    compact
+                                  />
+                                </div>
+                              ) : rep.isAi ? (
+                                <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                    {rep.content}
+                                  </ReactMarkdown>
                                 </div>
                               ) : (
-                                <p className="text-[13px] text-[#D4D4D8] mt-0.5">{rep.content}</p>
+                                <div className="text-[13px] text-[#D4D4D8] mt-0.5">
+                                  <RichMessageText text={rep.content} />
+                                </div>
                               )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReplyTo({
+                                    id: rep.id,
+                                    name: rep.displayName,
+                                    snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
+                                    isAi: Boolean(rep.isAi),
+                                  });
+                                  if (rep.isAi) setAiMode(true);
+                                }}
+                                className="mt-1 text-[10.5px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
+                              >
+                                <CornerDownLeft className="w-2.5 h-2.5" />
+                                <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -824,49 +1011,109 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                   </div>
                 );
               })}
+
+              {/* Live LM AI Typing Indicator inside Pulse Comments */}
+              {aiTyping && (
+                <div className="flex items-center gap-2.5 ps-2 py-1">
+                  <UserAvatar initials="AI" avatarUrl={null} size={24} />
+                  <div className="px-3 py-1.5 rounded-2xl bg-[#181820] border border-white/[0.13] text-xs text-[#D4D4D8] flex items-center gap-2">
+                    <Sparkles className="w-3 h-3 text-white animate-pulse" />
+                    <span>LM AI يكتب الآن</span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-1 h-1 rounded-full bg-white/75 animate-bounce [animation-delay:0ms]" />
+                      <span className="w-1 h-1 rounded-full bg-white/75 animate-bounce [animation-delay:140ms]" />
+                      <span className="w-1 h-1 rounded-full bg-white/75 animate-bounce [animation-delay:280ms]" />
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="p-3 bg-[#0E0E12] flex flex-col gap-2">
+            {/* FLOATING Comment Composer + Side-Aligned Reply Card (ZERO Solid Bottom Bar!) */}
+            <div className="pointer-events-none absolute bottom-3 inset-x-3 z-20 flex flex-col gap-2">
               {replyTo && (
-                <div className="w-fit max-w-[280px] self-start rounded-2xl bg-[#16161D] border border-white/[0.11] px-3 py-1.5 flex items-center gap-2.5 shadow-md">
-                  <span className="w-[2.5px] self-stretch rounded-full bg-white/50 shrink-0" />
+                <div className="pointer-events-auto w-fit max-w-[280px] self-start rounded-2xl bg-[#16161D]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-1.5 flex items-center gap-2.5 shadow-xl">
+                  <span
+                    className={`w-[2.5px] self-stretch rounded-full shrink-0 ${
+                      replyTo.isAi ? 'bg-[#6366F1]' : 'bg-white/50'
+                    }`}
+                  />
                   <div className="min-w-0">
                     <div className="text-[10.5px] font-semibold text-white truncate">الرد على {replyTo.name}</div>
+                    {replyTo.snippet && (
+                      <div className="text-[11px] text-[#9E9EA8] truncate max-w-[185px]">{replyTo.snippet}</div>
+                    )}
                   </div>
                   <button
                     type="button"
                     onClick={() => setReplyTo(null)}
-                    className="w-5 h-5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-[#A1A1AA] hover:text-white flex items-center justify-center text-[11px] cursor-pointer shrink-0"
+                    className="w-5 h-5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
                   >
-                    ×
+                    <X className="w-3 h-3" />
                   </button>
                 </div>
               )}
 
-              {recordingVoice ? (
-                <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={submitVoiceComment} />
-              ) : (
-                <ObsidianComposerPill
-                  value={commentDraft}
-                  onChange={setCommentDraft}
-                  onSubmit={submitTextComment}
-                  placeholder={lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
-                  extraEnd={
-                    <button
-                      type="button"
-                      onClick={() => setRecordingVoice(true)}
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-[#7A7A85] hover:text-white cursor-pointer shrink-0"
-                    >
-                      <Mic className="w-[18px] h-[18px]" strokeWidth={1.8} />
-                    </button>
-                  }
-                  disabled={!commentDraft.trim()}
-                />
-              )}
+              <div className="pointer-events-auto">
+                {recordingVoice ? (
+                  <LiveVoiceRecorder
+                    accent={aiMode ? 'ai' : 'default'}
+                    onCancel={() => setRecordingVoice(false)}
+                    onSend={submitVoiceComment}
+                  />
+                ) : (
+                  <ObsidianComposerPill
+                    value={commentDraft}
+                    onChange={setCommentDraft}
+                    onSubmit={submitTextComment}
+                    placeholder={aiMode ? 'اسأل الذكاء الاصطناعي...' : lang === 'ar' ? 'أضف تعليقًا...' : 'Add comment...'}
+                    extraEnd={
+                      <button
+                        type="button"
+                        onClick={() => setAiMode(v => !v)}
+                        title="استدعاء الذكاء الاصطناعي"
+                        className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+                          aiMode
+                            ? 'bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white shadow-[0_2px_12px_rgba(99,102,241,0.5)]'
+                            : 'text-[#7A7A85] hover:text-white'
+                        }`}
+                      >
+                        <NavAiIcon active={aiMode} className="w-[17px] h-[17px]" />
+                      </button>
+                    }
+                    customAction={
+                      commentDraft.trim() ? (
+                        <ChromeArrowButton type="submit" disabled={submittingComment} size={36} />
+                      ) : aiMode ? (
+                        <button
+                          type="button"
+                          onClick={() => setRecordingVoice(true)}
+                          title="رد صوتي لـ AI"
+                          className="w-[36px] h-[36px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_14px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
+                        >
+                          <Mic className="w-[16px] h-[16px]" strokeWidth={2} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setRecordingVoice(true)}
+                          title="رد صوتي"
+                          className="chrome-rim-btn w-[36px] h-[36px] shrink-0 cursor-pointer"
+                        >
+                          <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
+                            <Mic className="w-[16px] h-[16px]" strokeWidth={1.9} />
+                          </span>
+                        </button>
+                      )
+                    }
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+      </div>
 
       {/* Upload Pulse Modal (Tap Outside to Close) */}
       {uploadOpen && (

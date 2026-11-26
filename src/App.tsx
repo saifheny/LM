@@ -11,13 +11,68 @@ import { ChatView } from './components/chat/ChatView';
 import { AiView } from './components/ai/AiView';
 import { ApiHubView } from './components/settings/ApiHubView';
 
+const VALID_TABS: NavTab[] = ['social', 'videos', 'live', 'chat', 'ai', 'settings'];
+
+function readInitialTab(): NavTab {
+  try {
+    const saved = localStorage.getItem('lm_active_tab') as NavTab | null;
+    if (saved && VALID_TABS.includes(saved)) return saved;
+  } catch {
+    // ignore
+  }
+  return 'social';
+}
+
+function readInitialLang(): Lang {
+  try {
+    const saved = localStorage.getItem('lm_lang');
+    if (saved === 'en' || saved === 'ar') return saved;
+  } catch {
+    // ignore
+  }
+  return 'ar';
+}
+
 export function App() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<NavTab>('social');
-  const [lang, setLang] = useState<Lang>('ar');
+  const [authLoaded, setAuthLoaded] = useState(false);
+  const [loggedOut, setLoggedOut] = useState(false);
+  const [activeTab, setActiveTabState] = useState<NavTab>(readInitialTab);
+  const [lang, setLangState] = useState<Lang>(readInitialLang);
   const [wsOnline, setWsOnline] = useState(false);
   const [lastWsEvent, setLastWsEvent] = useState<{ event: string; payload: unknown; ts: number } | null>(null);
+
+  const setActiveTab = useCallback((t: NavTab) => {
+    setActiveTabState(t);
+    try {
+      localStorage.setItem('lm_active_tab', t);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const toggleLang = useCallback(() => {
+    setLangState(prev => {
+      const next: Lang = prev === 'ar' ? 'en' : 'ar';
+      try {
+        localStorage.setItem('lm_lang', next);
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  const selectUser = useCallback((u: UserProfile) => {
+    setLoggedOut(false);
+    setCurrentUser(u);
+    try {
+      localStorage.setItem('lm_current_user_id', u.id);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -25,10 +80,21 @@ export function App() {
       setUsers(res.users);
       setCurrentUser(prev => {
         if (prev) return res.users.find(u => u.id === prev.id) || prev;
+        try {
+          const savedId = localStorage.getItem('lm_current_user_id');
+          if (savedId) {
+            const match = res.users.find(u => u.id === savedId);
+            if (match) return match;
+          }
+        } catch {
+          // ignore
+        }
         return res.users[0] || null;
       });
     } catch {
       // retry on reconnect
+    } finally {
+      setAuthLoaded(true);
     }
   }, []);
 
@@ -65,14 +131,18 @@ export function App() {
     };
   }, []);
 
-  if (!currentUser) {
+  if (!authLoaded) {
+    return <div className="h-screen w-screen bg-[#0A0A0C]" />;
+  }
+
+  if (!currentUser || loggedOut) {
     return (
       <AuthScreen
         users={users}
         lang={lang}
-        onToggleLang={() => setLang(l => (l === 'ar' ? 'en' : 'ar'))}
+        onToggleLang={toggleLang}
         onAuthenticated={(u) => {
-          setCurrentUser(u);
+          selectUser(u);
           loadUsers();
         }}
       />
@@ -87,10 +157,10 @@ export function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         lang={lang}
-        onToggleLang={() => setLang(l => (l === 'ar' ? 'en' : 'ar'))}
+        onToggleLang={toggleLang}
         wsOnline={wsOnline}
-        onSwitchUser={(u) => setCurrentUser(u)}
-        onLogout={() => setCurrentUser(null)}
+        onSwitchUser={selectUser}
+        onLogout={() => setLoggedOut(true)}
       >
         {activeTab === 'social' && (
           <SocialView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} />

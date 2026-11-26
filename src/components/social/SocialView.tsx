@@ -27,7 +27,7 @@ import 'swiper/css';
 import 'swiper/css/pagination';
 
 import { Lang, PostCommentItem, PostPoll, SocialPost, StoryItem, UserProfile } from '../../types';
-import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
+import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReactions';
@@ -69,17 +69,38 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   const [publishing, setPublishing] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Comments + In-Composer Voice Replies + AI Summon
+  // Comments + In-Composer Voice Replies + AI Summon (Drafts persisted across close & browser refresh!)
   const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
   const [commentsByPost, setCommentsByPost] = useState<Record<string, PostCommentItem[]>>({});
-  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
-  const [replyParentByPost, setReplyParentByPost] = useState<Record<string, { id: string; name: string; snippet?: string } | null>>({});
+  const [replyDrafts, setReplyDraftsState] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('lm_draft_social_comments');
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [replyParentByPost, setReplyParentByPost] = useState<
+    Record<string, { id: string; name: string; snippet?: string; isAi?: boolean } | null>
+  >({});
   const [replyAiModeByPost, setReplyAiModeByPost] = useState<Record<string, boolean>>({});
   const [recordingPostId, setRecordingPostId] = useState<string | null>(null);
   const [submittingCommentPost, setSubmittingCommentPost] = useState<string | null>(null);
   const [aiTypingPostId, setAiTypingPostId] = useState<string | null>(null);
   const [savedPosts, setSavedPosts] = useState<Record<string, boolean>>({});
   const [doubleTapPostId, setDoubleTapPostId] = useState<string | null>(null);
+
+  const setReplyDraftForPost = useCallback((postId: string, val: string) => {
+    setReplyDraftsState(prev => {
+      const next = { ...prev, [postId]: val };
+      try {
+        localStorage.setItem('lm_draft_social_comments', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
 
   const loadFeed = useCallback(async () => {
     const [pRes, sRes] = await Promise.all([
@@ -273,11 +294,14 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     const text = (replyDrafts[postId] || '').trim();
     if (!text || submittingCommentPost === postId) return;
     const parent = replyParentByPost[postId];
-    const invokeAi = Boolean(replyAiModeByPost[postId]) || /^(\/ai|-ai|\/|@(lm\s*ai|ai))/i.test(text);
+    const invokeAi =
+      Boolean(replyAiModeByPost[postId]) ||
+      Boolean(parent?.isAi) ||
+      /^(\/ai|-ai|\/|@(lm\s*ai|ai))/i.test(text);
     const cleanedText = text.replace(/^(\/ai|-ai|\/)\s*/i, '').trim() || text;
 
     // 1. Immediately clear draft & show the user's comment optimistically (0ms feedback!)
-    setReplyDrafts(prev => ({ ...prev, [postId]: '' }));
+    setReplyDraftForPost(postId, '');
     setReplyParentByPost(prev => ({ ...prev, [postId]: null }));
     setReplyAiModeByPost(prev => ({ ...prev, [postId]: false }));
 
@@ -292,6 +316,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
       avatarInitials: user.avatarInitials,
       avatarUrl: user.avatarUrl,
       verified: user.verified,
+      aiSummoned: invokeAi,
       content: cleanedText,
       audioUrl: null,
       audioDurationSec: 0,
@@ -326,25 +351,44 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   async function submitVoiceComment(postId: string, file: File, durationSec: number, liveTranscript?: string | null) {
     setRecordingPostId(null);
     const parent = replyParentByPost[postId];
-    const up = await apiUploadFile(file);
-    await apiPost(`/api/posts/${postId}/comments`, {
-      userId: user.id,
-      content: '',
-      parentId: parent?.id || null,
-      audioUrl: up.url,
-      audioDurationSec: durationSec,
-      transcript: liveTranscript || null,
-    });
+    const invokeAi = Boolean(replyAiModeByPost[postId]) || Boolean(parent?.isAi);
+
     setReplyParentByPost(prev => ({ ...prev, [postId]: null }));
-    const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
-    setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
-    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: res.comments.length } : p)));
+    setReplyAiModeByPost(prev => ({ ...prev, [postId]: false }));
+    if (invokeAi) setAiTypingPostId(postId);
+
+    try {
+      const up = await apiUploadFile(file);
+      await apiPost(`/api/posts/${postId}/comments`, {
+        userId: user.id,
+        content: '',
+        parentId: parent?.id || null,
+        audioUrl: up.url,
+        audioDurationSec: durationSec,
+        transcript: liveTranscript || null,
+        invokeAi,
+      });
+      const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
+      setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
+      setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: res.comments.length } : p)));
+    } finally {
+      setAiTypingPostId(cur => (cur === postId ? null : cur));
+    }
   }
 
   const showExpandIcon = composerActive || draft.length > 0 || uploadedMediaUrls.length > 0;
 
   return (
-    <div className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]">
+    <div
+      onClick={() => {
+        // Clicking anywhere outside an open comments section collapses it while PRESERVING drafts!
+        if (Object.values(openThreads).some(Boolean)) {
+          setOpenThreads({});
+          setRecordingPostId(null);
+        }
+      }}
+      className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]"
+    >
       {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop!) */}
       <div className="max-w-[620px] mx-auto min-h-screen px-2 sm:px-0">
         {/* Stories Strip */}
@@ -522,12 +566,12 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                     </div>
 
                     {post.content && (
-                      <p
+                      <div
                         onDoubleClick={() => handlePostReact(post.id, 'love', true)}
                         className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
                       >
-                        {post.content}
-                      </p>
+                        <RichMessageText text={post.content} />
+                      </div>
                     )}
 
                     {/* Media: Single-Tap opens Lightbox | Double-Tap triggers Upvote + Pulse */}
@@ -606,7 +650,10 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
 
                         <button
                           type="button"
-                          onClick={() => toggleThread(post.id)}
+                          onClick={e => {
+                            e.stopPropagation();
+                            toggleThread(post.id);
+                          }}
                           className={`flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer ${
                             isThreadOpen ? 'text-white' : ''
                           }`}
@@ -647,9 +694,12 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                       </div>
                     </div>
 
-                    {/* Threaded Comments with In-Composer Voice Button (Exact Chat Morphing!) + AI Summon */}
+                    {/* Threaded Comments with In-Composer Voice Button + Luxury AI Summon + Persistent Drafts */}
                     {isThreadOpen && (
-                      <div className="mt-3.5 pt-3 border-t border-white/[0.08] space-y-3.5">
+                      <div
+                        onClick={e => e.stopPropagation()}
+                        className="mt-3.5 pt-3 border-t border-white/[0.08] space-y-3.5"
+                      >
                         {rootComments.map(c => {
                           const replies = getReplies(c.id);
                           return (
@@ -657,34 +707,53 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                               <div className="flex gap-2.5">
                                 <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={28} />
                                 <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-1.5 text-xs">
+                                  <div className="flex items-center gap-1.5 text-xs flex-wrap">
                                     <span className="font-semibold text-[#F2F2F5]">{c.displayName}</span>
                                     {c.verified && <VerifiedIcon />}
+                                    {c.isAi && <AiSummonBadge label="LM AI" compact />}
+                                    {!c.isAi && c.aiSummoned && <AiSummonBadge label="AI" compact />}
                                     <span className="text-[#7A7A85]">· {c.createdAt}</span>
                                   </div>
 
                                   {c.audioUrl ? (
-                                    <div className="mt-1.5 p-2.5 rounded-2xl bg-[#15151B] border border-white/[0.08] max-w-[300px]">
-                                      <SmartVoicePill url={c.audioUrl} transcript={c.transcript} recordId={c.id} table="post_comments" compact />
+                                    <div
+                                      className={`mt-1.5 p-2.5 rounded-2xl border max-w-[300px] ${
+                                        c.aiSummoned
+                                          ? 'lm-ai-summon-ring'
+                                          : 'bg-[#15151B] border-white/[0.08]'
+                                      }`}
+                                    >
+                                      <SmartVoicePill
+                                        url={c.audioUrl}
+                                        transcript={c.transcript}
+                                        recordId={c.id}
+                                        table="post_comments"
+                                        accent={c.aiSummoned ? 'ai' : 'default'}
+                                        compact
+                                      />
                                     </div>
                                   ) : (
                                     <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{c.content}</ReactMarkdown>
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                        {c.content}
+                                      </ReactMarkdown>
                                     </div>
                                   )}
 
                                   <button
                                     type="button"
-                                    onClick={() =>
+                                    onClick={() => {
                                       setReplyParentByPost(prev => ({
                                         ...prev,
                                         [post.id]: {
                                           id: c.id,
                                           name: c.displayName,
-                                          snippet: c.audioUrl ? 'رسالة صوتية' : c.content.slice(0, 56),
+                                          snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
+                                          isAi: Boolean(c.isAi),
                                         },
-                                      }))
-                                    }
+                                      }));
+                                      if (c.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
+                                    }}
                                     className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
                                   >
                                     <CornerDownLeft className="w-3 h-3" />
@@ -699,22 +768,58 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                     <div key={rep.id} className="flex gap-2">
                                       <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={24} />
                                       <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-1.5 text-[11.5px]">
+                                        <div className="flex items-center gap-1.5 text-[11.5px] flex-wrap">
                                           <span className="font-semibold text-[#F2F2F5] flex items-center gap-1">
-                                            {rep.isAi && <NavAiIcon active className="w-3 h-3" />}
                                             {rep.displayName}
                                           </span>
+                                          {rep.isAi && <AiSummonBadge label="LM AI" compact />}
+                                          {!rep.isAi && rep.aiSummoned && <AiSummonBadge label="AI" compact />}
                                           <span className="text-[#7A7A85]">· {rep.createdAt}</span>
                                         </div>
                                         {rep.audioUrl ? (
-                                          <div className="mt-1 p-2 rounded-2xl bg-[#15151B] border border-white/[0.08] max-w-[280px]">
-                                            <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} recordId={rep.id} table="post_comments" compact />
+                                          <div
+                                            className={`mt-1 p-2 rounded-2xl border max-w-[280px] ${
+                                              rep.aiSummoned
+                                                ? 'lm-ai-summon-ring'
+                                                : 'bg-[#15151B] border-white/[0.08]'
+                                            }`}
+                                          >
+                                            <SmartVoicePill
+                                              url={rep.audioUrl}
+                                              transcript={rep.transcript}
+                                              recordId={rep.id}
+                                              table="post_comments"
+                                              accent={rep.aiSummoned ? 'ai' : 'default'}
+                                              compact
+                                            />
                                           </div>
                                         ) : (
                                           <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
-                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{rep.content}</ReactMarkdown>
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                              {rep.content}
+                                            </ReactMarkdown>
                                           </div>
                                         )}
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setReplyParentByPost(prev => ({
+                                              ...prev,
+                                              [post.id]: {
+                                                id: rep.id,
+                                                name: rep.displayName,
+                                                snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
+                                                isAi: Boolean(rep.isAi),
+                                              },
+                                            }));
+                                            if (rep.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
+                                          }}
+                                          className="mt-1 inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-white cursor-pointer"
+                                        >
+                                          <CornerDownLeft className="w-2.5 h-2.5" />
+                                          <span>{rep.isAi ? 'الرد على AI' : 'رد'}</span>
+                                        </button>
                                       </div>
                                     </div>
                                   ))}
@@ -740,12 +845,16 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                           </div>
                         )}
 
-                        {/* Unified Comment Composer: Exact Chat Behavior (Mic inside the action button when empty -> Chrome ↑ Send when typing!) */}
+                        {/* Unified Floating Comment Composer */}
                         <div className="pt-1 flex flex-col gap-2">
                           {/* Compact Side-Aligned Reply Banner */}
                           {replyParentByPost[post.id] && (
-                            <div className="w-fit max-w-[290px] self-start rounded-2xl bg-[#15151C] border border-white/[0.11] px-3 py-1.5 flex items-center gap-2.5 shadow-md">
-                              <span className="w-[2.5px] self-stretch rounded-full bg-white/50 shrink-0" />
+                            <div className="w-fit max-w-[290px] self-start rounded-2xl bg-[#15151C]/95 backdrop-blur-xl border border-white/[0.11] px-3 py-1.5 flex items-center gap-2.5 shadow-md">
+                              <span
+                                className={`w-[2.5px] self-stretch rounded-full shrink-0 ${
+                                  replyParentByPost[post.id]?.isAi ? 'bg-[#6366F1]' : 'bg-white/50'
+                                }`}
+                              />
                               <div className="min-w-0">
                                 <div className="text-[10.5px] font-semibold text-white truncate">
                                   الرد على {replyParentByPost[post.id]?.name}
@@ -768,13 +877,14 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
 
                           {recordingPostId === post.id ? (
                             <LiveVoiceRecorder
+                              accent={aiMode ? 'ai' : 'default'}
                               onCancel={() => setRecordingPostId(null)}
                               onSend={(file, sec, liveTxt) => submitVoiceComment(post.id, file, sec, liveTxt)}
                             />
                           ) : (
                             <ObsidianComposerPill
                               value={commentText}
-                              onChange={v => setReplyDrafts(prev => ({ ...prev, [post.id]: v }))}
+                              onChange={v => setReplyDraftForPost(post.id, v)}
                               onSubmit={e => submitComment(post.id, e)}
                               placeholder={aiMode ? 'اسأل الذكاء الاصطناعي...' : 'أضف تعليقًا...'}
                               extraEnd={
@@ -782,8 +892,10 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                   type="button"
                                   onClick={() => setReplyAiModeByPost(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
                                   title="استدعاء الذكاء الاصطناعي"
-                                  className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
-                                    aiMode ? 'bg-white text-black' : 'text-[#7A7A85] hover:text-white'
+                                  className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+                                    aiMode
+                                      ? 'bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white shadow-[0_2px_12px_rgba(99,102,241,0.5)]'
+                                      : 'text-[#7A7A85] hover:text-white'
                                   }`}
                                 >
                                   <NavAiIcon active={aiMode} className="w-[17px] h-[17px]" />
@@ -796,6 +908,15 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                     disabled={submittingCommentPost === post.id}
                                     size={36}
                                   />
+                                ) : aiMode ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRecordingPostId(post.id)}
+                                    title="رد صوتي لـ AI"
+                                    className="w-[36px] h-[36px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_14px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
+                                  >
+                                    <Mic className="w-[16px] h-[16px]" strokeWidth={2} />
+                                  </button>
                                 ) : (
                                   <button
                                     type="button"

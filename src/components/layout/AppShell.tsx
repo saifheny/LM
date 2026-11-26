@@ -189,8 +189,23 @@ export function AppShell({
     setBottomDockHidden,
   } = useLayout();
 
-  // ChatGPT / Gemini-style Collapsible Desktop Sidebar State!
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // ChatGPT / Gemini-style Floating Collapsible Desktop Sidebar State (Persisted across refresh, ZERO reflow lag!)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('lm_sidebar_collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  function toggleSidebarCollapsed(next: boolean) {
+    setSidebarCollapsed(next);
+    try {
+      localStorage.setItem('lm_sidebar_collapsed', next ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }
 
   const [accountOpen, setAccountOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -267,36 +282,37 @@ export function AppShell({
 
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="h-screen w-screen bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none">
-      {/* DESKTOP / LAPTOP COLLAPSIBLE SIDEBAR (Exact ChatGPT / Google Gemini Behavior!) */}
+      {/* DESKTOP / LAPTOP FLOATING COLLAPSIBLE SIDEBAR (Instant single-frame switch — ZERO WaveSurfer/Swiper reflow lag!) */}
       <aside
-        className={`hidden md:flex flex-col justify-between shrink-0 h-full bg-[#070709] border-e border-white/[0.07] py-4 px-2.5 z-30 transition-[width] duration-250 ease-out ${
-          sidebarCollapsed ? 'w-[68px]' : 'w-[220px]'
+        style={{ contain: 'layout style' }}
+        className={`hidden md:flex flex-col justify-between shrink-0 my-2.5 ms-2.5 h-[calc(100%-20px)] rounded-[24px] bg-[#0C0C10]/94 backdrop-blur-xl border border-white/[0.09] shadow-[0_14px_40px_rgba(0,0,0,0.55)] py-3.5 px-2 z-30 overflow-hidden ${
+          sidebarCollapsed ? 'w-[66px]' : 'w-[216px]'
         }`}
       >
-        <div className="space-y-5">
+        <div className="space-y-4">
           {/* Top Brand + Collapse/Expand Toggle */}
-          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between px-1.5'}`}>
+          <div className={`flex items-center h-10 ${sidebarCollapsed ? 'justify-center' : 'justify-between px-1.5'}`}>
             <button
               type="button"
               onClick={() => {
-                if (sidebarCollapsed) setSidebarCollapsed(false);
+                if (sidebarCollapsed) toggleSidebarCollapsed(false);
                 else onSelectTab('social');
               }}
               title={sidebarCollapsed ? 'توسيع القائمة' : 'LM'}
-              className="flex items-center gap-2.5 cursor-pointer group"
+              className="flex items-center gap-2.5 cursor-pointer group shrink-0"
             >
               <LmBrandMark size={34} />
               {!sidebarCollapsed && (
-                <span className="text-[16.5px] font-semibold tracking-tight text-white">LM</span>
+                <span className="text-[16px] font-semibold tracking-tight text-white">LM</span>
               )}
             </button>
 
             {!sidebarCollapsed && (
               <button
                 type="button"
-                onClick={() => setSidebarCollapsed(true)}
+                onClick={() => toggleSidebarCollapsed(true)}
                 title="تصغير القائمة"
-                className="w-8 h-8 rounded-xl hover:bg-white/[0.07] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                className="w-8 h-8 rounded-xl hover:bg-white/[0.07] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer transition-colors shrink-0"
               >
                 <CollapseIcon className="w-[18px] h-[18px]" strokeWidth={1.8} />
               </button>

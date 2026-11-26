@@ -20,10 +20,14 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Mic,
+  Paperclip,
 } from 'lucide-react';
 
 import { Lang, UserProfile } from '../../types';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
+import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
+import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText } from '../shared/LmBrandMark';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { AI_COMPANIES, AiCompanyDef, AiCompanyModel, shortenModelLabel } from './AiProvidersCatalog';
@@ -38,6 +42,8 @@ interface AiTurn {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  audioUrl?: string | null;
+  transcript?: string | null;
   companyId?: string;
   modelLabel?: string;
   feedback?: 'up' | 'down' | null;
@@ -56,17 +62,88 @@ interface AiSessionRow {
 export function AiView({ user, lang }: AiViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
   const [turns, setTurns] = useState<AiTurn[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionIdState] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('lm_ai_session_id') || null;
+    } catch {
+      return null;
+    }
+  });
   const [sessions, setSessions] = useState<AiSessionRow[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  const [prompt, setPrompt] = useState('');
+  // Persistent draft across refresh AND preserved when clicking "محادثة جديدة"!
+  const [prompt, setPromptState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_draft_ai') || '';
+    } catch {
+      return '';
+    }
+  });
   const [attachedFile, setAttachedFile] = useState<{ name: string; url: string } | null>(null);
+  const [recordingVoice, setRecordingVoice] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // 2-Step Company -> Auto-Updated Models Selector
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('gemini');
-  const [selectedModelId, setSelectedModelId] = useState<string>('gemini-2.5-flash');
+  // 2-Step Company -> Auto-Updated Models Selector (Persisted across refresh)
+  const [selectedCompanyId, setSelectedCompanyIdState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_ai_company_id') || 'gemini';
+    } catch {
+      return 'gemini';
+    }
+  });
+  const [selectedModelId, setSelectedModelIdState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('lm_ai_model_id') || 'gemini-2.5-flash';
+    } catch {
+      return 'gemini-2.5-flash';
+    }
+  });
+
+  const setPrompt = useCallback((v: string) => {
+    setPromptState(v);
+    try {
+      localStorage.setItem('lm_draft_ai', v);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setSessionId = useCallback((id: string | null) => {
+    setSessionIdState(id);
+    try {
+      if (id) localStorage.setItem('lm_ai_session_id', id);
+      else localStorage.removeItem('lm_ai_session_id');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setSelectedCompanyId = useCallback((cid: string) => {
+    setSelectedCompanyIdState(cid);
+    try {
+      localStorage.setItem('lm_ai_company_id', cid);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setSelectedModelId = useCallback((mid: string) => {
+    setSelectedModelIdState(mid);
+    try {
+      localStorage.setItem('lm_ai_model_id', mid);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const desktopTaRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = desktopTaRef.current;
+    if (!el) return;
+    el.style.height = '44px';
+    el.style.height = `${Math.min(168, Math.max(44, el.scrollHeight))}px`;
+  }, [prompt, turns.length]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [browsingCompany, setBrowsingCompany] = useState<AiCompanyDef | null>(null);
   const [modelSearch, setModelSearch] = useState('');
@@ -128,8 +205,49 @@ export function AiView({ user, lang }: AiViewProps) {
   useEffect(() => {
     loadProviderStatus();
     loadSessions();
-    fetchLiveModels('gemini');
-  }, [loadProviderStatus, loadSessions, fetchLiveModels]);
+    fetchLiveModels(selectedCompanyId);
+    // Restore active AI session smoothly on browser refresh!
+    const savedSess = (() => {
+      try {
+        return localStorage.getItem('lm_ai_session_id');
+      } catch {
+        return null;
+      }
+    })();
+    if (savedSess) {
+      apiGet<{
+        ok: boolean;
+        messages: Array<{
+          id: string;
+          role: 'user' | 'assistant';
+          content: string;
+          audio_url?: string | null;
+          transcript?: string | null;
+          company_id?: string;
+          model_label?: string;
+        }>;
+      }>(`/api/ai/sessions/${savedSess}/messages`)
+        .then(res => {
+          if (res.messages && res.messages.length > 0) {
+            setTurns(
+              res.messages.map(m => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                audioUrl: m.audio_url || null,
+                transcript: m.transcript || null,
+                companyId: m.company_id || selectedCompanyId,
+                modelLabel: m.model_label ? shortenModelLabel(m.model_label) : undefined,
+                feedback: null,
+              }))
+            );
+          } else {
+            setSessionId(null);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [loadProviderStatus, loadSessions, fetchLiveModels, selectedCompanyId, setSessionId]);
 
   // Auto-refresh live models whenever user drills into a company
   useEffect(() => {
@@ -175,13 +293,23 @@ export function AiView({ user, lang }: AiViewProps) {
     try {
       const res = await apiGet<{
         ok: boolean;
-        messages: Array<{ id: string; role: 'user' | 'assistant'; content: string; company_id?: string; model_label?: string }>;
+        messages: Array<{
+          id: string;
+          role: 'user' | 'assistant';
+          content: string;
+          audio_url?: string | null;
+          transcript?: string | null;
+          company_id?: string;
+          model_label?: string;
+        }>;
       }>(`/api/ai/sessions/${sess.id}/messages`);
       setTurns(
         res.messages.map(m => ({
           id: m.id,
           role: m.role,
           content: m.content,
+          audioUrl: m.audio_url || null,
+          transcript: m.transcript || null,
           companyId: m.company_id || sess.company_id,
           modelLabel: m.model_label ? shortenModelLabel(m.model_label) : undefined,
           feedback: null,
@@ -273,6 +401,88 @@ export function AiView({ user, lang }: AiViewProps) {
           id: `e_${Date.now()}`,
           role: 'assistant',
           content: e instanceof Error ? e.message : 'تعذر الاتصال بالمساعد.',
+          companyId: activeCompany.id,
+          feedback: null,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSendVoicePrompt(file: File, _durationSec: number, liveTranscript?: string | null) {
+    setRecordingVoice(false);
+    if (loading) return;
+    setLoading(true);
+    try {
+      const up = await apiUploadFile(file);
+      const tempUserId = `u_voice_${Date.now()}`;
+      setTurns(prev => [
+        ...prev,
+        {
+          id: tempUserId,
+          role: 'user',
+          content: 'رسالة صوتية',
+          audioUrl: up.url,
+          transcript: liveTranscript || null,
+        },
+      ]);
+
+      const res = await apiPost<{
+        ok: boolean;
+        reply: string;
+        providerUsed: string;
+        modelUsed?: string;
+        sessionId?: string | null;
+        userMsgId?: string | null;
+        transcribedPrompt?: string | null;
+        needsApiKey?: boolean;
+        missingProvider?: string;
+      }>('/api/ai/chat', {
+        userId: user.id,
+        prompt: '',
+        audioUrl: up.url,
+        transcript: liveTranscript || null,
+        provider: activeCompany.id,
+        model: activeModel.id,
+        sessionId,
+        source: 'ai_tab',
+        explicitUserConsent: true,
+      });
+
+      if (res.sessionId) {
+        setSessionId(res.sessionId);
+        loadSessions();
+      }
+
+      setTurns(prev => [
+        ...prev.map(t =>
+          t.id === tempUserId
+            ? {
+                ...t,
+                id: res.userMsgId || t.id,
+                transcript: res.transcribedPrompt || t.transcript,
+              }
+            : t
+        ),
+        {
+          id: `a_${Date.now()}`,
+          role: 'assistant',
+          content: res.reply,
+          companyId: activeCompany.id,
+          modelLabel: shortenModelLabel(res.modelUsed || activeModel.label),
+          feedback: null,
+          needsApiKey: res.needsApiKey,
+          missingProvider: res.missingProvider,
+        },
+      ]);
+    } catch (e) {
+      setTurns(prev => [
+        ...prev,
+        {
+          id: `e_${Date.now()}`,
+          role: 'assistant',
+          content: e instanceof Error ? e.message : 'تعذر معالجة الرسالة الصوتية.',
           companyId: activeCompany.id,
           feedback: null,
         },
@@ -592,61 +802,147 @@ export function AiView({ user, lang }: AiViewProps) {
       )}
 
       {/* Main ChatGPT / Gemini Open Conversation Stage */}
-      <div className="flex-1 overflow-y-auto px-4 pt-20 pb-36">
+      <div className="flex-1 overflow-y-auto px-4 pt-20 pb-36 md:pb-40 relative z-10">
         <div className="max-w-[740px] mx-auto min-h-full flex flex-col">
           {turns.length === 0 ? (
-            <div className="my-auto flex flex-col items-center text-center space-y-3 px-4">
-              <div className="w-12 h-12 rounded-2xl bg-[#14141A] border border-white/[0.1] flex items-center justify-center mb-1">
-                {activeCompany.renderLogo(26)}
-              </div>
-              <h1
-                style={{
-                  background: 'linear-gradient(90deg, #FFFFFF 0%, #FFFFFF 64%, #7A7A85 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                }}
-                className="text-3xl sm:text-4xl font-semibold tracking-tight"
-              >
-                {lang === 'ar' ? 'كيف أساعدك اليوم؟' : 'What can I help with?'}
-              </h1>
-              {!providerStatus[activeCompany.id] && (
-                <button
-                  type="button"
-                  onClick={e => {
-                    e.stopPropagation();
-                    openSetupForCompany(activeCompany);
+            <div className="my-auto flex flex-col items-center text-center space-y-5 px-2 sm:px-4 w-full">
+              <div className="space-y-3 flex flex-col items-center">
+                <div className="w-12 h-12 rounded-2xl bg-[#14141A] border border-white/[0.1] flex items-center justify-center">
+                  {activeCompany.renderLogo(26)}
+                </div>
+                <h1
+                  style={{
+                    background: 'linear-gradient(90deg, #FFFFFF 0%, #FFFFFF 64%, #7A7A85 100%)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
                   }}
-                  className="mt-2 px-4 py-1.5 rounded-full bg-[#15151C] border border-white/[0.12] hover:border-white/30 text-xs text-[#C4C4CC] hover:text-white inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="text-3xl sm:text-4xl font-semibold tracking-tight"
                 >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>ربط مفتاح {activeCompany.name}</span>
-                </button>
-              )}
+                  {lang === 'ar' ? 'كيف أساعدك اليوم؟' : 'What can I help with?'}
+                </h1>
+                {!providerStatus[activeCompany.id] && (
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      openSetupForCompany(activeCompany);
+                    }}
+                    className="mt-1 px-4 py-1.5 rounded-full bg-[#15151C] border border-white/[0.12] hover:border-white/30 text-xs text-[#C4C4CC] hover:text-white inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>ربط مفتاح {activeCompany.name}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* ChatGPT-Style Centered Floating Desktop Composer Card when Stage is Empty! */}
+              <div onClick={e => e.stopPropagation()} className="hidden md:block w-full max-w-[720px] pt-2 text-start">
+                {attachedFile && (
+                  <div className="mb-2 w-fit px-3 py-1 rounded-full bg-[#15151C] border border-white/[0.12] flex items-center gap-2 text-xs text-white">
+                    <FileText className="w-3.5 h-3.5 text-[#A1A1AA]" />
+                    <span className="max-w-[220px] truncate">{attachedFile.name}</span>
+                    <button type="button" onClick={() => setAttachedFile(null)} className="text-[#7A7A85] hover:text-white cursor-pointer">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
+                {recordingVoice ? (
+                  <LiveVoiceRecorder accent="ai" onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
+                ) : (
+                  <form
+                    onSubmit={e => {
+                      e.preventDefault();
+                      sendPrompt(prompt);
+                    }}
+                    className="w-full rounded-[28px] bg-[#14141B]/95 backdrop-blur-2xl border border-white/[0.12] focus-within:border-white/[0.24] shadow-[0_24px_64px_rgba(0,0,0,0.68)] px-4 pt-3.5 pb-2.5 transition-colors"
+                  >
+                    <textarea
+                      ref={desktopTaRef}
+                      rows={1}
+                      value={prompt}
+                      onChange={e => setPrompt(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          if (prompt.trim() && !loading) sendPrompt(prompt);
+                        }
+                      }}
+                      placeholder={lang === 'ar' ? 'اكتب رسالتك أو اسأل أي شيء...' : 'Message anything...'}
+                      className="w-full bg-transparent text-[15px] leading-relaxed text-[#F2F2F5] placeholder:text-[#6C6C78] outline-none resize-none overflow-y-auto max-h-[168px] text-start"
+                    />
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          title="إرفاق ملف"
+                          className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.12] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                        >
+                          <Paperclip className="w-[17px] h-[17px]" strokeWidth={1.85} />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRecordingVoice(true)}
+                          title="تسجيل رسالة صوتية للذكاء الاصطناعي"
+                          className="h-9 px-3 rounded-full bg-gradient-to-r from-[#0EA5E9]/20 via-[#6366F1]/25 to-[#A855F7]/20 hover:from-[#0EA5E9]/35 hover:to-[#A855F7]/35 border border-[#818CF8]/35 text-[#E0E7FF] hover:text-white flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-all"
+                        >
+                          <Mic className="w-3.5 h-3.5 text-[#38BDF8]" />
+                          <span>صوت</span>
+                        </button>
+                        <ChromeArrowButton type="submit" disabled={!prompt.trim() || loading} size={38} />
+                      </div>
+                    </div>
+                  </form>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-7 pt-2">
               {turns.map((t, idx) => {
                 const turnCompany = AI_COMPANIES.find(c => c.id === t.companyId) || activeCompany;
                 return t.role === 'user' ? (
-                  /* User Turn with Hover Actions: Resend Again, Edit, Copy, Open History! */
+                  /* User Turn with Voice Support + Shining Links + Hover Actions */
                   <div key={t.id} className="group flex flex-col items-end gap-1">
-                    <div
-                      onClick={e => {
-                        e.stopPropagation();
-                        setHistoryOpen(true);
-                        loadSessions();
-                      }}
-                      title="اضغط لعرض المحادثات السابقة"
-                      className="max-w-[82%] rounded-3xl rounded-ee-md bg-[#1B1B22] px-4 py-2.5 text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap cursor-pointer hover:bg-[#22222B] transition-colors"
-                    >
-                      {t.content}
-                    </div>
+                    {t.audioUrl ? (
+                      <div
+                        onClick={e => e.stopPropagation()}
+                        className="max-w-[85%] rounded-3xl rounded-ee-md px-3.5 py-2.5 border lm-ai-summon-ring space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <AiSummonBadge label="VOICE AI" compact />
+                        </div>
+                        <SmartVoicePill
+                          url={t.audioUrl}
+                          transcript={t.transcript}
+                          recordId={t.id}
+                          table="ai_messages"
+                          accent="ai"
+                          isMine
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        onClick={e => {
+                          e.stopPropagation();
+                          setHistoryOpen(true);
+                          loadSessions();
+                        }}
+                        title="اضغط لعرض المحادثات السابقة"
+                        className="max-w-[82%] rounded-3xl rounded-ee-md bg-[#1B1B22] px-4 py-2.5 text-[14.5px] leading-relaxed text-[#F2F2F5] whitespace-pre-wrap cursor-pointer hover:bg-[#22222B] transition-colors"
+                      >
+                        <RichMessageText text={t.content} />
+                      </div>
+                    )}
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-1 text-[#7A7A85]">
                       <button
                         type="button"
                         onClick={e => {
                           e.stopPropagation();
-                          sendPrompt(t.content);
+                          sendPrompt(t.transcript || t.content);
                         }}
                         title="إعادة الإرسال"
                         className="w-6 h-6 rounded-full hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer"
@@ -657,7 +953,7 @@ export function AiView({ user, lang }: AiViewProps) {
                         type="button"
                         onClick={e => {
                           e.stopPropagation();
-                          setPrompt(t.content);
+                          setPrompt(t.transcript || t.content);
                         }}
                         title="تعديل وإرسال"
                         className="w-6 h-6 rounded-full hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer"
@@ -668,7 +964,7 @@ export function AiView({ user, lang }: AiViewProps) {
                         type="button"
                         onClick={e => {
                           e.stopPropagation();
-                          handleCopy(t.id, t.content);
+                          handleCopy(t.id, t.transcript || t.content);
                         }}
                         title="نسخ"
                         className="w-6 h-6 rounded-full hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer"
@@ -684,7 +980,9 @@ export function AiView({ user, lang }: AiViewProps) {
                     </div>
                     <div className="flex-1 min-w-0 space-y-2.5">
                       <div className="text-[14.5px] leading-[1.75] text-[#F2F2F5] space-y-2">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.content}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                          {t.content}
+                        </ReactMarkdown>
                       </div>
 
                       {t.needsApiKey && t.missingProvider && (
@@ -766,13 +1064,35 @@ export function AiView({ user, lang }: AiViewProps) {
         </div>
       </div>
 
-      {/* FLOATING CENTERED AUTO-EXPANDING COMPOSER + SPLIT ORB */}
+      {/* SUBTLE TAPERED BOTTOM OPTICAL SHEEN (Edges cleanly tapered/trimmed away from corners!) */}
+      <div className="lm-ai-bottom-sheen absolute inset-x-0 bottom-0 h-[135px] z-[5]">
+        <div
+          style={{
+            background:
+              'radial-gradient(62% 95% at 50% 108%, rgba(255,255,255,0.13) 0%, rgba(125,211,252,0.08) 32%, rgba(99,102,241,0.05) 58%, transparent 82%)',
+          }}
+          className="w-full h-full"
+        />
+        <div
+          style={{
+            background:
+              'linear-gradient(90deg, transparent 8%, rgba(255,255,255,0.28) 35%, rgba(224,242,254,0.48) 50%, rgba(255,255,255,0.28) 65%, transparent 92%)',
+          }}
+          className="absolute inset-x-10 bottom-0 h-[1.5px] rounded-full"
+        />
+      </div>
+
+      <input ref={fileInputRef} type="file" onChange={handleAttach} className="hidden" />
+
+      {/* FLOATING COMPOSER: Desktop ChatGPT 2-Row Card (when chatting) + Mobile Floating Split Pill (always) */}
       {!mobileNavExpanded && (
         <div
           onClick={e => e.stopPropagation()}
-          className="pointer-events-none absolute bottom-4 inset-x-3.5 md:inset-x-6 z-20 flex justify-center"
+          className={`pointer-events-none absolute bottom-4 inset-x-3.5 md:inset-x-6 z-20 flex justify-center ${
+            turns.length === 0 ? 'md:hidden' : ''
+          }`}
         >
-          <div className="pointer-events-auto w-full max-w-[780px] space-y-2">
+          <div className="pointer-events-auto w-full max-w-[740px] space-y-2">
             {attachedFile && (
               <div className="w-fit px-3 py-1 rounded-full bg-[#15151C] border border-white/[0.12] flex items-center gap-2 text-xs text-white">
                 <FileText className="w-3.5 h-3.5 text-[#A1A1AA]" />
@@ -783,24 +1103,94 @@ export function AiView({ user, lang }: AiViewProps) {
               </div>
             )}
 
-            <input ref={fileInputRef} type="file" onChange={handleAttach} className="hidden" />
-
-            <div className="flex items-end gap-2.5">
-              <SplitComposerOrb onAttach={() => fileInputRef.current?.click()} showNavOption />
-
-              <div className="flex-1 min-w-0">
-                <ObsidianComposerPill
-                  value={prompt}
-                  onChange={setPrompt}
+            {/* DESKTOP ChatGPT-Style 2-Row Floating Card */}
+            <div className="hidden md:block">
+              {recordingVoice ? (
+                <LiveVoiceRecorder accent="ai" onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
+              ) : (
+                <form
                   onSubmit={e => {
                     e.preventDefault();
                     sendPrompt(prompt);
                   }}
-                  onFocus={() => setComposerFocused(true)}
-                  onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
-                  placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Message...'}
-                  disabled={!prompt.trim() || loading}
-                />
+                  className="w-full rounded-[26px] bg-[#14141B]/95 backdrop-blur-2xl border border-white/[0.12] focus-within:border-white/[0.24] shadow-[0_18px_52px_rgba(0,0,0,0.65)] px-4 pt-3 pb-2.5 transition-colors"
+                >
+                  <textarea
+                    ref={desktopTaRef}
+                    rows={1}
+                    value={prompt}
+                    onChange={e => setPrompt(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (prompt.trim() && !loading) sendPrompt(prompt);
+                      }
+                    }}
+                    placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Message...'}
+                    className="w-full bg-transparent text-[14.5px] leading-relaxed text-[#F2F2F5] placeholder:text-[#6C6C78] outline-none resize-none overflow-y-auto max-h-[168px] text-start"
+                  />
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="إرفاق ملف"
+                      className="w-8 h-8 rounded-full bg-white/[0.05] hover:bg-white/[0.12] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                    >
+                      <Paperclip className="w-[16px] h-[16px]" strokeWidth={1.85} />
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRecordingVoice(true)}
+                        title="تسجيل رسالة صوتية للذكاء الاصطناعي"
+                        className="h-8 px-2.5 rounded-full bg-gradient-to-r from-[#0EA5E9]/20 via-[#6366F1]/25 to-[#A855F7]/20 hover:from-[#0EA5E9]/35 hover:to-[#A855F7]/35 border border-[#818CF8]/35 text-[#E0E7FF] hover:text-white flex items-center gap-1.5 text-[11.5px] font-medium cursor-pointer transition-all"
+                      >
+                        <Mic className="w-3.5 h-3.5 text-[#38BDF8]" />
+                        <span>صوت</span>
+                      </button>
+                      <ChromeArrowButton type="submit" disabled={!prompt.trim() || loading} size={36} />
+                    </div>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            {/* MOBILE Floating Split Orb + Pill with Voice-to-AI */}
+            <div className="flex md:hidden items-end gap-2.5">
+              <SplitComposerOrb onAttach={() => fileInputRef.current?.click()} showNavOption />
+
+              <div className="flex-1 min-w-0">
+                {recordingVoice ? (
+                  <LiveVoiceRecorder accent="ai" onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
+                ) : (
+                  <ObsidianComposerPill
+                    value={prompt}
+                    onChange={setPrompt}
+                    onSubmit={e => {
+                      e.preventDefault();
+                      sendPrompt(prompt);
+                    }}
+                    onFocus={() => setComposerFocused(true)}
+                    onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
+                    placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Message...'}
+                    disabled={!prompt.trim() || loading}
+                    customAction={
+                      prompt.trim() ? (
+                        <ChromeArrowButton type="submit" disabled={loading} size={38} />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setRecordingVoice(true)}
+                          title="رسالة صوتية للذكاء الاصطناعي"
+                          className="w-[38px] h-[38px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_16px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
+                        >
+                          <Mic className="w-[17px] h-[17px]" strokeWidth={2} />
+                        </button>
+                      )
+                    }
+                  />
+                )}
               </div>
             </div>
           </div>
