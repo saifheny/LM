@@ -3910,8 +3910,8 @@ function buildDynamicOgMeta(req: express.Request): {
     return `${origin}${p.startsWith('/') ? p : `/${p}`}`;
   };
 
-  let title = 'LM — المنصة الرقمية المتكاملة';
-  let description = 'المجتمع، نبض، بث مباشر، دردشة فورية، وLM AI في تطبيق واحد.';
+  let title = 'LM';
+  let description = 'Connect without boundaries — social feed, short videos, live rooms, instant chat, and LM AI in one unified platform.';
   let image = `${origin}/lm-icon-512.png`;
   let type = 'website';
 

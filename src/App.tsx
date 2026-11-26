@@ -4,11 +4,11 @@ import { apiGet, apiPost, setAuthToken } from './lib/api';
 import { registerWsUser, subscribeWs, subscribeWsStatus } from './lib/wsHub';
 import { LayoutProvider } from './context/LayoutContext';
 import { AppShell } from './components/layout/AppShell';
-import { AuthScreen } from './components/auth/AuthScreen';
 import { CallLaunchRequest, WebRtcCallController } from './components/shared/WebRtcCallModal';
 import { SharePayload, ShareSheetModal } from './components/shared/ShareSheetModal';
 
 // React.lazy Route-Level Code Splitting for instant sub-second mobile startup!
+const AuthScreen = lazy(() => import('./components/auth/AuthScreen').then(m => ({ default: m.AuthScreen })));
 const SocialView = lazy(() => import('./components/social/SocialView').then(m => ({ default: m.SocialView })));
 const ShortVideosView = lazy(() => import('./components/videos/ShortVideosView').then(m => ({ default: m.ShortVideosView })));
 const LiveView = lazy(() => import('./components/live/LiveView').then(m => ({ default: m.LiveView })));
@@ -346,21 +346,35 @@ export function App() {
     }
   }, [lastWsEvent, currentUser?.id, loadNotifications]);
 
+  // Keep outer landing page strictly LTR/English and inside app synchronized with user language
+  const showingLanding = !currentUser || loggedOut;
+  useEffect(() => {
+    if (showingLanding) {
+      document.documentElement.dir = 'ltr';
+      document.documentElement.lang = 'en';
+    } else {
+      document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+      document.documentElement.lang = lang;
+    }
+  }, [showingLanding, lang]);
+
   if (!authLoaded) {
-    return <div className="h-screen w-screen bg-[#0A0A0C]" />;
+    return <div className="h-screen w-screen bg-[#050409]" />;
   }
 
-  if (!currentUser || loggedOut) {
+  if (showingLanding) {
     return (
-      <AuthScreen
-        users={users}
-        lang={lang}
-        onToggleLang={toggleLang}
-        onAuthenticated={(u) => {
-          selectUser(u);
-          loadUsers();
-        }}
-      />
+      <Suspense fallback={<div className="h-screen w-screen bg-[#050409]" />}>
+        <AuthScreen
+          users={users}
+          lang={lang}
+          onToggleLang={toggleLang}
+          onAuthenticated={(u) => {
+            selectUser(u);
+            loadUsers();
+          }}
+        />
+      </Suspense>
     );
   }
 
