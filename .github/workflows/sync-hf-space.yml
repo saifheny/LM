@@ -20,20 +20,64 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping HF Spaces sync: set HF_TOKEN and HF_SPACE_ID in GitHub Repository Secrets to enable automatic deployment."
+            echo "Skipping HF Spaces sync: add HF_TOKEN and HF_SPACE_ID in GitHub Repository Secrets to auto-deploy."
           fi
 
       - name: Checkout repository
         if: steps.check.outputs.ready == 'true'
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          lfs: true
 
-      - name: Push to Hugging Face Space
+      - name: Set up Python
+        if: steps.check.outputs.ready == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Upload cleanly to Hugging Face Space (handles binary MP4/WAV/JPG automatically via HF Xet/LFS!)
         if: steps.check.outputs.ready == 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
         run: |
-          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_ID}" HEAD:main
+          pip install --quiet --upgrade huggingface_hub
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"]
+          space_id = os.environ["HF_SPACE_ID"].strip()
+          api = HfApi(token=token)
+
+          # Ensure Space exists as Docker SDK if not yet created
+          api.create_repo(
+              repo_id=space_id,
+              repo_type="space",
+              space_sdk="docker",
+              exist_ok=True,
+          )
+
+          api.upload_folder(
+              folder_path=".",
+              repo_id=space_id,
+              repo_type="space",
+              commit_message="Deploy LM Super App from GitHub main",
+              ignore_patterns=[
+                  ".git",
+                  ".git/**",
+                  ".github",
+                  ".github/**",
+                  "node_modules",
+                  "node_modules/**",
+                  "dist",
+                  "dist/**",
+                  "data",
+                  "data/**",
+                  "tools",
+                  "tools/**",
+                  ".env",
+                  ".env.*",
+              ],
+              delete_patterns=["*"],
+          )
+          print(f"Successfully deployed to https://huggingface.co/spaces/{space_id}")
+          PY
