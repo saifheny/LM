@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   CheckCheck,
   User,
+  Download,
 } from 'lucide-react';
 import { Lang, NavTab, NotificationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
@@ -261,6 +262,21 @@ export function AppShell({
   const [accountOpen, setAccountOpen] = useState(false);
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [installPromptEvt, setInstallPromptEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
+
+  useEffect(() => {
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setInstallPromptEvt(e as unknown as { prompt: () => Promise<void> });
+    };
+    const onInstalled = () => setInstallPromptEvt(null);
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
   const [searchQ, setSearchQ] = useState('');
   const [searchRes, setSearchRes] = useState<{
     users: UserProfile[];
@@ -665,6 +681,23 @@ export function AppShell({
                 )}
               </button>
             </div>
+
+            {installPromptEvt && (
+              <div className="px-4 py-2.5 border-b border-white/[0.08]">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await installPromptEvt.prompt();
+                    setInstallPromptEvt(null);
+                    setAccountOpen(false);
+                  }}
+                  className="w-full py-2 rounded-xl bg-gradient-to-r from-[#F59E0B] via-[#FB7185] to-[#34D399] text-black text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{lang === 'ar' ? 'تثبيت تطبيق LM على الجهاز' : 'Install LM App'}</span>
+                </button>
+              </div>
+            )}
 
             <div className="py-1 border-b border-white/[0.08]">
               {allUsers.map(u => (

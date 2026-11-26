@@ -34,6 +34,7 @@ const upload = multer({ storage, limits: { fileSize: 80 * 1024 * 1024 } });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const wsClients = new Set<WebSocket>();
+const wsMeta = new Map<WebSocket, { clientId: string; userId?: string }>();
 
 function broadcast(event: string, payload: unknown) {
   const frame = JSON.stringify({ event, payload, ts: Date.now() });
@@ -44,10 +45,62 @@ function broadcast(event: string, payload: unknown) {
   }
 }
 
+function relayWsSignal(
+  sender: WebSocket,
+  event: string,
+  payload: Record<string, unknown>
+) {
+  const senderInfo = wsMeta.get(sender);
+  const enriched = {
+    ...payload,
+    fromClientId: senderInfo?.clientId,
+    fromUserId: payload.fromUserId || senderInfo?.userId,
+  };
+  const frame = JSON.stringify({ event, payload: enriched, ts: Date.now() });
+  const targetClientId = typeof payload.targetClientId === 'string' ? payload.targetClientId : '';
+  const targetUserId = typeof payload.targetUserId === 'string' ? payload.targetUserId : '';
+
+  for (const client of wsClients) {
+    if (client === sender || client.readyState !== WebSocket.OPEN) continue;
+    const meta = wsMeta.get(client);
+    if (targetClientId) {
+      if (meta?.clientId === targetClientId) client.send(frame);
+    } else if (targetUserId) {
+      if (meta?.userId === targetUserId) client.send(frame);
+    } else {
+      client.send(frame);
+    }
+  }
+}
+
 wss.on('connection', (ws) => {
+  const clientId = `ws_${uuid().slice(0, 8)}`;
   wsClients.add(ws);
-  ws.send(JSON.stringify({ event: 'system:connected', payload: { status: 'online' }, ts: Date.now() }));
-  ws.on('close', () => wsClients.delete(ws));
+  wsMeta.set(ws, { clientId });
+  ws.send(JSON.stringify({ event: 'system:connected', payload: { status: 'online', clientId }, ts: Date.now() }));
+
+  ws.on('message', raw => {
+    try {
+      const msg = JSON.parse(String(raw)) as { type?: string; payload?: Record<string, unknown>; userId?: string };
+      if (!msg?.type) return;
+      if (msg.type === 'ws:register') {
+        const uid = msg.userId || (msg.payload?.userId as string | undefined);
+        const cur = wsMeta.get(ws);
+        if (cur && uid) cur.userId = uid;
+        return;
+      }
+      if (msg.type.startsWith('rtc:')) {
+        relayWsSignal(ws, msg.type, msg.payload || {});
+      }
+    } catch {
+      // ignore malformed signal frame
+    }
+  });
+
+  ws.on('close', () => {
+    wsClients.delete(ws);
+    wsMeta.delete(ws);
+  });
 });
 
 liveEngine.setBroadcaster(broadcast);
@@ -1916,7 +1969,7 @@ app.get('/api/live/rooms', (_req, res) => {
     SELECT r.*, u.display_name as host_name, u.username as host_username, u.avatar_color as host_color, u.avatar_initials as host_initials, u.avatar_url as host_avatar
     FROM live_rooms r JOIN users u ON r.host_id = u.id
     WHERE r.is_active = 1
-    ORDER BY r.viewers_count DESC
+    ORDER BY CASE WHEN r.video_url IS NULL THEN 0 ELSE 1 END, r.rowid DESC
   `).all() as Array<Record<string, unknown>>;
 
   res.json({
@@ -1942,6 +1995,62 @@ app.get('/api/live/rooms', (_req, res) => {
       };
     }),
   });
+});
+
+app.post('/api/live/rooms', (req, res) => {
+  const { hostId, title, category } = req.body as {
+    hostId?: string;
+    title?: string;
+    category?: string;
+  };
+  if (!hostId || !title?.trim()) {
+    return res.status(400).json({ ok: false, error: 'عنوان البث المباشر مطلوب.' });
+  }
+  const host = getUserOrNull(hostId);
+  if (!host) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  // End any previous user-created WebRTC room hosted by this user cleanly
+  db.prepare("UPDATE live_rooms SET is_active = 0 WHERE host_id = ? AND scene_preset = 'webrtc_live'").run(hostId);
+
+  const id = `live_u_${uuid().slice(0, 8)}`;
+  db.prepare(`
+    INSERT INTO live_rooms (id, host_id, title, category, video_url, scene_preset, viewers_count, is_active)
+    VALUES (?, ?, ?, ?, NULL, 'webrtc_live', 1, 1)
+  `).run(id, hostId, title.trim(), (category || 'عام').trim());
+
+  const runtime = liveEngine.getPublicState(id);
+  const room = {
+    id,
+    hostId: host.id,
+    hostName: host.displayName,
+    hostUsername: host.username,
+    hostColor: host.avatarColor,
+    hostInitials: host.avatarInitials,
+    hostAvatarUrl: host.avatarUrl,
+    title: title.trim(),
+    category: (category || 'عام').trim(),
+    videoUrl: null,
+    scenePreset: 'webrtc_live',
+    viewersCount: runtime.viewersCount,
+    totalGiftsEgp: 0,
+    highlightsEnabled: true,
+    cooldownSec: 10,
+  };
+  broadcast('live:rooms_updated', { roomId: id, action: 'created' });
+  res.json({ ok: true, room });
+});
+
+app.delete('/api/live/rooms/:id', (req, res) => {
+  const hostId = String(req.query.hostId || '');
+  const row = db.prepare('SELECT host_id FROM live_rooms WHERE id = ?').get(req.params.id) as { host_id: string } | undefined;
+  if (!row) return res.status(404).json({ ok: false, error: 'غرفة البث غير موجودة.' });
+  if (hostId && row.host_id !== hostId) {
+    return res.status(403).json({ ok: false, error: 'يمكن للمذيع فقط إنهاء البث.' });
+  }
+  db.prepare('UPDATE live_rooms SET is_active = 0 WHERE id = ?').run(req.params.id);
+  broadcast('live:room_ended', { roomId: req.params.id });
+  broadcast('live:rooms_updated', { roomId: req.params.id, action: 'ended' });
+  res.json({ ok: true });
 });
 
 app.get('/api/live/rooms/:id/state', (req, res) => {

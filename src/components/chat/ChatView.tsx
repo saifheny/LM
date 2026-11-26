@@ -25,6 +25,7 @@ import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramR
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { NavAiIcon, TelegramVideoNoteIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb } from '../shared/ActionOrb2026';
+import type { CallLaunchRequest } from '../shared/WebRtcCallModal';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
@@ -38,6 +39,7 @@ interface ChatViewProps {
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
   onOpenHashtag?: (tag: string) => void;
+  onStartCall?: (req: CallLaunchRequest) => void;
 }
 
 const WORLD_LANGUAGES = [
@@ -75,6 +77,7 @@ export function ChatView({
   onOpenProfile,
   onOpenProfileByUsername,
   onOpenHashtag,
+  onStartCall,
 }: ChatViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded, setChatInThread, setBottomDockHidden } = useLayout();
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -154,7 +157,6 @@ export function ChatView({
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [recordingVideoNote, setRecordingVideoNote] = useState(false);
 
-  const [callOverlay, setCallOverlay] = useState<'audio' | 'video' | null>(null);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newChatTitle, setNewChatTitle] = useState('');
   const [newChatType, setNewChatType] = useState<'dm' | 'group' | 'community'>('dm');
@@ -186,8 +188,6 @@ export function ChatView({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const callVideoRef = useRef<HTMLVideoElement | null>(null);
-  const callStreamRef = useRef<MediaStream | null>(null);
   const noteVideoRef = useRef<HTMLVideoElement | null>(null);
   const noteStreamRef = useRef<MediaStream | null>(null);
   const holdTimerRef = useRef<number | null>(null);
@@ -260,7 +260,6 @@ export function ChatView({
 
   useEffect(() => {
     return () => {
-      callStreamRef.current?.getTracks().forEach(t => t.stop());
       noteStreamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
@@ -292,25 +291,16 @@ export function ChatView({
     }
   }
 
-  async function startCall(kind: 'audio' | 'video') {
-    setCallOverlay(kind);
-    if (kind === 'video') {
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        callStreamRef.current = s;
-        setTimeout(() => {
-          if (callVideoRef.current) callVideoRef.current.srcObject = s;
-        }, 80);
-      } catch {
-        // fallback avatar
-      }
-    }
-  }
-
-  function endCall() {
-    callStreamRef.current?.getTracks().forEach(t => t.stop());
-    callStreamRef.current = null;
-    setCallOverlay(null);
+  function startCall(kind: 'audio' | 'video') {
+    if (!activeConv || !onStartCall) return;
+    onStartCall({
+      targetUserId: activeConv.peerUserId || null,
+      targetName: activeConv.title,
+      targetInitials: activeConv.title.slice(0, 2),
+      targetAvatarUrl: activeConv.avatarUrl,
+      mode: kind,
+      convId: activeConv.id,
+    });
   }
 
   async function startVideoNoteCapture() {
@@ -1457,30 +1447,6 @@ export function ChatView({
           </div>
         )}
       </section>
-
-      {/* Voice / Video Call Overlay */}
-      {callOverlay && activeConv && (
-        <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-between py-14 px-6">
-          <div className="text-center space-y-1">
-            <div className="text-xl font-semibold text-white">{activeConv.title}</div>
-            <div className="text-xs text-[#7A7A85]">جارٍ الاتصال...</div>
-          </div>
-          {callOverlay === 'video' ? (
-            <div className="w-full max-w-[360px] h-[420px] rounded-3xl overflow-hidden border border-white/[0.12] bg-[#131317] flex items-center justify-center">
-              <video ref={callVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-            </div>
-          ) : (
-            <UserAvatar initials={activeConv.title.slice(0, 2)} avatarUrl={activeConv.avatarUrl} size={110} online />
-          )}
-          <button
-            type="button"
-            onClick={endCall}
-            className="px-8 py-3 rounded-full bg-[#EF4444] text-white text-sm font-semibold cursor-pointer"
-          >
-            إنهاء المكالمة
-          </button>
-        </div>
-      )}
 
       {/* New Chat Modal: Real 1-on-1 DM User Search + Group + Community */}
       {newChatOpen && (

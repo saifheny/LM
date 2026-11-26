@@ -1,18 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Lang, NavTab, NotificationItem, UserProfile } from './types';
 import { apiGet, apiPost } from './lib/api';
+import { registerWsUser, subscribeWs, subscribeWsStatus } from './lib/wsHub';
 import { LayoutProvider } from './context/LayoutContext';
 import { AppShell } from './components/layout/AppShell';
 import { AuthScreen } from './components/auth/AuthScreen';
-import { SocialView } from './components/social/SocialView';
-import { ShortVideosView } from './components/videos/ShortVideosView';
-import { LiveView } from './components/live/LiveView';
-import { ChatView } from './components/chat/ChatView';
-import { AiView } from './components/ai/AiView';
-import { ProfileView } from './components/profile/ProfileView';
-import { ApiHubView } from './components/settings/ApiHubView';
+import { CallLaunchRequest, WebRtcCallController } from './components/shared/WebRtcCallModal';
+
+// React.lazy Route-Level Code Splitting for instant sub-second mobile startup!
+const SocialView = lazy(() => import('./components/social/SocialView').then(m => ({ default: m.SocialView })));
+const ShortVideosView = lazy(() => import('./components/videos/ShortVideosView').then(m => ({ default: m.ShortVideosView })));
+const LiveView = lazy(() => import('./components/live/LiveView').then(m => ({ default: m.LiveView })));
+const ChatView = lazy(() => import('./components/chat/ChatView').then(m => ({ default: m.ChatView })));
+const AiView = lazy(() => import('./components/ai/AiView').then(m => ({ default: m.AiView })));
+const ProfileView = lazy(() => import('./components/profile/ProfileView').then(m => ({ default: m.ProfileView })));
+const ApiHubView = lazy(() => import('./components/settings/ApiHubView').then(m => ({ default: m.ApiHubView })));
 
 const VALID_TABS: NavTab[] = ['social', 'videos', 'live', 'chat', 'ai', 'profile', 'settings'];
+
+function ViewLoadingFallback() {
+  return (
+    <div className="h-full w-full bg-[#0A0A0C] flex items-center justify-center">
+      <div className="flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24] animate-bounce [animation-delay:0ms]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-[#FB7185] animate-bounce [animation-delay:120ms]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-[#34D399] animate-bounce [animation-delay:240ms]" />
+      </div>
+    </div>
+  );
+}
 
 function readInitialTab(): NavTab {
   try {
@@ -55,6 +71,7 @@ export function App() {
   const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [outgoingCall, setOutgoingCall] = useState<CallLaunchRequest | null>(null);
 
   const setActiveTab = useCallback((t: NavTab) => {
     setActiveTabState(t);
@@ -224,9 +241,24 @@ export function App() {
     loadUsers();
   }, [loadUsers]);
 
+  // Register active user with zero-drop WebSocket Hub for targeted WebRTC signaling
   useEffect(() => {
+    registerWsUser(currentUser?.id || null);
     if (currentUser?.id) loadNotifications(currentUser.id);
   }, [currentUser?.id, loadNotifications]);
+
+  useEffect(() => {
+    const unsubStatus = subscribeWsStatus(setWsOnline);
+    const unsubEvents = subscribeWs(frame => {
+      if (!frame.event.startsWith('rtc:')) {
+        setLastWsEvent(frame);
+      }
+    });
+    return () => {
+      unsubStatus();
+      unsubEvents();
+    };
+  }, []);
 
   useEffect(() => {
     if (lastWsEvent?.event === 'notification:new' && currentUser?.id) {
@@ -236,35 +268,6 @@ export function App() {
       }
     }
   }, [lastWsEvent, currentUser?.id, loadNotifications]);
-
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    let retryTimer: number | undefined;
-
-    const connect = () => {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-      ws.onopen = () => setWsOnline(true);
-      ws.onmessage = (ev) => {
-        try {
-          const parsed = JSON.parse(ev.data);
-          setLastWsEvent(parsed);
-        } catch {
-          // ignore malformed frame
-        }
-      };
-      ws.onclose = () => {
-        setWsOnline(false);
-        retryTimer = window.setTimeout(connect, 2500);
-      };
-    };
-
-    connect();
-    return () => {
-      if (retryTimer) clearTimeout(retryTimer);
-      ws?.close();
-    };
-  }, []);
 
   if (!authLoaded) {
     return <div className="h-screen w-screen bg-[#0A0A0C]" />;
@@ -302,65 +305,75 @@ export function App() {
         onOpenNotification={handleOpenNotification}
         onLogout={() => setLoggedOut(true)}
       >
-        {activeTab === 'social' && (
-          <SocialView
-            user={currentUser}
-            allUsers={users}
-            lang={lang}
-            lastWsEvent={lastWsEvent}
-            activeHashtag={activeHashtag}
-            onSelectHashtag={setActiveHashtag}
-            onOpenProfile={openProfile}
-            onOpenProfileByUsername={openProfileByUsername}
-          />
-        )}
-        {activeTab === 'videos' && (
-          <ShortVideosView
-            user={currentUser}
-            lang={lang}
-            onOpenProfile={openProfile}
-            onOpenProfileByUsername={openProfileByUsername}
-            onOpenHashtag={openHashtagFeed}
-          />
-        )}
-        {activeTab === 'live' && (
-          <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} onOpenProfile={openProfile} />
-        )}
-        {activeTab === 'chat' && (
-          <ChatView
-            user={currentUser}
-            lang={lang}
-            lastWsEvent={lastWsEvent}
-            openConvId={pendingChatConvId}
-            onConsumedOpenConv={() => setPendingChatConvId(null)}
-            onOpenProfile={openProfile}
-            onOpenProfileByUsername={openProfileByUsername}
-            onOpenHashtag={openHashtagFeed}
-          />
-        )}
-        {activeTab === 'ai' && (
-          <AiView user={currentUser} lang={lang} />
-        )}
-        {activeTab === 'profile' && (
-          <ProfileView
-            profileUserId={profileUserId || currentUser.id}
-            currentUser={currentUser}
-            lang={lang}
-            onOpenProfile={openProfile}
-            onOpenProfileByUsername={openProfileByUsername}
-            onOpenHashtag={openHashtagFeed}
-            onProfileUpdated={updated => {
-              setCurrentUser(updated);
-              loadUsers();
-            }}
-            onMessageUser={openDirectChatWithUser}
-            onOpenVideos={() => setActiveTab('videos')}
-          />
-        )}
-        {activeTab === 'settings' && (
-          <ApiHubView lang={lang} />
-        )}
+        <Suspense fallback={<ViewLoadingFallback />}>
+          {activeTab === 'social' && (
+            <SocialView
+              user={currentUser}
+              allUsers={users}
+              lang={lang}
+              lastWsEvent={lastWsEvent}
+              activeHashtag={activeHashtag}
+              onSelectHashtag={setActiveHashtag}
+              onOpenProfile={openProfile}
+              onOpenProfileByUsername={openProfileByUsername}
+            />
+          )}
+          {activeTab === 'videos' && (
+            <ShortVideosView
+              user={currentUser}
+              lang={lang}
+              onOpenProfile={openProfile}
+              onOpenProfileByUsername={openProfileByUsername}
+              onOpenHashtag={openHashtagFeed}
+            />
+          )}
+          {activeTab === 'live' && (
+            <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} onOpenProfile={openProfile} />
+          )}
+          {activeTab === 'chat' && (
+            <ChatView
+              user={currentUser}
+              lang={lang}
+              lastWsEvent={lastWsEvent}
+              openConvId={pendingChatConvId}
+              onConsumedOpenConv={() => setPendingChatConvId(null)}
+              onOpenProfile={openProfile}
+              onOpenProfileByUsername={openProfileByUsername}
+              onOpenHashtag={openHashtagFeed}
+              onStartCall={setOutgoingCall}
+            />
+          )}
+          {activeTab === 'ai' && (
+            <AiView user={currentUser} lang={lang} />
+          )}
+          {activeTab === 'profile' && (
+            <ProfileView
+              profileUserId={profileUserId || currentUser.id}
+              currentUser={currentUser}
+              lang={lang}
+              onOpenProfile={openProfile}
+              onOpenProfileByUsername={openProfileByUsername}
+              onOpenHashtag={openHashtagFeed}
+              onProfileUpdated={updated => {
+                setCurrentUser(updated);
+                loadUsers();
+              }}
+              onMessageUser={openDirectChatWithUser}
+              onOpenVideos={() => setActiveTab('videos')}
+            />
+          )}
+          {activeTab === 'settings' && (
+            <ApiHubView lang={lang} />
+          )}
+        </Suspense>
       </AppShell>
+
+      {/* Global Real WebRTC 1-on-1 Audio & Video Call Controller (Works across ALL tabs!) */}
+      <WebRtcCallController
+        currentUser={currentUser}
+        outgoingRequest={outgoingCall}
+        onClearOutgoing={() => setOutgoingCall(null)}
+      />
     </LayoutProvider>
   );
 }
