@@ -1708,9 +1708,12 @@ export function ChatView({
           </div>
         )}
 
-        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Hidden when mobile full bottom dock is expanded!) */}
+        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Safe-Area Lifted Above Phone Nav Bar!) */}
         {!mobileNavExpanded && (
-          <div className="pointer-events-none absolute bottom-3.5 inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center">
+          <div
+            style={{ bottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))' }}
+            className="pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center"
+          >
             <div className="pointer-events-auto w-full max-w-[780px] flex flex-col gap-2">
               {/* Compact Side-Aligned Reply / AI Context Card (Never oversized or paper-thin!) */}
               {(replyTarget || sharedForAi) && (

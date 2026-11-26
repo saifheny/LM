@@ -154,8 +154,10 @@ export function ShortVideosView({
   onOpenProfileByUsername,
   onOpenHashtag,
 }: ShortVideosViewProps) {
-  const { setBottomDockHidden } = useLayout();
+  const { bottomDockHidden, setBottomDockHidden } = useLayout();
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
+  const [videoBuffering, setVideoBuffering] = useState(false);
+  const likeInFlightRef = useRef<Record<string, boolean>>({});
   const [feedTab, setFeedTabState] = useState<'following' | 'friends' | 'for_you'>(() => {
     try {
       const saved = localStorage.getItem('lm_pulse_tab');
@@ -376,12 +378,23 @@ export function ShortVideosView({
     setPaused(false);
     setSpeed2x(false);
     setCurrentTime(0);
+    setVideoBuffering(true);
     Object.entries(videoRefs.current).forEach(([idxStr, el]) => {
       if (!el) return;
       el.playbackRate = 1;
       if (Number(idxStr) === activeIndex) {
         el.currentTime = 0;
-        el.play().catch(() => {});
+        const p = el.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {
+            // Mobile browsers block unmuted autoplay — smoothly fall back to muted play so video NEVER freezes!
+            el.muted = true;
+            setMuted(true);
+            el.play().catch(() => {
+              setVideoBuffering(false);
+            });
+          });
+        }
       } else {
         el.pause();
       }
@@ -476,21 +489,65 @@ export function ShortVideosView({
   }
 
   async function toggleLike(v: ShortVideoItem, forceLike = false) {
-    const res = await apiPost<{ ok: boolean; liked: boolean }>(`/api/videos/${v.id}/like`, {
+    // Strictly 1 like per user account: double-tapping an already-liked video plays animation WITHOUT duplicating likes!
+    if (forceLike && v.likedByMe) return;
+    if (likeInFlightRef.current[v.id]) return;
+    likeInFlightRef.current[v.id] = true;
+
+    const optimisticLiked = forceLike ? true : !v.likedByMe;
+    const optimisticDelta = optimisticLiked === v.likedByMe ? 0 : optimisticLiked ? 1 : -1;
+    if (optimisticDelta !== 0) {
+      setVideos(prev =>
+        prev.map(item =>
+          item.id === v.id
+            ? {
+                ...item,
+                likedByMe: optimisticLiked,
+                likesCount: Math.max(0, item.likesCount + optimisticDelta),
+              }
+            : item
+        )
+      );
+    }
+
+    try {
+      const res = await apiPost<{ ok: boolean; liked: boolean; likesCount?: number }>(`/api/videos/${v.id}/like`, {
+        userId: user.id,
+        forceLike,
+      });
+      setVideos(prev =>
+        prev.map(item =>
+          item.id === v.id
+            ? {
+                ...item,
+                likedByMe: res.liked,
+                likesCount: typeof res.likesCount === 'number' ? res.likesCount : item.likesCount,
+              }
+            : item
+        )
+      );
+    } catch {
+      loadVideos();
+    } finally {
+      likeInFlightRef.current[v.id] = false;
+    }
+  }
+
+  function trackPulseShare(videoId: string, channel: string) {
+    apiPost<{ ok: boolean; counted: boolean; sharesCount: number }>('/api/shares/track', {
+      targetType: 'video',
+      targetId: videoId,
       userId: user.id,
-      forceLike,
-    });
-    setVideos(prev =>
-      prev.map(item =>
-        item.id === v.id
-          ? {
-              ...item,
-              likedByMe: res.liked,
-              likesCount: res.liked ? item.likesCount + 1 : Math.max(0, item.likesCount - 1),
-            }
-          : item
-      )
-    );
+      channel,
+    })
+      .then(res => {
+        if (res.ok) {
+          setVideos(prev =>
+            prev.map(item => (item.id === videoId ? { ...item, sharesCount: res.sharesCount } : item))
+          );
+        }
+      })
+      .catch(() => {});
   }
 
   async function toggleSave(v: ShortVideoItem) {
@@ -528,6 +585,7 @@ export function ShortVideosView({
   async function sendPulseToContact(conv: ConversationItem) {
     if (!shareVideo) return;
     setSentToIds(prev => ({ ...prev, [conv.id]: true }));
+    trackPulseShare(shareVideo.id, 'lm_chat');
     await apiPost(`/api/conversations/${conv.id}/messages`, {
       senderId: user.id,
       content: `شارك نبض: ${shareVideo.title.slice(0, 70)}`,
@@ -771,8 +829,11 @@ export function ShortVideosView({
       className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center"
     >
       <div className="relative w-full h-full max-w-[500px] mx-auto bg-black overflow-hidden">
-        {/* Centered Top Tabs: متابعون | أصدقاء | لك */}
-        <div className="absolute top-4 inset-x-4 z-30 flex items-center justify-between pointer-events-none">
+        {/* Centered Top Tabs: Safe Top Inset + متابعون | أصدقاء | لك */}
+        <div
+          style={{ top: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+          className="absolute inset-x-3.5 sm:inset-x-4 z-30 flex items-center justify-between pointer-events-none"
+        >
           <button
             type="button"
             onClick={() => setMuted(m => !m)}
@@ -858,28 +919,53 @@ export function ShortVideosView({
                   onClick={e => handleStageClick(e, v)}
                   className="w-full h-full relative cursor-pointer"
                 >
-                  <video
-                    ref={el => {
-                      videoRefs.current[idx] = el;
-                    }}
-                    src={v.videoUrl || '/uploads/seed/reel1.mp4'}
-                    poster={v.posterUrl || undefined}
-                    loop
-                    playsInline
-                    muted={muted}
-                    onTimeUpdate={e => {
-                      if (idx === activeIndex && !isScrubbing) {
-                        setCurrentTime(e.currentTarget.currentTime);
-                        if (e.currentTarget.duration) setDuration(e.currentTarget.duration);
-                      }
-                    }}
-                    onLoadedMetadata={e => {
-                      if (idx === activeIndex && e.currentTarget.duration) {
-                        setDuration(e.currentTarget.duration);
-                      }
-                    }}
-                    className="w-full h-full object-cover"
-                  />
+                  {/* Mount active <video> ONLY on the visible slide — prevents concurrent multi-MB mobile freezing! */}
+                  {idx === activeIndex ? (
+                    <video
+                      ref={el => {
+                        videoRefs.current[idx] = el;
+                      }}
+                      src={v.videoUrl || '/uploads/seed/reel1.mp4'}
+                      poster={v.posterUrl || undefined}
+                      autoPlay
+                      loop
+                      playsInline
+                      preload="auto"
+                      muted={muted}
+                      onLoadStart={() => setVideoBuffering(true)}
+                      onWaiting={() => setVideoBuffering(true)}
+                      onCanPlay={() => setVideoBuffering(false)}
+                      onPlaying={() => setVideoBuffering(false)}
+                      onError={() => setVideoBuffering(false)}
+                      onTimeUpdate={e => {
+                        if (!isScrubbing) {
+                          setCurrentTime(e.currentTarget.currentTime);
+                          if (e.currentTarget.duration) setDuration(e.currentTarget.duration);
+                        }
+                      }}
+                      onLoadedMetadata={e => {
+                        if (e.currentTarget.duration) {
+                          setDuration(e.currentTarget.duration);
+                        }
+                      }}
+                      className="w-full h-full object-cover bg-black"
+                    />
+                  ) : v.posterUrl ? (
+                    <img
+                      src={v.posterUrl}
+                      alt=""
+                      loading="lazy"
+                      className="w-full h-full object-cover bg-black"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-b from-[#14141A] via-[#09090D] to-black" />
+                  )}
+
+                  {idx === activeIndex && videoBuffering && !paused && (
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                      <span className="w-9 h-9 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                    </div>
+                  )}
 
                   {idx === activeIndex && <TapBurstOverlay items={bursts} />}
 
@@ -900,13 +986,21 @@ export function ShortVideosView({
 
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
 
-                  {/* Bottom Metadata with TikTok Inline Follow Pill + Expandable "المزيد / أقل" */}
+                  {/* Bottom Metadata: Glides smoothly DOWN & CENTERS when Mobile Bottom Nav hides (ZERO empty gap!) */}
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
-                    className="absolute bottom-24 md:bottom-10 start-4 end-16 z-20 text-start space-y-1"
+                    className={`absolute z-20 space-y-1 transition-all duration-200 ease-out md:bottom-10 md:start-4 md:end-16 md:items-start md:text-start flex flex-col ${
+                      bottomDockHidden
+                        ? 'bottom-[max(18px,calc(env(safe-area-inset-bottom)+14px))] inset-x-16 items-center text-center'
+                        : 'bottom-[calc(88px+env(safe-area-inset-bottom))] start-4 end-16 items-start text-start'
+                    }`}
                   >
-                    <div className="flex items-center gap-1.5 text-sm font-semibold text-white flex-wrap">
+                    <div
+                      className={`flex items-center gap-1.5 text-sm font-semibold text-white flex-wrap ${
+                        bottomDockHidden ? 'justify-center md:justify-start' : 'justify-start'
+                      }`}
+                    >
                       <button
                         type="button"
                         onClick={() => onOpenProfile?.(v.userId)}
@@ -927,7 +1021,7 @@ export function ShortVideosView({
                       )}
                     </div>
 
-                    <div className="text-[13.5px] text-white/95 leading-snug">
+                    <div className="text-[13.5px] text-white/95 leading-snug max-w-full">
                       {isLong && !isExpanded ? (
                         <>
                           <span>{v.title.slice(0, 74)}... </span>
@@ -956,7 +1050,7 @@ export function ShortVideosView({
                     </div>
 
                     {v.tags && (isExpanded || !isLong) && (
-                      <div className="text-xs text-white/75">
+                      <div className="text-xs text-white/75 max-w-full">
                         <RichMessageText
                           text={v.tags}
                           onMentionClick={onOpenProfileByUsername}
@@ -965,17 +1059,25 @@ export function ShortVideosView({
                       </div>
                     )}
 
-                    <div className="flex items-center gap-2 text-xs text-white/80 pt-0.5">
+                    <div
+                      className={`flex items-center gap-2 text-xs text-white/80 pt-0.5 max-w-full ${
+                        bottomDockHidden ? 'justify-center md:justify-start' : 'justify-start'
+                      }`}
+                    >
                       <Music2 className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate">{v.audioTitle}</span>
                     </div>
                   </div>
 
-                  {/* Right Action Rail (Active-Story-Only Ring + TikTok Under-Avatar Follow '+' + Report!) */}
+                  {/* Right Action Rail: Glides smoothly DOWN when Bottom Dock hides + Unified Share/Report Button! */}
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
-                    className="absolute bottom-24 md:bottom-10 end-3 z-20 flex flex-col items-center gap-4"
+                    className={`absolute end-3 z-20 flex flex-col items-center gap-3.5 transition-all duration-200 ease-out md:bottom-10 ${
+                      bottomDockHidden
+                        ? 'bottom-[max(18px,calc(env(safe-area-inset-bottom)+14px))]'
+                        : 'bottom-[calc(88px+env(safe-area-inset-bottom))]'
+                    }`}
                   >
                     <div className="relative mb-1">
                       <button
@@ -1026,27 +1128,23 @@ export function ShortVideosView({
                       <span className="text-[11px] font-mono-num text-white">{compactNum(v.savesCount)}</span>
                     </button>
 
-                    <button type="button" onClick={() => openShareSheet(v)} className="flex flex-col items-center gap-1 cursor-pointer">
-                      <Share2 className="w-6 h-6 text-white" strokeWidth={1.9} />
+                    {/* Unified Share + Report Icon (Opens Share Sheet with Social Apps + Report icon right beside them!) */}
+                    <button
+                      type="button"
+                      onClick={() => openShareSheet(v)}
+                      title={v.userId !== user.id ? (lang === 'en' ? 'Share & Report' : 'مشاركة وإبلاغ') : (lang === 'en' ? 'Share' : 'مشاركة')}
+                      className="flex flex-col items-center gap-1 cursor-pointer"
+                    >
+                      <span className="relative flex items-center justify-center">
+                        <Share2 className="w-6 h-6 text-white" strokeWidth={1.9} />
+                        {v.userId !== user.id && (
+                          <span className="absolute -bottom-1 -end-1.5 w-3.5 h-3.5 rounded-full bg-black/90 border border-white/25 flex items-center justify-center">
+                            <Flag className="w-2 h-2 text-[#FDA4AF]" strokeWidth={2.4} />
+                          </span>
+                        )}
+                      </span>
                       <span className="text-[11px] font-mono-num text-white">{compactNum(v.sharesCount)}</span>
                     </button>
-
-                    {v.userId !== user.id && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setReportRequest({
-                            targetType: 'video',
-                            targetId: v.id,
-                            label: lang === 'en' ? 'this Pulse video' : 'فيديو نبض',
-                          })
-                        }
-                        title={t(lang, 'report')}
-                        className="flex flex-col items-center gap-0.5 text-white/80 hover:text-[#FB7185] cursor-pointer transition-colors"
-                      >
-                        <Flag className="w-5 h-5" strokeWidth={1.85} />
-                      </button>
-                    )}
 
                     {v.userId === user.id && (
                       <ActionMenuOrb
@@ -1138,7 +1236,8 @@ export function ShortVideosView({
           <div onClick={() => setShareVideo(null)} className="absolute inset-0 z-50 bg-black/65 flex items-end justify-center">
             <div
               onClick={e => e.stopPropagation()}
-              className="w-full rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pb-6 pt-2.5 px-4 space-y-4"
+              style={{ paddingBottom: 'max(22px, calc(env(safe-area-inset-bottom) + 14px))' }}
+              className="w-full rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pt-2.5 px-4 space-y-4"
             >
             {/* Drag Handle Pill + Rich Video Preview Card */}
             <div className="flex flex-col items-center gap-2">
@@ -1192,7 +1291,7 @@ export function ShortVideosView({
               </div>
             )}
 
-            {/* Row 2: Authentic Vector Brand Icons with REAL Deep-Link Sharing */}
+            {/* Row 2: Authentic Vector Social Brand Icons + Report Right Beside Them + Unique Per-User Share Counting! */}
             <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pt-2 border-t border-white/[0.07]">
               {SHARE_PLATFORMS.map(p => (
                 <button
@@ -1201,6 +1300,7 @@ export function ShortVideosView({
                   onClick={() => {
                     const deepUrl = `${window.location.origin}/pulse/${shareVideo.id}`;
                     const txt = `${shareVideo.title} — @${shareVideo.username}`;
+                    trackPulseShare(shareVideo.id, p.id);
                     if (p.id === 'copy') {
                       navigator.clipboard?.writeText(deepUrl);
                       showToast('تم نسخ رابط الفيديو');
@@ -1231,6 +1331,28 @@ export function ShortVideosView({
                   <span className="text-[10.5px] text-[#A1A1AA] truncate w-full text-center">{p.label}</span>
                 </button>
               ))}
+
+              {/* Discreet Report Icon Right Beside Social Platforms inside Share Sheet! */}
+              {shareVideo.userId !== user.id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const vidId = shareVideo.id;
+                    setShareVideo(null);
+                    setReportRequest({
+                      targetType: 'video',
+                      targetId: vidId,
+                      label: lang === 'en' ? 'this Pulse video' : 'فيديو نبض',
+                    });
+                  }}
+                  className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
+                >
+                  <div className="w-11 h-11 rounded-full bg-[#FB7185]/16 hover:bg-[#FB7185]/26 text-[#FDA4AF] border border-[#FB7185]/30 flex items-center justify-center transition-colors">
+                    <Flag className="w-4 h-4" strokeWidth={2} />
+                  </div>
+                  <span className="text-[10.5px] text-[#FDA4AF] truncate w-full text-center">{t(lang, 'report')}</span>
+                </button>
+              )}
             </div>
 
             {/* Row 3: Quick Actions */}
@@ -1241,6 +1363,7 @@ export function ShortVideosView({
                   label: 'إعادة نشر',
                   icon: Repeat2,
                   action: () => {
+                    trackPulseShare(shareVideo.id, 'repost');
                     showToast('تمت إعادة النشر');
                     setShareVideo(null);
                   },
@@ -1259,16 +1382,6 @@ export function ShortVideosView({
                   },
                 },
                 {
-                  id: 'link',
-                  label: 'نسخ',
-                  icon: Link2,
-                  action: () => {
-                    navigator.clipboard?.writeText(window.location.href);
-                    showToast('تم نسخ الرابط');
-                    setShareVideo(null);
-                  },
-                },
-                {
                   id: 'not_interested',
                   label: lang === 'en' ? 'Not interested' : 'غير مهتم',
                   icon: EyeOff,
@@ -1277,24 +1390,6 @@ export function ShortVideosView({
                     setShareVideo(null);
                   },
                 },
-                ...(shareVideo.userId !== user.id
-                  ? [
-                      {
-                        id: 'report',
-                        label: t(lang, 'report'),
-                        icon: Flag,
-                        action: () => {
-                          const vidId = shareVideo.id;
-                          setShareVideo(null);
-                          setReportRequest({
-                            targetType: 'video',
-                            targetId: vidId,
-                            label: lang === 'en' ? 'this Pulse video' : 'فيديو نبض',
-                          });
-                        },
-                      },
-                    ]
-                  : []),
               ].map(act => {
                 const Icon = act.icon;
                 return (

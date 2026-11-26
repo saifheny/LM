@@ -93,9 +93,10 @@ app.use(
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; sandbox");
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     next();
   },
-  express.static(UPLOADS_DIR)
+  express.static(UPLOADS_DIR, { maxAge: '1d', acceptRanges: true })
 );
 
 const storage = multer.diskStorage({
@@ -2324,18 +2325,26 @@ app.delete('/api/videos/:id', (req, res) => {
 
 app.post('/api/videos/:id/like', (req, res) => {
   const { userId, forceLike } = req.body as { userId: string; forceLike?: boolean };
+  if (!userId) return res.status(400).json({ ok: false, error: 'userId مطلوب.' });
   const exists = db.prepare('SELECT 1 FROM video_likes WHERE video_id = ? AND user_id = ?').get(req.params.id, userId);
-  const vMeta = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
-    | { user_id: string; title: string; description: string; tags: string }
+  const vMeta = db.prepare('SELECT user_id, title, description, tags, likes_count FROM short_videos WHERE id = ?').get(req.params.id) as
+    | { user_id: string; title: string; description: string; tags: string; likes_count: number }
     | undefined;
+  if (!vMeta) return res.status(404).json({ ok: false, error: 'الفيديو غير موجود.' });
+
   if (exists && !forceLike) {
-    db.prepare('DELETE FROM video_likes WHERE video_id = ? AND user_id = ?').run(req.params.id, userId);
-    db.prepare('UPDATE short_videos SET likes_count = MAX(0, likes_count - 1) WHERE id = ?').run(req.params.id);
-    res.json({ ok: true, liked: false });
-  } else if (!exists) {
-    db.prepare('INSERT INTO video_likes (video_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
-    db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
-    if (vMeta) {
+    const del = db.prepare('DELETE FROM video_likes WHERE video_id = ? AND user_id = ?').run(req.params.id, userId);
+    if (del.changes > 0) {
+      db.prepare('UPDATE short_videos SET likes_count = MAX(0, likes_count - 1) WHERE id = ?').run(req.params.id);
+    }
+    const fresh = db.prepare('SELECT likes_count FROM short_videos WHERE id = ?').get(req.params.id) as { likes_count: number };
+    return res.json({ ok: true, liked: false, likesCount: Number(fresh?.likes_count || 0) });
+  }
+
+  if (!exists) {
+    const ins = db.prepare('INSERT OR IGNORE INTO video_likes (video_id, user_id) VALUES (?, ?)').run(req.params.id, userId);
+    if (ins.changes > 0) {
+      db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
       recordUserInteraction({
         userId,
         targetType: 'video',
@@ -2345,11 +2354,75 @@ app.post('/api/videos/:id/like', (req, res) => {
         text: `${vMeta.title} ${vMeta.description} ${vMeta.tags}`,
       });
     }
-    res.json({ ok: true, liked: true });
-  } else {
-    db.prepare('UPDATE short_videos SET likes_count = likes_count + 1 WHERE id = ?').run(req.params.id);
-    res.json({ ok: true, liked: true });
+    const fresh = db.prepare('SELECT likes_count FROM short_videos WHERE id = ?').get(req.params.id) as { likes_count: number };
+    return res.json({ ok: true, liked: true, likesCount: Number(fresh?.likes_count || 0) });
   }
+
+  // Already liked & forceLike=true (e.g. repeated double-tap): strictly 1 like per user account!
+  return res.json({ ok: true, liked: true, likesCount: Number(vMeta.likes_count || 0) });
+});
+
+app.post('/api/shares/track', (req, res) => {
+  const { targetType, targetId, userId, channel } = req.body as {
+    targetType: 'post' | 'video' | 'live' | 'profile';
+    targetId: string;
+    userId: string;
+    channel?: string;
+  };
+  if (!targetType || !targetId || !userId) {
+    return res.status(400).json({ ok: false, error: 'بيانات المشاركة غير مكتملة.' });
+  }
+  const cleanType = ['post', 'video', 'live', 'profile'].includes(targetType) ? targetType : 'post';
+  const cleanChannel = String(channel || 'link').slice(0, 32);
+
+  // Strictly 1 counted share per user account per target item (copying/sharing repeatedly does NOT inflate count!)
+  const ins = db
+    .prepare('INSERT OR IGNORE INTO content_shares (target_type, target_id, user_id, channel) VALUES (?, ?, ?, ?)')
+    .run(cleanType, targetId, userId, cleanChannel);
+  const counted = ins.changes > 0;
+
+  let sharesCount = 0;
+  if (cleanType === 'video') {
+    if (counted) {
+      db.prepare('UPDATE short_videos SET shares_count = shares_count + 1 WHERE id = ?').run(targetId);
+      const vMeta = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(targetId) as
+        | { user_id: string; title: string; description: string; tags: string }
+        | undefined;
+      if (vMeta) {
+        recordUserInteraction({
+          userId,
+          targetType: 'video',
+          targetId,
+          authorId: vMeta.user_id,
+          action: 'share',
+          text: `${vMeta.title} ${vMeta.description} ${vMeta.tags}`,
+        });
+      }
+    }
+    const row = db.prepare('SELECT shares_count FROM short_videos WHERE id = ?').get(targetId) as { shares_count: number } | undefined;
+    sharesCount = Number(row?.shares_count || 0);
+  } else if (cleanType === 'post') {
+    if (counted) {
+      db.prepare('UPDATE posts SET shares_count = shares_count + 1 WHERE id = ?').run(targetId);
+      const pMeta = db.prepare('SELECT user_id, content FROM posts WHERE id = ?').get(targetId) as
+        | { user_id: string; content: string }
+        | undefined;
+      if (pMeta) {
+        recordUserInteraction({
+          userId,
+          targetType: 'post',
+          targetId,
+          authorId: pMeta.user_id,
+          action: 'share',
+          text: pMeta.content,
+        });
+      }
+    }
+    const row = db.prepare('SELECT shares_count FROM posts WHERE id = ?').get(targetId) as { shares_count: number } | undefined;
+    sharesCount = Number(row?.shares_count || 0);
+  }
+
+  return res.json({ ok: true, counted, sharesCount });
 });
 
 app.post('/api/videos/:id/save', (req, res) => {

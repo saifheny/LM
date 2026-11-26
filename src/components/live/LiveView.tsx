@@ -824,17 +824,25 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 className={`w-full h-full ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
               />
             ) : room.videoUrl ? (
-              <video
-                ref={el => {
-                  slideVideoRefs.current[room.id] = el;
-                }}
-                src={room.videoUrl}
-                autoPlay={isCurrent}
-                loop
-                playsInline
-                muted={muted}
-                className={`w-full h-full ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
-              />
+              isCurrent ? (
+                <video
+                  ref={el => {
+                    slideVideoRefs.current[room.id] = el;
+                  }}
+                  src={room.videoUrl}
+                  autoPlay
+                  loop
+                  playsInline
+                  preload="auto"
+                  muted={muted}
+                  className={`w-full h-full ${isLandscape ? 'object-cover bg-black' : 'object-cover'}`}
+                />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-b from-[#140D12] via-[#0A0A0E] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
+                  <UserAvatar initials={room.hostInitials} avatarUrl={room.hostAvatarUrl} size={76} online />
+                  <div className="text-sm font-bold text-white">{room.title}</div>
+                </div>
+              )
             ) : (
               <div className="w-full h-full bg-gradient-to-b from-[#170E11] via-[#0B0B0F] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
                 <UserAvatar
@@ -859,11 +867,17 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             return (
               <SwiperSlide key={room.id} className="w-full h-full relative bg-black">
                 {isLandscape ? (
-                  /* Authentic TikTok Landscape (16:9) Live Theater Frame — Centered Widescreen Between Top Header & Bottom Comments! */
-                  <div className="w-full h-full bg-[#060608] flex flex-col items-center justify-center pb-36 pt-20">
-                    <div className="relative w-full aspect-video bg-black border-y border-white/[0.1] overflow-hidden shadow-2xl">
+                  /* Sleek Rounded Landscape (16:9) Live Theater Frame — Softly Curved Side Edges, Clear of Top HUD & Bottom Comments! */
+                  <div
+                    style={{
+                      paddingTop: 'max(106px, calc(env(safe-area-inset-top) + 98px))',
+                      paddingBottom: 'max(220px, calc(env(safe-area-inset-bottom) + 210px))',
+                    }}
+                    className="w-full h-full bg-[#060608] flex flex-col items-center justify-center px-3 sm:px-4"
+                  >
+                    <div className="relative w-full aspect-video bg-black rounded-[28px] sm:rounded-[32px] border border-white/[0.14] overflow-hidden shadow-[0_18px_50px_rgba(0,0,0,0.85)]">
                       {mediaNode}
-                      <span className="pointer-events-none absolute top-2.5 end-2.5 px-2 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-[9.5px] font-mono-num text-white/85">
+                      <span className="pointer-events-none absolute top-2.5 end-3 px-2 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-[9.5px] font-mono-num text-white/85">
                         16:9
                       </span>
                     </div>
@@ -911,14 +925,18 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-32 bg-gradient-to-b from-black/78 to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-72 bg-gradient-to-t from-black/92 via-black/50 to-transparent" />
 
-        {/* Top Floating Host Pill + TikTok Tap-to-Like Rising Arrow Energy Gauge Below It! */}
-        <div onClick={e => e.stopPropagation()} className="absolute top-4 inset-x-4 z-20 flex items-start justify-between gap-2">
+        {/* Top Floating Host Pill + TikTok Tap-to-Like Rising Arrow Energy Gauge Below It (Safe-Area Protected!) */}
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ top: 'max(12px, calc(env(safe-area-inset-top) + 8px))' }}
+          className="absolute inset-x-3 sm:inset-x-4 z-20 flex items-start justify-between gap-1.5 sm:gap-2"
+        >
           {activeRoom && (
             <div className="flex flex-col items-start gap-1.5 min-w-0">
               <button
                 type="button"
                 onClick={() => onOpenProfile?.(activeRoom.hostId)}
-                className="flex items-center gap-2 ps-1 pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] hover:border-white/30 cursor-pointer text-start transition-colors min-w-0"
+                className="flex items-center gap-1.5 sm:gap-2 ps-1 pe-2.5 sm:pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] hover:border-white/30 cursor-pointer text-start transition-colors min-w-0 max-w-full"
               >
                 <div
                   className={
@@ -928,14 +946,14 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   }
                 >
                   <div className={activeRoom.hasActiveStory ? 'p-[1px] rounded-full bg-black' : ''}>
-                    <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={32} online />
+                    <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={30} online />
                   </div>
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold text-white truncate max-w-[115px]">{activeRoom.hostName}</div>
-                  <div className="text-[10px] text-white/70 truncate max-w-[115px]">{activeRoom.title}</div>
+                  <div className="text-[11.5px] sm:text-xs font-semibold text-white truncate max-w-[88px] sm:max-w-[115px]">{activeRoom.hostName}</div>
+                  <div className="text-[10px] text-white/70 truncate max-w-[88px] sm:max-w-[115px]">{activeRoom.title}</div>
                 </div>
-                <span className="ms-1 px-2 py-0.5 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[10px] font-bold shrink-0">
+                <span className="ms-0.5 sm:ms-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[9.5px] sm:text-[10px] font-bold shrink-0">
                   LIVE
                 </span>
               </button>
@@ -1021,11 +1039,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         )}
 
-        {/* Full-History Scrollable Live Comments (Swipe-isolated via swiper-no-swiping — Scroll Up Freely!) */}
+        {/* Full-History Scrollable Live Comments (Swipe-isolated via swiper-no-swiping — Safe-Area Lifted!) */}
         <div
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          className="swiper-no-swiping absolute bottom-[80px] start-4 z-20 w-[78%] max-w-[360px]"
+          style={{ bottom: 'calc(76px + env(safe-area-inset-bottom))' }}
+          className="swiper-no-swiping absolute start-3.5 sm:start-4 z-20 w-[76%] max-w-[350px]"
         >
           <div
             ref={commentsScrollRef}
@@ -1062,8 +1081,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           )}
         </div>
 
-        {/* Floating Side Action Buttons (ZERO Heart Button, Host-Only Pin, Share & Report!) */}
-        <div onClick={e => e.stopPropagation()} className="absolute bottom-[82px] end-3.5 z-20 flex flex-col items-center gap-3">
+        {/* Floating Side Action Buttons (Safe-Area Lifted — ZERO Heart Button, Host-Only Pin, Share & Report!) */}
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ bottom: 'calc(78px + env(safe-area-inset-bottom))' }}
+          className="absolute end-3.5 z-20 flex flex-col items-center gap-3"
+        >
           {isOwnerOfActiveRoom && (
             <button
               type="button"
@@ -1125,11 +1148,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         )}
 
-        {/* Transparent TikTok Bottom Comment Bar & Direct Bottom Dock Trigger (Opaque ONLY when Focused/Typing!) */}
+        {/* Transparent TikTok Bottom Comment Bar & Direct Bottom Dock Trigger (Safe-Area Lifted Above Phone Nav Bar!) */}
         {!mobileNavExpanded && (
           <div
             onClick={e => e.stopPropagation()}
-            className="absolute bottom-3.5 inset-x-3.5 z-20 flex items-end gap-2"
+            style={{ bottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))' }}
+            className="absolute inset-x-3.5 z-20 flex items-end gap-2"
           >
             <SplitComposerOrb
               directDockMode
@@ -1171,10 +1195,13 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 18 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[72] bg-[#08080B] text-white flex flex-col overflow-hidden"
+            className="fixed inset-0 z-[72] h-[100dvh] bg-[#08080B] text-white flex flex-col overflow-hidden"
           >
             {/* Top Bar with Sculpted Back Arrow */}
-            <div className="px-4 py-4 border-b border-white/[0.08] flex items-center justify-between max-w-[680px] w-full mx-auto">
+            <div
+              style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+              className="px-4 pb-3.5 border-b border-white/[0.08] flex items-center justify-between max-w-[680px] w-full mx-auto"
+            >
               <button
                 type="button"
                 onClick={() => setGoLiveOpen(false)}

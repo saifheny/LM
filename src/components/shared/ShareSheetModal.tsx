@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Link2, Send, Share2 } from 'lucide-react';
+import { Check, Flag, Link2, Send, Share2 } from 'lucide-react';
 import { ConversationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar } from './LmBrandMark';
 import { SharePlatformIcons } from './Icons2026Pro';
@@ -8,6 +8,7 @@ import { apiGet, apiPost } from '../../lib/api';
 
 export interface SharePayload {
   kind: 'app' | 'post' | 'profile' | 'video' | 'live';
+  targetId?: string;
   title: string;
   subtitle?: string;
   snippet?: string;
@@ -16,6 +17,8 @@ export interface SharePayload {
   avatarInitials?: string;
   badge?: string;
   path: string;
+  onShared?: (sharesCount: number, counted: boolean) => void;
+  onReport?: () => void;
 }
 
 const KIND_BADGES: Record<SharePayload['kind'], string> = {
@@ -62,7 +65,27 @@ export function ShareSheetModal({
     setTimeout(() => setToast(cur => (cur === msg ? '' : cur)), 2000);
   }
 
+  function recordUniqueShare(channel: string) {
+    if (active.kind === 'app') return;
+    const derivedId =
+      active.targetId ||
+      active.path.replace(/^\/(post|pulse|live|u)\//, '').split(/[?#]/)[0] ||
+      '';
+    if (!derivedId) return;
+    apiPost<{ ok: boolean; counted: boolean; sharesCount: number }>('/api/shares/track', {
+      targetType: active.kind,
+      targetId: derivedId,
+      userId: currentUser.id,
+      channel,
+    })
+      .then(res => {
+        if (res.ok) active.onShared?.(res.sharesCount, res.counted);
+      })
+      .catch(() => {});
+  }
+
   async function copyLink() {
+    recordUniqueShare('copy');
     try {
       await navigator.clipboard.writeText(fullUrl);
       setCopied(true);
@@ -81,6 +104,7 @@ export function ShareSheetModal({
           text: shareText,
           url: fullUrl,
         });
+        recordUniqueShare('native');
         onClose();
         return;
       } catch {
@@ -92,6 +116,7 @@ export function ShareSheetModal({
 
   async function sendToLmChat(conv: ConversationItem) {
     setSentIds(prev => ({ ...prev, [conv.id]: true }));
+    recordUniqueShare('lm_chat');
     const excerpt = active.snippet ? `\n${active.snippet.slice(0, 120)}` : '';
     await apiPost(`/api/conversations/${conv.id}/messages`, {
       senderId: currentUser.id,
@@ -253,7 +278,10 @@ export function ShareSheetModal({
               href={t.href}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={() => setTimeout(onClose, 250)}
+              onClick={() => {
+                recordUniqueShare(t.id);
+                setTimeout(onClose, 250);
+              }}
               className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
             >
               <div
@@ -265,6 +293,23 @@ export function ShareSheetModal({
               <span className="text-[10.5px] text-[#A1A1AA] truncate w-full text-center">{t.label}</span>
             </a>
           ))}
+
+          {active.onReport && (
+            <button
+              type="button"
+              onClick={() => {
+                const fn = active.onReport;
+                onClose();
+                fn?.();
+              }}
+              className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
+            >
+              <div className="w-11 h-11 rounded-full bg-[#FB7185]/16 hover:bg-[#FB7185]/28 text-[#FDA4AF] border border-[#FB7185]/28 flex items-center justify-center transition-colors">
+                <Flag className="w-4 h-4" />
+              </div>
+              <span className="text-[10.5px] text-[#FDA4AF] truncate w-full text-center">إبلاغ</span>
+            </button>
+          )}
         </div>
 
         {toast && (

@@ -108,7 +108,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
       style={{
         fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
-      className="relative min-h-screen w-full overflow-hidden bg-[#050409] text-white flex flex-col select-none"
+      className="relative h-[100dvh] min-h-[100dvh] w-full max-w-[100vw] overflow-hidden bg-[#050409] text-white flex flex-col select-none"
     >
       {/* 1:1 Interactive Three.js WebGL Dotted Cosmic Earth Planet */}
       <CosmicPlanetCanvas />

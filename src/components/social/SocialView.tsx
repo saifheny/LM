@@ -978,12 +978,15 @@ export function SocialView({
           setRecordingPostId(null);
         }
       }}
-      className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]"
+      className="min-h-full w-full max-w-full overflow-x-hidden bg-[#0A0A0C] text-[#F2F2F5]"
     >
-      {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop!) */}
-      <div className="max-w-[620px] mx-auto min-h-screen px-2 sm:px-0">
-        {/* Stories Strip: ONLY User + Followed Creators' Active Stories; Ring ONLY when Active Story exists! */}
-        <div className="px-4 py-4 border-b border-white/[0.07] flex items-center gap-4 overflow-x-auto no-scrollbar">
+      {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop, ZERO Sideways Overflow on Mobile!) */}
+      <div className="max-w-[620px] w-full mx-auto min-h-full px-1 sm:px-0 overflow-x-hidden">
+        {/* Stories Strip: Safe Top Inset + ONLY User + Followed Creators' Active Stories */}
+        <div
+          style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+          className="px-3.5 sm:px-4 pb-3.5 border-b border-white/[0.07] flex items-center gap-3.5 sm:gap-4 overflow-x-auto no-scrollbar"
+        >
           {/* Your Story Tile (Colored Ring ONLY if you have an active story!) */}
           <div className="flex flex-col items-center gap-1.5 shrink-0 group">
             <div className="relative">
@@ -1378,7 +1381,7 @@ export function SocialView({
             const isPostSensitiveHidden = Boolean(post.isSensitive) && !revealedPosts[post.id];
 
             return (
-              <article key={post.id} className="px-4 py-5">
+              <article key={post.id} className="px-3 sm:px-4 py-4 sm:py-5 max-w-full overflow-x-clip">
                 {/* X-Style Single-Action Repost Attribution Banner */}
                 {post.repostedBy && (
                   <button
@@ -1443,7 +1446,51 @@ export function SocialView({
                         {post.isEdited && <span className="text-[10.5px] text-[#7A7A85]">(معدّل)</span>}
                       </div>
 
-                      <div onClick={e => e.stopPropagation()} className="shrink-0">
+                      <div onClick={e => e.stopPropagation()} className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onShare) {
+                              onShare({
+                                kind: 'post',
+                                targetId: post.id,
+                                title: post.displayName,
+                                subtitle: `@${post.username}`,
+                                snippet: post.content || 'منشور مصوّر على منصة LM',
+                                imageUrl: post.mediaUrls[0] || null,
+                                avatarUrl: post.avatarUrl,
+                                avatarInitials: post.avatarInitials,
+                                path: `/post/${post.id}`,
+                                onShared: (nextCount) => {
+                                  setPosts(prev =>
+                                    prev.map(p => (p.id === post.id ? { ...p, sharesCount: nextCount } : p))
+                                  );
+                                },
+                              });
+                            } else {
+                              navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
+                              apiPost<{ ok: boolean; sharesCount: number }>('/api/shares/track', {
+                                targetType: 'post',
+                                targetId: post.id,
+                                userId: user.id,
+                                channel: 'copy',
+                              })
+                                .then(r => {
+                                  if (r.ok) {
+                                    setPosts(prev =>
+                                      prev.map(p => (p.id === post.id ? { ...p, sharesCount: r.sharesCount } : p))
+                                    );
+                                  }
+                                })
+                                .catch(() => {});
+                            }
+                          }}
+                          title={lang === 'en' ? 'Share post' : 'مشاركة المنشور'}
+                          className="w-7 h-7 rounded-full text-[#8E8E93] hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                        >
+                          <Share2 className="w-3.5 h-3.5" strokeWidth={1.85} />
+                        </button>
+
                         {post.userId === user.id ? (
                           <ActionMenuOrb
                             editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
@@ -1475,6 +1522,20 @@ export function SocialView({
                                 icon: <Link2 className="w-3.5 h-3.5 text-[#D4D4D8]" />,
                                 onClick: () => {
                                   navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
+                                  apiPost<{ ok: boolean; sharesCount: number }>('/api/shares/track', {
+                                    targetType: 'post',
+                                    targetId: post.id,
+                                    userId: user.id,
+                                    channel: 'copy',
+                                  })
+                                    .then(r => {
+                                      if (r.ok) {
+                                        setPosts(prev =>
+                                          prev.map(p => (p.id === post.id ? { ...p, sharesCount: r.sharesCount } : p))
+                                        );
+                                      }
+                                    })
+                                    .catch(() => {});
                                 },
                               },
                               {
@@ -1733,9 +1794,9 @@ export function SocialView({
                       </div>
                     )}
 
-                    {/* Action Row — Clean Bottom Bar (Reactions + Comments + Upgraded Repost/Quote Menu + Save + Share; Report moved cleanly to TOP corner!) */}
-                    <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
-                      <div className="flex items-center gap-4">
+                    {/* Action Row — Clean Mobile-Safe Bottom Bar (Share & Report moved cleanly to TOP header corner!) */}
+                    <div className="mt-3 flex items-center justify-between gap-2 text-[#7A7A85] min-w-0">
+                      <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-wrap">
                         <FacebookReactionButton
                           reactions={post.reactions}
                           myReaction={post.myReaction}
@@ -1817,7 +1878,7 @@ export function SocialView({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
                           onClick={() => toggleSavePost(post.id)}
@@ -1827,29 +1888,6 @@ export function SocialView({
                           }`}
                         >
                           <Bookmark className={`w-4 h-4 ${post.savedByMe ? 'fill-current' : ''}`} strokeWidth={1.75} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (onShare) {
-                              onShare({
-                                kind: 'post',
-                                title: post.displayName,
-                                subtitle: `@${post.username}`,
-                                snippet: post.content || 'منشور مصوّر على منصة LM',
-                                imageUrl: post.mediaUrls[0] || null,
-                                avatarUrl: post.avatarUrl,
-                                avatarInitials: post.avatarInitials,
-                                path: `/post/${post.id}`,
-                              });
-                            } else {
-                              navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
-                            }
-                          }}
-                          title={lang === 'en' ? 'Share post' : 'مشاركة المنشور'}
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
-                        >
-                          <Share2 className="w-3.5 h-3.5" strokeWidth={1.8} />
                         </button>
                       </div>
                     </div>

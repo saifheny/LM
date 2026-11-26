@@ -194,6 +194,15 @@ export function initDatabase() {
       PRIMARY KEY (video_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS content_shares (
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      channel TEXT DEFAULT 'link',
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (target_type, target_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS video_comments (
       id TEXT PRIMARY KEY,
       video_id TEXT NOT NULL,

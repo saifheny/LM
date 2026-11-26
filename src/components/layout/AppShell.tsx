@@ -332,6 +332,8 @@ export function AppShell({
 
   const mainRef = useRef<HTMLElement | null>(null);
   const lastScrollTopRef = useRef(0);
+  const scrollAccumRef = useRef(0);
+  const lastScrollDirRef = useRef<1 | -1 | 0>(0);
 
   useEffect(() => {
     setComposerFocused(false);
@@ -374,14 +376,31 @@ export function AppShell({
   function handleMainScroll(e: React.UIEvent<HTMLElement>) {
     const top = e.currentTarget.scrollTop;
     const delta = top - lastScrollTopRef.current;
-    if (top < 28) {
-      setBottomDockHidden(false);
-    } else if (delta > 14) {
-      setBottomDockHidden(true);
-    } else if (delta < -10) {
-      setBottomDockHidden(false);
-    }
     lastScrollTopRef.current = top;
+
+    if (top <= 24) {
+      scrollAccumRef.current = 0;
+      lastScrollDirRef.current = 0;
+      if (bottomDockHidden) setBottomDockHidden(false);
+      return;
+    }
+
+    if (Math.abs(delta) < 0.5) return;
+    const dir: 1 | -1 = delta > 0 ? 1 : -1;
+    if (dir !== lastScrollDirRef.current) {
+      lastScrollDirRef.current = dir;
+      scrollAccumRef.current = 0;
+    }
+    scrollAccumRef.current += Math.abs(delta);
+
+    // Reveal bottom bar INSTANTLY on gentle upward scroll (>= 10px cumulative), hide cleanly on downward scroll (>= 30px)
+    if (dir === -1 && scrollAccumRef.current >= 10) {
+      if (bottomDockHidden) setBottomDockHidden(false);
+      scrollAccumRef.current = 0;
+    } else if (dir === 1 && scrollAccumRef.current >= 30) {
+      if (!bottomDockHidden) setBottomDockHidden(true);
+      scrollAccumRef.current = 0;
+    }
   }
 
   const isComposerManagedView =
@@ -395,7 +414,10 @@ export function AppShell({
   const CollapseIcon = lang === 'ar' ? PanelRightClose : PanelLeftClose;
 
   return (
-    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="h-screen w-screen bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none">
+    <div
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      className="h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none"
+    >
       {/* DESKTOP / LAPTOP FLOATING COLLAPSIBLE SIDEBAR (Instant single-frame switch — ZERO WaveSurfer/Swiper reflow lag!) */}
       <aside
         style={{ contain: 'layout style' }}
@@ -566,47 +588,46 @@ export function AppShell({
       <main
         ref={mainRef}
         onScroll={handleMainScroll}
-        className={`flex-1 min-w-0 h-full relative ${
+        className={`flex-1 min-w-0 h-full max-w-full relative overflow-x-hidden ${
           activeTab === 'videos' || activeTab === 'live' ? 'bg-black' : 'bg-[#0A0A0C]'
-        } ${isFullHeightViewport ? 'overflow-hidden' : 'overflow-y-auto pb-20 md:pb-0'}`}
+        } ${
+          isFullHeightViewport
+            ? 'overflow-hidden'
+            : 'overflow-y-auto pb-[calc(88px+env(safe-area-inset-bottom))] md:pb-0'
+        }`}
       >
         {children}
       </main>
 
-      {/* 2026 MOBILE BOTTOM DOCK: Pitch-Black Outer/Side Framing (#000000) + Top-Rounded Only + Center-Pinch Implosion! */}
+      {/* 2026 MOBILE BOTTOM DOCK: Safe-Area Lifted Above Phone Nav Bar + Instant 180ms GPU Slide! */}
       <AnimatePresence>
         {shouldRenderMobileBottomDock && (
           <motion.nav
             key="mobile-bottom-sheet-dock"
-            style={{ transformOrigin: '50% 100%' }}
-            initial={{ scaleX: 0.24, scaleY: 0.45, y: 46, opacity: 0, borderTopLeftRadius: 48, borderTopRightRadius: 48 }}
+            style={{
+              paddingBottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))',
+              willChange: 'transform, opacity',
+            }}
+            initial={{ y: '105%', opacity: 0 }}
             animate={
               bottomDockHidden
                 ? {
-                    scaleX: 0.16,
-                    scaleY: 0.35,
-                    y: 48,
+                    y: '110%',
                     opacity: 0,
-                    borderTopLeftRadius: 60,
-                    borderTopRightRadius: 60,
                     pointerEvents: 'none' as const,
                   }
                 : {
-                    scaleX: 1,
-                    scaleY: 1,
                     y: 0,
                     opacity: 1,
-                    borderTopLeftRadius: 26,
-                    borderTopRightRadius: 26,
                     pointerEvents: 'auto' as const,
                   }
             }
-            exit={{ scaleX: 0.16, scaleY: 0.35, y: 48, opacity: 0 }}
-            transition={{ duration: 0.42, ease: [0.32, 0.72, 0, 1] }}
+            exit={{ y: '110%', opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             onClick={e => e.stopPropagation()}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-b-none bg-black/96 backdrop-blur-2xl border-t border-x border-white/[0.12] px-3 pt-2.5 pb-3 shadow-[0_-14px_38px_rgba(0,0,0,0.85)]"
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-t-[24px] rounded-b-none bg-black/96 backdrop-blur-2xl border-t border-x border-white/[0.12] px-2 pt-2 shadow-[0_-12px_34px_rgba(0,0,0,0.85)]"
           >
-            <div className="flex items-center justify-around gap-1">
+            <div className="flex items-center justify-around gap-0.5 max-w-full">
               {NAV_ITEMS.map(item => {
                 const Icon = item.icon;
                 const active = activeTab === item.id;
@@ -618,7 +639,7 @@ export function AppShell({
                       onSelectTab(item.id);
                       setMobileNavExpanded(false);
                     }}
-                    className={`relative flex flex-col items-center justify-center gap-1 px-3 py-1.5 rounded-2xl transition-all duration-200 cursor-pointer ${
+                    className={`relative flex flex-col items-center justify-center gap-1 px-2 py-1.5 rounded-2xl transition-colors duration-150 cursor-pointer min-w-0 ${
                       active ? 'text-white' : 'text-[#7A7A85] hover:text-[#D4D4D8]'
                     }`}
                   >
@@ -668,15 +689,16 @@ export function AppShell({
             initial={{ opacity: 0, scale: 0.4, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.4, y: 16 }}
-            transition={{ duration: 0.36, ease: [0.32, 0.72, 0, 1] }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             onClick={e => {
               e.stopPropagation();
               setBottomDockHidden(false);
             }}
             aria-label="إظهار الشريط السفلي"
-            className="md:hidden fixed bottom-4 start-4 z-40 w-11 h-11 rounded-full bg-black/90 backdrop-blur-2xl border border-white/[0.16] text-white flex items-center justify-center shadow-2xl cursor-pointer active:scale-90"
+            style={{ bottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
+            className="md:hidden fixed start-3.5 z-40 w-10 h-10 rounded-full bg-black/88 backdrop-blur-xl border border-white/[0.16] text-white flex items-center justify-center shadow-2xl cursor-pointer active:scale-90"
           >
-            <LayoutGrid className="w-[19px] h-[19px]" strokeWidth={1.9} />
+            <LayoutGrid className="w-[18px] h-[18px]" strokeWidth={1.9} />
           </motion.button>
         )}
       </AnimatePresence>
@@ -690,12 +712,15 @@ export function AppShell({
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 18 }}
-              transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
               onClick={e => e.stopPropagation()}
-              className="md:hidden fixed inset-0 z-[65] bg-[#0A0A0C] text-[#F2F2F5] flex flex-col overflow-hidden text-start"
+              className="md:hidden fixed inset-0 z-[65] h-[100dvh] bg-[#0A0A0C] text-[#F2F2F5] flex flex-col overflow-hidden text-start"
             >
               {/* Sculpted Top Navigation Header with Back Arrow Orb */}
-              <div className="px-4 py-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3 shrink-0 bg-[#0A0A0C]/95 backdrop-blur-xl">
+              <div
+                style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+                className="px-4 pb-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3 shrink-0 bg-[#0A0A0C]/95 backdrop-blur-xl"
+              >
                 <div className="flex items-center gap-3">
                   <motion.button
                     type="button"
