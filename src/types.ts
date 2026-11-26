@@ -70,6 +70,8 @@ export interface SocialPost {
   poll: PostPoll | null;
   score: number;
   myVote: -1 | 0 | 1;
+  reactions?: Record<string, number>;
+  myReaction?: string | null;
   likesCount: number;
   commentsCount: number;
   sharesCount: number;
@@ -137,6 +139,8 @@ export interface ConversationItem {
   unreadCount: number;
   isEncrypted: boolean;
   memberCount: number;
+  aiEnabled?: boolean;
+  creatorId?: string;
   lastMessage: string;
   lastMessageAt: string;
 }

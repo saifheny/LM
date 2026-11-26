@@ -25,12 +25,16 @@ export function shortenModelLabel(label: string): string {
     .replace(/^(Meta|Google|OpenAI|Anthropic|DeepSeek|Mistral|Qwen|Cohere)\s+/i, '')
     .replace(/-\d{4}-\d{2}-\d{2}$/, '')
     .replace(/-latest$/i, '')
+    .replace(/\s+Preview$/i, '')
     .trim();
   const words = clean.split(/\s+/);
-  const compact = words.slice(0, 2).join(' ');
-  return compact.length > 16 ? `${compact.slice(0, 15)}…` : compact;
+  const compact = words.slice(0, 3).join(' ');
+  return compact.length > 18 ? `${compact.slice(0, 17)}…` : compact;
 }
 
+/**
+ * Curated Flagship Recent Text/Chat/Reasoning Models ONLY (Sorted Newest & Most Popular First — ZERO Image/TTS/Embedding Clutter!)
+ */
 export const AI_COMPANIES: AiCompanyDef[] = [
   {
     id: 'gemini',
@@ -42,14 +46,22 @@ export const AI_COMPANIES: AiCompanyDef[] = [
     steps: [
       'افتح Google AI Studio وسجّل الدخول بحساب Google.',
       'اضغط Create API Key وانسخ المفتاح.',
-      'الصقه هنا ليتم جلب كل نماذج Google تلقائيًا.',
+      'الصقه هنا ليتم جلب أحدث نماذج Google تلقائيًا.',
     ],
     models: [
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tag: 'Fast' },
+      { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', tag: 'New' },
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', tag: 'Latest' },
+      { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite', tag: 'Lite' },
+      { id: 'gemini-4-neon', label: 'Gemini 4 Neon', tag: 'Flagship' },
       { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', tag: 'Pro' },
+      { id: 'gemini-4-carbon', label: 'Gemini 4 Carbon', tag: 'Pro' },
       { id: 'gemini-4-argon', label: 'Gemini 4 Argon', tag: 'Pro' },
-      { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', tag: 'Fast' },
+      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', tag: 'Fast' },
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', tag: 'Fast' },
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', tag: 'Reasoning' },
+      { id: 'gemma-4-31b-it', label: 'Gemma 4 31B', tag: 'Open' },
     ],
-    /* Official 4-Color Google "G" Brand Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
@@ -69,16 +81,19 @@ export const AI_COMPANIES: AiCompanyDef[] = [
     steps: [
       'افتح OpenAI Platform → API Keys.',
       'اضغط Create new secret key وانسخه.',
-      'الصقه هنا لتحديث وجلب جميع نماذج OpenAI تلقائيًا.',
+      'الصقه هنا لتحديث وجلب أحدث نماذج OpenAI.',
     ],
     models: [
-      { id: 'gpt-4.1', label: 'GPT-4.1', tag: 'Pro' },
-      { id: 'gpt-4o', label: 'GPT-4o', tag: 'Omni' },
+      { id: 'gpt-5', label: 'GPT-5', tag: 'New' },
+      { id: 'gpt-5-mini', label: 'GPT-5 mini', tag: 'Fast' },
       { id: 'o3', label: 'o3', tag: 'Reasoning' },
-      { id: 'o4-mini', label: 'o4-mini', tag: 'Fast' },
+      { id: 'o4-mini', label: 'o4-mini', tag: 'Reasoning' },
+      { id: 'gpt-4.1', label: 'GPT-4.1', tag: 'Flagship' },
+      { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini', tag: 'Fast' },
+      { id: 'gpt-4.1-nano', label: 'GPT-4.1 nano', tag: 'Lite' },
+      { id: 'gpt-4o', label: 'GPT-4o', tag: 'Omni' },
       { id: 'gpt-4o-mini', label: 'GPT-4o mini', tag: 'Lite' },
     ],
-    /* Official OpenAI Hexagonal Blossom Knot */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="#FFFFFF">
         <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />
@@ -98,12 +113,12 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'الصقه هنا لتحديث جميع نماذج Claude تلقائيًا.',
     ],
     models: [
-      { id: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet', tag: 'Pro' },
+      { id: 'claude-opus-4-20250514', label: 'Claude Opus 4', tag: 'Flagship' },
+      { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', tag: 'New' },
+      { id: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet', tag: 'Reasoning' },
       { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', tag: 'Pro' },
       { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', tag: 'Fast' },
-      { id: 'claude-3-opus-latest', label: 'Claude 3 Opus', tag: 'Max' },
     ],
-    /* Official Anthropic "A\" Geometric Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="#D97757">
         <path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48H10.7z" />
@@ -123,10 +138,9 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'الصقه هنا لتفعيل DeepSeek V3 و R1 تلقائيًا.',
     ],
     models: [
-      { id: 'deepseek-chat', label: 'DeepSeek V3', tag: 'Chat' },
-      { id: 'deepseek-reasoner', label: 'DeepSeek R1', tag: 'Reasoner' },
+      { id: 'deepseek-reasoner', label: 'DeepSeek R1', tag: 'Reasoning' },
+      { id: 'deepseek-chat', label: 'DeepSeek V3', tag: 'Flagship' },
     ],
-    /* Official DeepSeek Whale Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path
@@ -150,11 +164,11 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'الصقه هنا لتحديث كل نماذج Grok تلقائيًا.',
     ],
     models: [
-      { id: 'grok-3', label: 'Grok 3', tag: 'Pro' },
-      { id: 'grok-3-mini', label: 'Grok 3 Mini', tag: 'Fast' },
-      { id: 'grok-2-vision-1212', label: 'Grok 2 Vision', tag: 'Vision' },
+      { id: 'grok-3', label: 'Grok 3', tag: 'Flagship' },
+      { id: 'grok-3-mini', label: 'Grok 3 Mini', tag: 'Reasoning' },
+      { id: 'grok-3-fast', label: 'Grok 3 Fast', tag: 'Fast' },
+      { id: 'grok-2-latest', label: 'Grok 2', tag: 'Stable' },
     ],
-    /* Official xAI Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="#FFFFFF">
         <path d="M3.1 21L10.3 11.4L3.6 3H7.4L12.3 9.2L17.1 3H20.8L14.2 11.5L21 21H17.2L12.1 14.2L7 21H3.1Z" />
@@ -174,12 +188,11 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'الصقه هنا لتحديث وجلب كل نماذج Mistral.',
     ],
     models: [
-      { id: 'mistral-large-latest', label: 'Mistral Large', tag: 'Pro' },
+      { id: 'mistral-large-latest', label: 'Mistral Large', tag: 'Flagship' },
+      { id: 'mistral-medium-latest', label: 'Mistral Medium 3', tag: 'New' },
       { id: 'codestral-latest', label: 'Codestral', tag: 'Code' },
-      { id: 'pixtral-large-latest', label: 'Pixtral Large', tag: 'Vision' },
       { id: 'mistral-small-latest', label: 'Mistral Small', tag: 'Fast' },
     ],
-    /* Official Mistral Layered Pixel M */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path d="M3 4H7V8H3V4ZM17 4H21V8H17V4Z" fill="#FACC15" />
@@ -202,10 +215,10 @@ export const AI_COMPANIES: AiCompanyDef[] = [
     ],
     models: [
       { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B', tag: 'Fast' },
+      { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout', tag: 'New' },
       { id: 'qwen-qwq-32b', label: 'Qwen QwQ 32B', tag: 'Reasoning' },
-      { id: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 70B', tag: 'Fast' },
+      { id: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 70B', tag: 'Reasoning' },
     ],
-    /* Official Groq Emblem */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path
@@ -224,14 +237,14 @@ export const AI_COMPANIES: AiCompanyDef[] = [
     placeholder: 'sk-or-...',
     steps: [
       'افتح OpenRouter Keys وأنشئ مفتاحًا موحدًا.',
-      'يتم تحديث قائمة النماذج المجانية والمدفوعة (120+ نموذج) مباشرةً من OpenRouter.',
+      'تُجلب أحدث النماذج العالمية (مجانية ومدفوعة) مباشرة.',
     ],
     models: [
-      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tag: 'Open' },
       { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1', tag: 'Reasoning' },
+      { id: 'meta-llama/llama-4-maverick', label: 'Llama 4 Maverick', tag: 'New' },
+      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tag: 'Open' },
       { id: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B', tag: 'Pro' },
     ],
-    /* Official OpenRouter Routing Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path d="M3 12h6.5c2 0 3-1.5 4.2-3.3C14.8 7 15.8 6 18 6h2.5" stroke="#FFFFFF" strokeWidth="2.1" strokeLinecap="round" />
@@ -252,11 +265,10 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'الصقه هنا لتفعيل نماذج Sonar للبحث المباشر.',
     ],
     models: [
+      { id: 'sonar-reasoning-pro', label: 'Sonar Reasoning Pro', tag: 'New' },
       { id: 'sonar-pro', label: 'Sonar Pro', tag: 'Search' },
-      { id: 'sonar-reasoning-pro', label: 'Sonar Reasoning', tag: 'Deep' },
       { id: 'sonar', label: 'Sonar', tag: 'Fast' },
     ],
-    /* Official Perplexity Geometric Asterisk Prism */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path d="M12 2.5v19M5.5 6.5L12 12l6.5-5.5M5.5 17.5L12 12l6.5 5.5" stroke="#20B8CD" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -276,10 +288,11 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'الصقه هنا لجلب وتحديث جميع النماذج تلقائيًا.',
     ],
     models: [
+      { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8', label: 'Llama 4 Maverick', tag: 'New' },
+      { id: 'deepseek-ai/DeepSeek-R1', label: 'DeepSeek R1', tag: 'Reasoning' },
       { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', label: 'Llama 3.3 Turbo', tag: 'Turbo' },
       { id: 'Qwen/Qwen2.5-72B-Instruct-Turbo', label: 'Qwen 2.5 Turbo', tag: 'Turbo' },
     ],
-    /* Official Together Interlocking Dots Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <circle cx="8" cy="8" r="2.7" fill="#3B82F6" />
@@ -301,11 +314,10 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'انسخ المفتاح والصقه هنا لجلب أحدث نماذج Command.',
     ],
     models: [
-      { id: 'command-a-03-2025', label: 'Command A', tag: 'Pro' },
+      { id: 'command-a-03-2025', label: 'Command A', tag: 'New' },
       { id: 'command-r-plus', label: 'Command R+', tag: 'Arabic' },
       { id: 'command-r', label: 'Command R', tag: 'Fast' },
     ],
-    /* Official Cohere Organic Capsule Mark */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path d="M5.5 7.5C5.5 5 7.5 3.5 11.2 3.5C15.5 3.5 18.5 5.4 18.5 8.5C18.5 11.5 15.2 12.6 11 12.6H8.5C6.8 12.6 5.5 10.6 5.5 7.5Z" fill="#39D393" />
@@ -326,12 +338,11 @@ export const AI_COMPANIES: AiCompanyDef[] = [
       'تُجلب كل النماذج المثبتة على جهازك تلقائيًا.',
     ],
     models: [
-      { id: 'llama3.2', label: 'Llama 3.2', tag: 'Local' },
-      { id: 'qwen2.5', label: 'Qwen 2.5', tag: 'Local' },
+      { id: 'gemma4', label: 'Gemma 4', tag: 'Local' },
       { id: 'deepseek-r1', label: 'DeepSeek R1', tag: 'Local' },
-      { id: 'gemma3', label: 'Gemma 3', tag: 'Local' },
+      { id: 'llama3.3', label: 'Llama 3.3', tag: 'Local' },
+      { id: 'qwen2.5', label: 'Qwen 2.5', tag: 'Local' },
     ],
-    /* Official Ollama Llama Silhouette */
     renderLogo: (s = 18) => (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <path

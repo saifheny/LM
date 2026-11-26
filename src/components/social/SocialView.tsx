@@ -2,8 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  ArrowBigUp,
-  ArrowBigDown,
   MessageCircle,
   Repeat2,
   Image as ImageIcon,
@@ -21,6 +19,7 @@ import {
   Maximize2,
   Minimize2,
   Plus,
+  Sparkles,
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination } from 'swiper/modules';
@@ -31,6 +30,7 @@ import { Lang, PostCommentItem, PostPoll, SocialPost, StoryItem, UserProfile } f
 import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
+import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReactions';
 import { NavAiIcon } from '../shared/Icons2026Pro';
 import { apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
@@ -73,10 +73,11 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
   const [commentsByPost, setCommentsByPost] = useState<Record<string, PostCommentItem[]>>({});
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
-  const [replyParentByPost, setReplyParentByPost] = useState<Record<string, { id: string; name: string } | null>>({});
+  const [replyParentByPost, setReplyParentByPost] = useState<Record<string, { id: string; name: string; snippet?: string } | null>>({});
   const [replyAiModeByPost, setReplyAiModeByPost] = useState<Record<string, boolean>>({});
   const [recordingPostId, setRecordingPostId] = useState<string | null>(null);
   const [submittingCommentPost, setSubmittingCommentPost] = useState<string | null>(null);
+  const [aiTypingPostId, setAiTypingPostId] = useState<string | null>(null);
   const [savedPosts, setSavedPosts] = useState<Record<string, boolean>>({});
   const [doubleTapPostId, setDoubleTapPostId] = useState<string | null>(null);
 
@@ -160,23 +161,63 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     }
   }
 
-  async function handleVote(postId: string, direction: 1 | -1, forceUpvote = false) {
-    const target = posts.find(p => p.id === postId);
-    if (forceUpvote && target?.myVote === 1) return;
-
+  async function handlePostReact(postId: string, reactionId: string, forceSet = false) {
+    // Optimistic instant update so Facebook-style floating reactions feel instantaneous!
     setPosts(prev =>
       prev.map(p => {
         if (p.id !== postId) return p;
-        const nextVote: -1 | 0 | 1 = p.myVote === direction && !forceUpvote ? 0 : direction;
-        const delta = nextVote - p.myVote;
-        return { ...p, myVote: nextVote, score: p.score + delta };
+        const curRx = { ...(p.reactions || {}) };
+        const prevMine = p.myReaction || null;
+        let nextMine: string | null = reactionId;
+        let delta = 0;
+
+        if (prevMine === reactionId && !forceSet) {
+          if (curRx[reactionId]) curRx[reactionId] = Math.max(0, curRx[reactionId] - 1);
+          nextMine = null;
+          delta = -1;
+        } else {
+          if (prevMine && curRx[prevMine]) curRx[prevMine] = Math.max(0, curRx[prevMine] - 1);
+          else delta = 1;
+          curRx[reactionId] = (curRx[reactionId] || 0) + 1;
+        }
+        return {
+          ...p,
+          reactions: curRx,
+          myReaction: nextMine,
+          score: Math.max(0, p.score + delta),
+          likesCount: Math.max(0, p.likesCount + delta),
+        };
       })
     );
-    const res = await apiPost<{ ok: boolean; score: number; myVote: -1 | 0 | 1 }>(`/api/posts/${postId}/vote`, {
-      userId: user.id,
-      direction,
-    });
-    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, score: res.score, myVote: res.myVote } : p)));
+
+    try {
+      const res = await apiPost<{
+        ok: boolean;
+        reactions: Record<string, number>;
+        myReaction: string | null;
+        score: number;
+        likesCount: number;
+      }>(`/api/posts/${postId}/react`, {
+        userId: user.id,
+        reaction: reactionId,
+        forceSet,
+      });
+      setPosts(prev =>
+        prev.map(p =>
+          p.id === postId
+            ? {
+                ...p,
+                reactions: res.reactions,
+                myReaction: res.myReaction,
+                score: res.score,
+                likesCount: res.likesCount,
+              }
+            : p
+        )
+      );
+    } catch {
+      // ignore
+    }
   }
 
   function handleMediaTap(post: SocialPost, mediaIndex: number) {
@@ -187,7 +228,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
     if (now - prev < 260) {
       window.clearTimeout(tapTimersRef.current[post.id]);
       lastTapMsRef.current[post.id] = 0;
-      handleVote(post.id, 1, true);
+      handlePostReact(post.id, 'love', true);
       setDoubleTapPostId(post.id);
       setTimeout(() => setDoubleTapPostId(cur => (cur === post.id ? null : cur)), 650);
       return;
@@ -230,31 +271,59 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
   async function submitComment(postId: string, e: React.FormEvent) {
     e.preventDefault();
     const text = (replyDrafts[postId] || '').trim();
-    if (!text) return;
+    if (!text || submittingCommentPost === postId) return;
     const parent = replyParentByPost[postId];
     const invokeAi = Boolean(replyAiModeByPost[postId]) || /^(\/ai|-ai|\/|@(lm\s*ai|ai))/i.test(text);
+    const cleanedText = text.replace(/^(\/ai|-ai|\/)\s*/i, '').trim() || text;
+
+    // 1. Immediately clear draft & show the user's comment optimistically (0ms feedback!)
+    setReplyDrafts(prev => ({ ...prev, [postId]: '' }));
+    setReplyParentByPost(prev => ({ ...prev, [postId]: null }));
+    setReplyAiModeByPost(prev => ({ ...prev, [postId]: false }));
+
+    const tempComment: PostCommentItem = {
+      id: `tmp_pc_${Date.now()}`,
+      postId,
+      userId: user.id,
+      parentId: parent?.id || null,
+      displayName: user.displayName,
+      username: user.username,
+      avatarColor: user.avatarColor,
+      avatarInitials: user.avatarInitials,
+      avatarUrl: user.avatarUrl,
+      verified: user.verified,
+      content: cleanedText,
+      audioUrl: null,
+      audioDurationSec: 0,
+      transcript: null,
+      createdAt: 'الآن',
+    };
+    setCommentsByPost(prev => ({ ...prev, [postId]: [...(prev[postId] || []), tempComment] }));
 
     setSubmittingCommentPost(postId);
+    if (invokeAi) setAiTypingPostId(postId);
+
     try {
       await apiPost(`/api/posts/${postId}/comments`, {
         userId: user.id,
-        content: text.replace(/^(\/ai|-ai|\/)\s*/i, '').trim() || text,
+        content: cleanedText,
         parentId: parent?.id || null,
         invokeAi,
       });
-      setReplyDrafts(prev => ({ ...prev, [postId]: '' }));
-      setReplyParentByPost(prev => ({ ...prev, [postId]: null }));
-      setReplyAiModeByPost(prev => ({ ...prev, [postId]: false }));
 
       const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
       setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
       setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: res.comments.length } : p)));
+    } catch {
+      const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`).catch(() => null);
+      if (res) setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
     } finally {
       setSubmittingCommentPost(null);
+      setAiTypingPostId(cur => (cur === postId ? null : cur));
     }
   }
 
-  async function submitVoiceComment(postId: string, file: File, durationSec: number) {
+  async function submitVoiceComment(postId: string, file: File, durationSec: number, liveTranscript?: string | null) {
     setRecordingPostId(null);
     const parent = replyParentByPost[postId];
     const up = await apiUploadFile(file);
@@ -264,7 +333,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
       parentId: parent?.id || null,
       audioUrl: up.url,
       audioDurationSec: durationSec,
-      transcript: 'رسالة صوتية.',
+      transcript: liveTranscript || null,
     });
     setReplyParentByPost(prev => ({ ...prev, [postId]: null }));
     const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
@@ -454,7 +523,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
 
                     {post.content && (
                       <p
-                        onDoubleClick={() => handleVote(post.id, 1, true)}
+                        onDoubleClick={() => handlePostReact(post.id, 'love', true)}
                         className="mt-1.5 text-[15px] text-[#F2F2F5] leading-[1.6] whitespace-pre-wrap select-text"
                       >
                         {post.content}
@@ -488,7 +557,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                         {doubleTapPostId === post.id && (
                           <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20">
                             <div className="w-16 h-16 rounded-full bg-black/55 backdrop-blur-md border border-white/25 flex items-center justify-center animate-ping">
-                              <ArrowBigUp className="w-9 h-9 text-white fill-white" />
+                              {resolveReaction('love').renderIcon(40)}
                             </div>
                           </div>
                         )}
@@ -525,32 +594,15 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                       </div>
                     )}
 
-                    {/* Action Row */}
+                    {/* Action Row with Facebook-Style Floating Animated Multi-Effect Reactions */}
                     <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
-                      <div className="flex items-center gap-5">
-                        <div className="inline-flex items-center rounded-full bg-[#131318] border border-white/[0.08]">
-                          <button
-                            type="button"
-                            onClick={() => handleVote(post.id, 1)}
-                            className={`px-2 py-1 rounded-s-full flex items-center cursor-pointer transition-colors ${
-                              post.myVote === 1 ? 'text-white bg-white/[0.12]' : 'hover:text-white'
-                            }`}
-                          >
-                            <ArrowBigUp className={`w-4 h-4 ${post.myVote === 1 ? 'fill-current' : ''}`} />
-                          </button>
-                          <span className={`px-1.5 text-xs font-mono-num ${post.myVote !== 0 ? 'text-white font-semibold' : 'text-[#A1A1AA]'}`}>
-                            {formatCount(post.score)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleVote(post.id, -1)}
-                            className={`px-2 py-1 rounded-e-full flex items-center cursor-pointer transition-colors ${
-                              post.myVote === -1 ? 'text-[#EF4444] bg-white/[0.06]' : 'hover:text-white'
-                            }`}
-                          >
-                            <ArrowBigDown className={`w-4 h-4 ${post.myVote === -1 ? 'fill-current' : ''}`} />
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-4">
+                        <FacebookReactionButton
+                          reactions={post.reactions}
+                          myReaction={post.myReaction}
+                          totalCount={post.score}
+                          onReact={rxId => handlePostReact(post.id, rxId)}
+                        />
 
                         <button
                           type="button"
@@ -613,7 +665,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
 
                                   {c.audioUrl ? (
                                     <div className="mt-1.5 p-2.5 rounded-2xl bg-[#15151B] border border-white/[0.08] max-w-[300px]">
-                                      <SmartVoicePill url={c.audioUrl} transcript={c.transcript} compact />
+                                      <SmartVoicePill url={c.audioUrl} transcript={c.transcript} recordId={c.id} table="post_comments" compact />
                                     </div>
                                   ) : (
                                     <div className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">
@@ -626,7 +678,11 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                     onClick={() =>
                                       setReplyParentByPost(prev => ({
                                         ...prev,
-                                        [post.id]: { id: c.id, name: c.displayName },
+                                        [post.id]: {
+                                          id: c.id,
+                                          name: c.displayName,
+                                          snippet: c.audioUrl ? 'رسالة صوتية' : c.content.slice(0, 56),
+                                        },
                                       }))
                                     }
                                     className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
@@ -652,7 +708,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                                         </div>
                                         {rep.audioUrl ? (
                                           <div className="mt-1 p-2 rounded-2xl bg-[#15151B] border border-white/[0.08] max-w-[280px]">
-                                            <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} compact />
+                                            <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} recordId={rep.id} table="post_comments" compact />
                                           </div>
                                         ) : (
                                           <div className="text-[13px] text-[#D4D4D8] mt-0.5 leading-relaxed">
@@ -668,17 +724,44 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                           );
                         })}
 
+                        {/* Live LM AI Typing Indicator inside Community Comments */}
+                        {aiTypingPostId === post.id && (
+                          <div className="flex items-center gap-2.5 ps-3 py-1.5">
+                            <UserAvatar initials="AI" avatarUrl={null} size={24} />
+                            <div className="px-3 py-1.5 rounded-2xl bg-[#15151C] border border-white/[0.13] text-xs text-[#D4D4D8] flex items-center gap-2">
+                              <Sparkles className="w-3 h-3 text-white animate-pulse" />
+                              <span>LM AI يكتب الآن</span>
+                              <span className="inline-flex items-center gap-1">
+                                <span className="w-1 h-1 rounded-full bg-white/75 animate-bounce [animation-delay:0ms]" />
+                                <span className="w-1 h-1 rounded-full bg-white/75 animate-bounce [animation-delay:140ms]" />
+                                <span className="w-1 h-1 rounded-full bg-white/75 animate-bounce [animation-delay:280ms]" />
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Unified Comment Composer: Exact Chat Behavior (Mic inside the action button when empty -> Chrome ↑ Send when typing!) */}
-                        <div className="pt-1">
+                        <div className="pt-1 flex flex-col gap-2">
+                          {/* Compact Side-Aligned Reply Banner */}
                           {replyParentByPost[post.id] && (
-                            <div className="mb-1.5 flex items-center justify-between text-[11px] text-[#8E8E93] px-2">
-                              <span>الرد على {replyParentByPost[post.id]?.name}</span>
+                            <div className="w-fit max-w-[290px] self-start rounded-2xl bg-[#15151C] border border-white/[0.11] px-3 py-1.5 flex items-center gap-2.5 shadow-md">
+                              <span className="w-[2.5px] self-stretch rounded-full bg-white/50 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-[10.5px] font-semibold text-white truncate">
+                                  الرد على {replyParentByPost[post.id]?.name}
+                                </div>
+                                {replyParentByPost[post.id]?.snippet && (
+                                  <div className="text-[11px] text-[#9E9EA8] truncate max-w-[195px]">
+                                    {replyParentByPost[post.id]?.snippet}
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 type="button"
                                 onClick={() => setReplyParentByPost(prev => ({ ...prev, [post.id]: null }))}
-                                className="hover:text-white cursor-pointer"
+                                className="w-5 h-5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
                               >
-                                إلغاء
+                                <X className="w-3 h-3" />
                               </button>
                             </div>
                           )}
@@ -686,7 +769,7 @@ export function SocialView({ user, lang, lastWsEvent }: SocialViewProps) {
                           {recordingPostId === post.id ? (
                             <LiveVoiceRecorder
                               onCancel={() => setRecordingPostId(null)}
-                              onSend={(file, sec) => submitVoiceComment(post.id, file, sec)}
+                              onSend={(file, sec, liveTxt) => submitVoiceComment(post.id, file, sec, liveTxt)}
                             />
                           ) : (
                             <ObsidianComposerPill

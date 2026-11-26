@@ -322,7 +322,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
     setVideos(prev => prev.map(v => (v.id === drawerVideo.id ? { ...v, commentsCount: v.commentsCount + 1 } : v)));
   }
 
-  async function submitVoiceComment(file: File, durationSec: number) {
+  async function submitVoiceComment(file: File, durationSec: number, liveTranscript?: string | null) {
     if (!drawerVideo) return;
     setRecordingVoice(false);
     const up = await apiUploadFile(file);
@@ -332,7 +332,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
       parentId: replyTo?.id || null,
       audioUrl: up.url,
       audioDurationSec: durationSec,
-      transcript: 'رسالة صوتية.',
+      transcript: liveTranscript || null,
     });
     setReplyTo(null);
     const res = await apiGet<{ ok: boolean; comments: VideoCommentItem[] }>(`/api/videos/${drawerVideo.id}/comments?userId=${user.id}`);
@@ -775,7 +775,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                         </div>
                         {c.audioUrl ? (
                           <div className="mt-1.5 p-2.5 rounded-2xl bg-[#1A1A20] border border-white/[0.08]">
-                            <SmartVoicePill url={c.audioUrl} transcript={c.transcript} compact />
+                            <SmartVoicePill url={c.audioUrl} transcript={c.transcript} recordId={c.id} table="video_comments" compact />
                           </div>
                         ) : (
                           <p className="text-[13.5px] text-[#E4E4E7] mt-0.5 leading-relaxed">{c.content}</p>
@@ -811,7 +811,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                               </div>
                               {rep.audioUrl ? (
                                 <div className="mt-1 p-2 rounded-xl bg-[#1A1A20] border border-white/[0.08]">
-                                  <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} compact />
+                                  <SmartVoicePill url={rep.audioUrl} transcript={rep.transcript} recordId={rep.id} table="video_comments" compact />
                                 </div>
                               ) : (
                                 <p className="text-[13px] text-[#D4D4D8] mt-0.5">{rep.content}</p>
@@ -826,12 +826,19 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
               })}
             </div>
 
-            <div className="p-3 bg-[#0E0E12]">
+            <div className="p-3 bg-[#0E0E12] flex flex-col gap-2">
               {replyTo && (
-                <div className="mb-1.5 px-3 flex items-center justify-between text-[11px] text-[#8E8E93]">
-                  <span>الرد على {replyTo.name}</span>
-                  <button type="button" onClick={() => setReplyTo(null)} className="hover:text-white cursor-pointer">
-                    إلغاء
+                <div className="w-fit max-w-[280px] self-start rounded-2xl bg-[#16161D] border border-white/[0.11] px-3 py-1.5 flex items-center gap-2.5 shadow-md">
+                  <span className="w-[2.5px] self-stretch rounded-full bg-white/50 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-[10.5px] font-semibold text-white truncate">الرد على {replyTo.name}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(null)}
+                    className="w-5 h-5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-[#A1A1AA] hover:text-white flex items-center justify-center text-[11px] cursor-pointer shrink-0"
+                  >
+                    ×
                   </button>
                 </div>
               )}

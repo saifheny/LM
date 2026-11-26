@@ -66,7 +66,7 @@ export function AiView({ user, lang }: AiViewProps) {
 
   // 2-Step Company -> Auto-Updated Models Selector
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('gemini');
-  const [selectedModelId, setSelectedModelId] = useState<string>('gemini-4-hydrogen');
+  const [selectedModelId, setSelectedModelId] = useState<string>('gemini-2.5-flash');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [browsingCompany, setBrowsingCompany] = useState<AiCompanyDef | null>(null);
   const [modelSearch, setModelSearch] = useState('');
@@ -128,7 +128,8 @@ export function AiView({ user, lang }: AiViewProps) {
   useEffect(() => {
     loadProviderStatus();
     loadSessions();
-  }, [loadProviderStatus, loadSessions]);
+    fetchLiveModels('gemini');
+  }, [loadProviderStatus, loadSessions, fetchLiveModels]);
 
   // Auto-refresh live models whenever user drills into a company
   useEffect(() => {
@@ -254,7 +255,7 @@ export function AiView({ user, lang }: AiViewProps) {
           role: 'assistant',
           content: res.reply,
           companyId: activeCompany.id,
-          modelLabel: shortenModelLabel(activeModel.label),
+          modelLabel: shortenModelLabel(res.modelUsed || activeModel.label),
           feedback: null,
           needsApiKey: res.needsApiKey,
           missingProvider: res.missingProvider,

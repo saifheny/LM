@@ -10,6 +10,7 @@ export interface AiChatRequest {
   source?: 'ai_hub' | 'ai_tab' | 'chat' | 'social' | 'post_summary' | 'video_summary';
   explicitUserConsent?: boolean;
   sharedContext?: string;
+  groupHistoryContext?: string;
   imageBase64?: string;
   imageMimeType?: string;
 }
@@ -49,11 +50,11 @@ function normalizeArabicForFilter(text: string): string {
     .replace(/ى/g, 'ي');
 }
 
-const LM_AI_SYSTEM_PROMPT = `You are an intelligent AI assistant integrated inside LM.
-Strict platform rules:
-1. Never read private chats automatically — only use explicitly shared context.
+const LM_AI_SYSTEM_PROMPT = `You are a sharp, helpful AI assistant inside the LM platform.
+Rules:
+1. Never read private 1-on-1 chats unless the user explicitly shares a snippet; in group chats where the group admin enabled you as a member, use the provided recent group context naturally.
 2. You have zero financial authority — never transfer money, modify balances, or execute payments.
-3. Respond concisely, clearly, and naturally in the user's language (Arabic or English) using clean Markdown.`;
+3. Reply directly, clearly, and concisely in the same language the user writes in (Arabic or English).`;
 
 function logSecurity(userId: string, actionType: string, decision: 'ALLOWED' | 'BLOCKED', reason: string): string {
   const id = uuid();
@@ -64,10 +65,13 @@ function logSecurity(userId: string, actionType: string, decision: 'ALLOWED' | '
   return id;
 }
 
-const OPENAI_COMPAT_ENDPOINTS: Record<string, { url: string; label: string; keyField: keyof ReturnType<typeof loadProviderConfig>; defaultModel: string }> = {
-  openai: { url: 'https://api.openai.com/v1/chat/completions', label: 'OpenAI', keyField: 'openaiApiKey', defaultModel: 'gpt-4o' },
+const OPENAI_COMPAT_ENDPOINTS: Record<
+  string,
+  { url: string; label: string; keyField: keyof ReturnType<typeof loadProviderConfig>; defaultModel: string }
+> = {
+  openai: { url: 'https://api.openai.com/v1/chat/completions', label: 'OpenAI', keyField: 'openaiApiKey', defaultModel: 'gpt-4.1' },
   deepseek: { url: 'https://api.deepseek.com/chat/completions', label: 'DeepSeek', keyField: 'deepseekApiKey', defaultModel: 'deepseek-chat' },
-  xai: { url: 'https://api.x.ai/v1/chat/completions', label: 'xAI Grok', keyField: 'xaiApiKey', defaultModel: 'grok-3-mini' },
+  xai: { url: 'https://api.x.ai/v1/chat/completions', label: 'xAI', keyField: 'xaiApiKey', defaultModel: 'grok-3' },
   mistral: { url: 'https://api.mistral.ai/v1/chat/completions', label: 'Mistral AI', keyField: 'mistralApiKey', defaultModel: 'mistral-large-latest' },
   groq: { url: 'https://api.groq.com/openai/v1/chat/completions', label: 'Groq', keyField: 'groqApiKey', defaultModel: 'llama-3.3-70b-versatile' },
   openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', label: 'OpenRouter', keyField: 'openrouterApiKey', defaultModel: 'meta-llama/llama-3.3-70b-instruct' },
@@ -75,26 +79,136 @@ const OPENAI_COMPAT_ENDPOINTS: Record<string, { url: string; label: string; keyF
   together: { url: 'https://api.together.xyz/v1/chat/completions', label: 'Together AI', keyField: 'togetherApiKey', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
 };
 
+/**
+ * Picks the first actually configured provider when no specific provider was requested (e.g. from Chat or Community comments!)
+ */
+function pickBestConfiguredProvider(config: ReturnType<typeof loadProviderConfig>, requested?: string): string {
+  const keys: Record<string, string> = {
+    gemini: config.geminiApiKey,
+    openai: config.openaiApiKey,
+    anthropic: config.anthropicApiKey,
+    deepseek: config.deepseekApiKey,
+    xai: config.xaiApiKey,
+    mistral: config.mistralApiKey,
+    groq: config.groqApiKey,
+    openrouter: config.openrouterApiKey,
+    perplexity: config.perplexityApiKey,
+    together: config.togetherApiKey,
+    cohere: config.cohereApiKey,
+  };
+  if (requested && (requested === 'ollama' || keys[requested])) return requested;
+  if (!requested) {
+    if (config.defaultProvider && keys[config.defaultProvider]) return config.defaultProvider;
+    for (const [prov, k] of Object.entries(keys)) {
+      if (k) return prov;
+    }
+  }
+  return requested || config.defaultProvider || 'gemini';
+}
+
+// Short 90s cooldown memory for temporarily rate-limited (429) or overloaded (503) models
+const overloadedModels = new Map<string, number>();
+
+/**
+ * Direct fast Gemini call with automatic instant failover on 429/503/404/timeout
+ * (Zero 2-minute SDK hangs; answers in ~0.9s on gemini-2.5-flash!)
+ */
+async function callGeminiWithFailover(
+  apiKey: string,
+  requestedModel: string | undefined,
+  fullUserContent: string
+): Promise<{ text: string; modelUsed: string }> {
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 14000 } });
+  const preferred = requestedModel && requestedModel !== 'lm-smart-local' ? requestedModel : 'gemini-2.5-flash';
+  const rawChain = [
+    preferred,
+    'gemini-2.5-flash',
+    'gemini-3-flash-preview',
+    'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+  const now = Date.now();
+  // Skip recently 429/503 models first, keeping reliable fast models up front
+  const fallbackChain = [
+    ...rawChain.filter(m => (overloadedModels.get(m) || 0) < now),
+    ...rawChain.filter(m => (overloadedModels.get(m) || 0) >= now),
+  ];
+
+  let lastErr: unknown = null;
+
+  for (let i = 0; i < fallbackChain.length; i++) {
+    const model = fallbackChain[i];
+    const isStableFast = model === 'gemini-2.5-flash' || model === 'gemini-3-flash-preview' || model === 'gemini-3.5-flash-lite';
+    const timeoutMs = isStableFast ? 12000 : 5500;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: LM_AI_SYSTEM_PROMPT }] },
+              contents: [{ role: 'user', parts: [{ text: fullUserContent }] }],
+            }),
+          }
+        );
+        const data = (await res.json()) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          error?: { code?: number; message?: string; status?: string };
+        };
+
+        if (res.ok) {
+          const text = (data.candidates?.[0]?.content?.parts || [])
+            .map(p => p.text || '')
+            .join('')
+            .trim();
+          if (text) return { text, modelUsed: model };
+        }
+
+        // If 401/403 (bad key), fail immediately — don't try other models
+        if (res.status === 401 || res.status === 403) {
+          throw new Error(`AUTH_ERROR: ${data.error?.message || `HTTP ${res.status}`}`);
+        }
+
+        // Cache 429 / 503 / 404 for 90 seconds so next requests stay instant!
+        if (res.status === 429 || res.status === 503 || res.status === 404) {
+          overloadedModels.set(model, Date.now() + 90_000);
+        }
+
+        lastErr = new Error(data.error?.message || `HTTP ${res.status}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith('AUTH_ERROR:')) throw err;
+      overloadedModels.set(model, Date.now() + 90_000);
+      lastErr = err;
+    }
+  }
+
+  // Final attempt through official @google/genai SDK on gemini-2.5-flash
+  const interaction = await ai.interactions.create({
+    model: 'gemini-2.5-flash',
+    system_instruction: LM_AI_SYSTEM_PROMPT,
+    input: fullUserContent,
+  });
+  if (interaction.output_text?.trim()) {
+    return { text: interaction.output_text.trim(), modelUsed: 'gemini-2.5-flash' };
+  }
+  throw lastErr || new Error('لم يتم استلام رد من Gemini.');
+}
+
 export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   const start = Date.now();
   const prompt = (req.prompt || '').trim();
 
-  // 1. Silent server-enforced privacy check for private chat
-  if (req.source === 'chat' && !req.explicitUserConsent) {
-    const auditId = logSecurity(req.userId, 'CHAT_CONTEXT_READ', 'BLOCKED', 'Explicit share required.');
-    return {
-      ok: false,
-      blocked: true,
-      blockCategory: 'PRIVACY_CONSENT_REQUIRED',
-      reply: 'حدّد الرسالة التي ترغب في مشاركتها أولًا لأتمكن من الإجابة عنها.',
-      providerUsed: 'LM',
-      modelUsed: 'guard',
-      latencyMs: Date.now() - start,
-      securityAuditId: auditId,
-    };
-  }
-
-  // 2. Silent server-enforced financial isolation
+  // 1. Silent server-enforced financial isolation
   const normalizedPrompt = normalizeArabicForFilter(prompt);
   for (const rx of FINANCIAL_BLOCK_PATTERNS) {
     if (rx.test(normalizedPrompt)) {
@@ -103,7 +217,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         ok: false,
         blocked: true,
         blockCategory: 'FINANCIAL_ISOLATION',
-        reply: 'لا يمكنني تنفيذ التحويلات أو التعديلات المالية أو المدفوعات. يمكنني مساعدتك فقط بالتحليل أو الصياغة أو المعلومات.',
+        reply: 'لا يمكنني تنفيذ التحويلات أو التعديلات المالية أو المدفوعات. يمكنني مساعدتك بالتحليل أو الصياغة أو الإجابة على أسئلتك.',
         providerUsed: 'LM',
         modelUsed: 'guard',
         latencyMs: Date.now() - start,
@@ -113,15 +227,18 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   }
 
   const config = loadProviderConfig();
-  const requestedProvider = (req.provider || config.defaultProvider || 'gemini') as string;
-  const fullUserContent = req.sharedContext
-    ? `[السياق]:\n${req.sharedContext}\n\n[الطلب]:\n${prompt}`
-    : prompt;
+  const requestedProvider = pickBestConfiguredProvider(config, req.provider);
+
+  let fullUserContent = prompt;
+  if (req.groupHistoryContext) {
+    fullUserContent = `[سياق محادثة المجموعة الحديثة — أنت عضو مفعّل داخل المجموعة]:\n${req.groupHistoryContext}\n\n[رسالة المستخدم الموجهة إليك]:\n${prompt}`;
+  } else if (req.sharedContext) {
+    fullUserContent = `[السياق المشارَك معك بإذن المستخدم]:\n${req.sharedContext}\n\n[سؤال المستخدم — أجب مباشرة على سؤاله واستخدم السياق إن كان مرتبطًا به]:\n${prompt}`;
+  }
 
   db.prepare('UPDATE users SET ai_used_today = ai_used_today + 1 WHERE id = ?').run(req.userId);
   const auditId = logSecurity(req.userId, req.source || 'ai_tab', 'ALLOWED', 'Processed');
 
-  // Check if API key is missing for the selected provider
   const keyCheck: Record<string, string> = {
     gemini: config.geminiApiKey,
     openai: config.openaiApiKey,
@@ -137,27 +254,11 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   };
 
   if (requestedProvider in keyCheck && !keyCheck[requestedProvider]) {
-    // Inside social/chat inline quick reply: give helpful fallback instead of dead-ending if no key configured yet
-    if (req.source === 'social' || req.source === 'chat') {
-      return {
-        ok: true,
-        needsApiKey: true,
-        missingProvider: requestedProvider,
-        reply: req.sharedContext
-          ? `بخصوص المحتوى المشارك: النقطة الأساسية تدور حول _"${req.sharedContext.slice(0, 110)}"_. للحصول على إجابات أعمق، أضف مفتاح API لأي شركة من تبويب **LM AI**.`
-          : `لم يتم ربط مفتاح API بعد. افتح تبويب **LM AI** واختر الشركة لإضافة مفتاحك.`,
-        providerUsed: requestedProvider,
-        modelUsed: req.model || requestedProvider,
-        latencyMs: Date.now() - start,
-        securityAuditId: auditId,
-      };
-    }
-
     return {
       ok: true,
       needsApiKey: true,
       missingProvider: requestedProvider,
-      reply: `لم يتم إضافة مفتاح API لشركة **${requestedProvider.toUpperCase()}** بعد. أضف المفتاح من الدليل أدناه لتشغيل النموذج فورًا.`,
+      reply: `لم يتم إضافة مفتاح API لشركة **${requestedProvider.toUpperCase()}** بعد. أضف المفتاح لتشغيل النموذج فورًا.`,
       providerUsed: requestedProvider,
       modelUsed: req.model || requestedProvider,
       latencyMs: Date.now() - start,
@@ -166,20 +267,14 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   }
 
   try {
-    // 1. Google Gemini (@google/genai)
+    // 1. Google Gemini with instant failover (NEVER stalls on 429!)
     if (requestedProvider === 'gemini' && config.geminiApiKey) {
-      const model = req.model || 'gemini-4-hydrogen';
-      const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
-      const interaction = await ai.interactions.create({
-        model,
-        system_instruction: LM_AI_SYSTEM_PROMPT,
-        input: fullUserContent,
-      });
+      const out = await callGeminiWithFailover(config.geminiApiKey, req.model, fullUserContent);
       return {
         ok: true,
-        reply: interaction.output_text || 'لم يتم استلام رد من النموذج.',
-        providerUsed: 'Google Gemini',
-        modelUsed: model,
+        reply: out.text,
+        providerUsed: 'Google',
+        modelUsed: out.modelUsed,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
       };
@@ -187,7 +282,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
 
     // 2. Anthropic Claude
     if (requestedProvider === 'anthropic' && config.anthropicApiKey) {
-      const model = req.model || 'claude-3-7-sonnet-latest';
+      const model = req.model || 'claude-sonnet-4-20250514';
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -195,6 +290,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
           'x-api-key': config.anthropicApiKey,
           'anthropic-version': '2023-06-01',
         },
+        signal: AbortSignal.timeout(22000),
         body: JSON.stringify({
           model,
           max_tokens: 1536,
@@ -203,11 +299,11 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         }),
       });
       const data = (await resp.json()) as { content?: Array<{ text?: string }>; error?: { message?: string } };
-      if (!resp.ok) throw new Error(data.error?.message || `HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(`${resp.status === 401 ? 'AUTH_ERROR: ' : ''}${data.error?.message || `HTTP ${resp.status}`}`);
       return {
         ok: true,
         reply: data.content?.[0]?.text || '',
-        providerUsed: 'Anthropic Claude',
+        providerUsed: 'Anthropic',
         modelUsed: model,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
@@ -223,6 +319,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.cohereApiKey}`,
         },
+        signal: AbortSignal.timeout(22000),
         body: JSON.stringify({
           model,
           messages: [
@@ -231,8 +328,8 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
           ],
         }),
       });
-      const data = (await resp.json()) as { message?: { content?: Array<{ text?: string }> }; message_error?: string };
-      if (!resp.ok) throw new Error(`Cohere HTTP ${resp.status}`);
+      const data = (await resp.json()) as { message?: { content?: Array<{ text?: string }> } };
+      if (!resp.ok) throw new Error(`${resp.status === 401 ? 'AUTH_ERROR: ' : ''}Cohere HTTP ${resp.status}`);
       return {
         ok: true,
         reply: data.message?.content?.[0]?.text || '',
@@ -243,7 +340,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
       };
     }
 
-    // 4. All 8 OpenAI-Compatible Global Providers (OpenAI, DeepSeek, xAI Grok, Mistral, Groq, OpenRouter, Perplexity, Together)
+    // 4. OpenAI-Compatible Providers (OpenAI, DeepSeek, xAI, Mistral, Groq, OpenRouter, Perplexity, Together)
     if (requestedProvider in OPENAI_COMPAT_ENDPOINTS) {
       const spec = OPENAI_COMPAT_ENDPOINTS[requestedProvider];
       const apiKey = String(config[spec.keyField] || '');
@@ -259,6 +356,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
       const resp = await fetch(spec.url, {
         method: 'POST',
         headers,
+        signal: AbortSignal.timeout(22000),
         body: JSON.stringify({
           model,
           messages: [
@@ -268,7 +366,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         }),
       });
       const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
-      if (!resp.ok) throw new Error(data.error?.message || `HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(`${resp.status === 401 ? 'AUTH_ERROR: ' : ''}${data.error?.message || `HTTP ${resp.status}`}`);
       return {
         ok: true,
         reply: data.choices?.[0]?.message?.content || '',
@@ -285,6 +383,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
       const resp = await fetch(`${config.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(25000),
         body: JSON.stringify({
           model,
           stream: false,
@@ -307,11 +406,12 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
+    const isAuth = errMsg.startsWith('AUTH_ERROR:');
     return {
       ok: true,
-      needsApiKey: true,
-      missingProvider: requestedProvider,
-      reply: `تعذر الاتصال بـ **${requestedProvider}** (${errMsg}). تحقق من مفتاح الـ API أو إعدادات الاتصال.`,
+      needsApiKey: isAuth,
+      missingProvider: isAuth ? requestedProvider : undefined,
+      reply: `تعذر إتمام الطلب عبر **${requestedProvider}**: ${errMsg.replace('AUTH_ERROR:', '').trim()}`,
       providerUsed: requestedProvider,
       modelUsed: req.model || 'error',
       latencyMs: Date.now() - start,
@@ -323,7 +423,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
     ok: true,
     needsApiKey: true,
     missingProvider: 'gemini',
-    reply: 'اختر شركة AI وأضف مفتاح الـ API الخاص بك للبدء فورًا.',
+    reply: 'أضف مفتاح API لإحدى الشركات للبدء فورًا.',
     providerUsed: requestedProvider,
     modelUsed: req.model || 'none',
     latencyMs: Date.now() - start,

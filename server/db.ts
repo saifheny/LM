@@ -14,7 +14,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
-const TARGET_DB_VERSION = 8;
+const TARGET_DB_VERSION = 10;
 
 export function initDatabase() {
   const verRow = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -23,6 +23,7 @@ export function initDatabase() {
       PRAGMA foreign_keys = OFF;
       DROP TABLE IF EXISTS ai_messages;
       DROP TABLE IF EXISTS ai_sessions;
+      DROP TABLE IF EXISTS post_reactions;
       DROP TABLE IF EXISTS post_poll_votes;
       DROP TABLE IF EXISTS post_votes;
       DROP TABLE IF EXISTS post_comments;
@@ -124,6 +125,13 @@ export function initDatabase() {
       PRIMARY KEY (post_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS post_reactions (
+      post_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      reaction TEXT NOT NULL,
+      PRIMARY KEY (post_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS post_comments (
       id TEXT PRIMARY KEY,
       post_id TEXT NOT NULL,
@@ -196,6 +204,8 @@ export function initDatabase() {
       unread_count INTEGER DEFAULT 0,
       is_large_group INTEGER DEFAULT 0,
       is_encrypted INTEGER DEFAULT 1,
+      ai_enabled INTEGER DEFAULT 0,
+      creator_id TEXT DEFAULT 'u_youssef',
       member_count INTEGER DEFAULT 2,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -259,7 +269,7 @@ export function initDatabase() {
       user_id TEXT NOT NULL,
       title TEXT NOT NULL,
       company_id TEXT DEFAULT 'gemini',
-      model_id TEXT DEFAULT 'gemini-4-hydrogen',
+      model_id TEXT DEFAULT 'gemini-3.8-flash',
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -407,14 +417,24 @@ function seedInitialData() {
   const insertConv = db.prepare(`
     INSERT INTO conversations (
       id, type, folder, title, description, avatar_color, avatar_url,
-      online_text, pinned_message, is_pinned, unread_count, is_encrypted, member_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      online_text, pinned_message, is_pinned, unread_count, is_encrypted, member_count, ai_enabled, creator_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertConv.run('c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Host', '#27272A', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن', 'بروفة الصوت الساعة 8:30 قبل البث المباشر', 1, 2, 1, 2);
-  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo', '#27272A', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 1, 1, 2);
-  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#27272A', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 0, 1, 2);
-  insertConv.run('c_founders', 'community', 'channels', 'Cairo Builders & Tech', 'مجتمع المطورين وصناع المحتوى', '#27272A', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل', 'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً', 0, 3, 0, 18940);
-  insertConv.run('c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير', 'تنسيق التصوير والموسيقى', '#27272A', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين', null, 0, 0, 1, 14);
+  insertConv.run('c_mariam', 'dm', 'personal', 'مريم الشريف', 'Visual Director & Live Host', '#27272A', '/uploads/seed/avatar_mariam.jpg', 'متصل الآن', 'بروفة الصوت الساعة 8:30 قبل البث المباشر', 1, 2, 1, 2, 0, 'u_youssef');
+  insertConv.run('c_karim', 'dm', 'personal', 'كريم فؤاد', 'NYC / Cairo', '#27272A', '/uploads/seed/avatar_karim.jpg', 'متصل الآن', null, 1, 1, 1, 2, 0, 'u_youssef');
+  insertConv.run('c_nour', 'dm', 'personal', 'نور حسن', 'Cinematographer', '#27272A', '/uploads/seed/avatar_nour.jpg', 'آخر ظهور منذ دقيقتين', null, 0, 0, 1, 2, 0, 'u_youssef');
+  insertConv.run('c_founders', 'community', 'channels', 'Cairo Builders & Tech', 'مجتمع المطورين وصناع المحتوى', '#27272A', '/uploads/seed/post_cairo.jpg', '18,940 عضو • 1,120 متصل', 'لقاء الأسبوع القادم في الزمالك يوم الخميس الساعة 7 مساءً', 0, 3, 0, 18940, 1, 'u_youssef');
+  insertConv.run('c_lm_core', 'group', 'groups', 'استوديو الإنتاج والتصوير', 'تنسيق التصوير والموسيقى', '#27272A', '/uploads/seed/post_studio.jpg', '14 عضو • 6 متصلين', null, 0, 0, 1, 14, 0, 'u_youssef');
+
+  const insertPostRx = db.prepare('INSERT OR REPLACE INTO post_reactions (post_id, user_id, reaction) VALUES (?, ?, ?)');
+  insertPostRx.run('p_1', 'u_mariam', 'love');
+  insertPostRx.run('p_1', 'u_karim', 'fire');
+  insertPostRx.run('p_1', 'u_nour', 'wow');
+  insertPostRx.run('p_2', 'u_youssef', 'love');
+  insertPostRx.run('p_2', 'u_karim', 'like');
+  insertPostRx.run('p_3', 'u_mariam', 'fire');
+  insertPostRx.run('p_3', 'u_nour', 'zap');
+  insertPostRx.run('p_4', 'u_karim', 'like');
 
   const insertMsg = db.prepare(`
     INSERT INTO messages (
@@ -499,7 +519,7 @@ export function loadProviderConfig(): ProviderConfig {
     blnkUrl: process.env.BLNK_URL || '',
     matrixUrl: process.env.MATRIX_HOMESERVER_URL || '',
     defaultProvider: 'gemini',
-    defaultModel: 'gemini-4-hydrogen',
+    defaultModel: 'gemini-3.8-flash',
   };
   if (fs.existsSync(PROVIDERS_FILE)) {
     try {

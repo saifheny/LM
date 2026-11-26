@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Search,
   Plus,
@@ -90,6 +92,9 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newChatTitle, setNewChatTitle] = useState('');
   const [newChatType, setNewChatType] = useState<'group' | 'community'>('group');
+  const [newChatAiEnabled, setNewChatAiEnabled] = useState(true);
+  const [aiTypingConvId, setAiTypingConvId] = useState<string | null>(null);
+  const [togglingAiMode, setTogglingAiMode] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -127,7 +132,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, activeConvId]);
+  }, [messages.length, activeConvId, aiTypingConvId]);
 
   useEffect(() => {
     if (lastWsEvent?.event === 'chat:message') {
@@ -259,13 +264,29 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
   function applySlashCommand(cmd: 'ai' | 'summarize') {
     setSlashMenuOpen(false);
     setInvokeAiMode(true);
-    const lastOther = [...messages].reverse().find(m => m.senderId !== user.id && m.msgType === 'text');
-    if (cmd === 'summarize' && lastOther) {
-      setSharedForAi(lastOther);
+    if (cmd === 'summarize') {
+      const lastOther = [...messages].reverse().find(m => m.senderId !== user.id && m.msgType === 'text');
+      if (lastOther) setSharedForAi(lastOther);
       setDraft('لخّص هذه الرسالة باختصار');
     } else {
-      if (lastOther && !sharedForAi) setSharedForAi(lastOther);
       setDraft('/ai ');
+    }
+  }
+
+  async function toggleGroupAiMode() {
+    if (!activeConv || activeConv.type === 'dm' || togglingAiMode) return;
+    setTogglingAiMode(true);
+    const nextEnabled = !activeConv.aiEnabled;
+    try {
+      await apiPost(`/api/conversations/${activeConv.id}/ai-mode`, {
+        userId: user.id,
+        aiEnabled: nextEnabled,
+      });
+      setConversations(prev =>
+        prev.map(c => (c.id === activeConv.id ? { ...c, aiEnabled: nextEnabled } : c))
+      );
+    } finally {
+      setTogglingAiMode(false);
     }
   }
 
@@ -274,32 +295,68 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
     if (!draft.trim() || !activeConvId) return;
     const raw = draft.trim();
     const cleaned = raw.replace(/^(\/ai|-ai|\/|-)\s*/i, '').trim() || raw;
+    const convTargetId = activeConvId;
+    const explicitShared = sharedForAi;
+    const activeReply = replyTarget;
+    const shouldInvokeAi = invokeAiMode || /^(\/ai|-ai|@lm\s*ai|\/)/i.test(raw) || /@(lm\s*ai|ai)\b/i.test(raw) || Boolean(explicitShared);
+
     setDraft('');
     setSlashMenuOpen(false);
     setComposerFocused(false);
-
-    const shouldInvokeAi = invokeAiMode || /^(\/ai|-ai|@lm\s*ai|\/)/i.test(raw) || Boolean(sharedForAi);
-    const lastContextMsg = sharedForAi || [...messages].reverse().find(m => m.msgType === 'text');
-
-    await apiPost(`/api/conversations/${activeConvId}/messages`, {
-      senderId: user.id,
-      content: cleaned,
-      msgType: 'text',
-      replyToId: replyTarget?.id || null,
-      replySender: replyTarget?.displayName || null,
-      replyText: replyTarget?.content?.slice(0, 80) || null,
-      invokeAi: shouldInvokeAi,
-      sharedSnippet:
-        shouldInvokeAi && lastContextMsg
-          ? `${lastContextMsg.displayName}: ${lastContextMsg.content}`
-          : undefined,
-    });
-
     setReplyTarget(null);
     setSharedForAi(null);
     setInvokeAiMode(false);
-    loadMessages(activeConvId);
-    loadConversations();
+
+    // 1. Optimistically render the user's message IMMEDIATELY (0ms feedback!)
+    const nowStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const tempId = `tmp_${Date.now()}`;
+    const optimisticMsg: ChatMessageItem = {
+      id: tempId,
+      conversationId: convTargetId,
+      senderId: user.id,
+      displayName: user.displayName,
+      username: user.username,
+      avatarColor: user.avatarColor,
+      avatarInitials: user.avatarInitials,
+      avatarUrl: user.avatarUrl,
+      content: cleaned,
+      msgType: 'text',
+      mediaUrl: null,
+      transcript: null,
+      isSpoiler: false,
+      replyToId: activeReply?.id || null,
+      replySender: activeReply?.displayName || null,
+      replyText: activeReply?.content?.slice(0, 80) || null,
+      reactions: {},
+      aiConsentRef: null,
+      createdAt: nowStr,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+
+    // 2. If calling AI, show live "LM AI يكتب الآن..." indicator right inside the conversation!
+    if (shouldInvokeAi) {
+      setAiTypingConvId(convTargetId);
+    }
+
+    try {
+      await apiPost(`/api/conversations/${convTargetId}/messages`, {
+        senderId: user.id,
+        content: cleaned,
+        msgType: 'text',
+        replyToId: activeReply?.id || null,
+        replySender: activeReply?.displayName || null,
+        replyText: activeReply?.content?.slice(0, 80) || null,
+        invokeAi: shouldInvokeAi,
+        // ONLY attach a snippet when the user EXPLICITLY selected a message for AI!
+        sharedSnippet: explicitShared ? `${explicitShared.displayName}: ${explicitShared.content}` : undefined,
+      });
+      await loadMessages(convTargetId);
+      loadConversations();
+    } catch {
+      await loadMessages(convTargetId);
+    } finally {
+      setAiTypingConvId(cur => (cur === convTargetId ? null : cur));
+    }
   }
 
   async function handleAttachFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -318,7 +375,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
     loadMessages(activeConvId);
   }
 
-  async function handleSendVoice(file: File) {
+  async function handleSendVoice(file: File, _durationSec: number, liveTranscript?: string | null) {
     setRecordingVoice(false);
     if (!activeConvId) return;
     const up = await apiUploadFile(file);
@@ -327,7 +384,7 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
       content: 'رسالة صوتية',
       msgType: 'audio',
       mediaUrl: up.url,
-      transcript: 'رسالة صوتية.',
+      transcript: liveTranscript || null,
     });
     loadMessages(activeConvId);
   }
@@ -344,6 +401,8 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
     const res = await apiPost<{ ok: boolean; id: string }>('/api/conversations', {
       title: newChatTitle.trim(),
       type: newChatType,
+      creatorId: user.id,
+      aiEnabled: newChatAiEnabled,
     });
     setNewChatOpen(false);
     setNewChatTitle('');
@@ -481,21 +540,54 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
               </div>
             </div>
 
-            <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-full bg-[#131318]/78 backdrop-blur-xl border border-white/[0.1] shadow-lg">
-              <button
-                type="button"
-                onClick={() => startCall('audio')}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <Phone className="w-4 h-4" strokeWidth={1.8} />
-              </button>
-              <button
-                type="button"
-                onClick={() => startCall('video')}
-                className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <Video className="w-4 h-4" strokeWidth={1.8} />
-              </button>
+            <div className="pointer-events-auto flex items-center gap-1.5">
+              {/* Group Creator AI Member Permission Toggle (Groups & Communities only — DMs remain isolated!) */}
+              {activeConv.type !== 'dm' && (
+                activeConv.creatorId === user.id ? (
+                  <button
+                    type="button"
+                    disabled={togglingAiMode}
+                    onClick={toggleGroupAiMode}
+                    title={
+                      activeConv.aiEnabled
+                        ? 'AI عضو أساسي يرى محادثة المجموعة — اضغط للتعطيل'
+                        : 'تفعيل AI كعضو أساسي يرى محادثة المجموعة'
+                    }
+                    className={`h-9 px-3 rounded-full backdrop-blur-xl border text-[11px] font-medium flex items-center gap-1.5 cursor-pointer shadow-lg transition-colors ${
+                      activeConv.aiEnabled
+                        ? 'bg-white text-black border-white font-semibold'
+                        : 'bg-[#131318]/80 border-white/[0.12] text-[#A1A1AA] hover:text-white'
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${activeConv.aiEnabled ? 'bg-[#16A34A]' : 'bg-[#585860]'}`} />
+                    <Sparkles className="w-3 h-3" />
+                    <span className="hidden sm:inline">{activeConv.aiEnabled ? 'AI عضو نشط' : 'تفعيل AI'}</span>
+                  </button>
+                ) : activeConv.aiEnabled ? (
+                  <div className="h-9 px-3 rounded-full bg-[#131318]/80 backdrop-blur-xl border border-white/[0.12] text-[11px] text-[#E4E4E7] flex items-center gap-1.5 shadow-lg">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+                    <Sparkles className="w-3 h-3" />
+                    <span className="hidden sm:inline">AI عضو</span>
+                  </div>
+                ) : null
+              )}
+
+              <div className="flex items-center gap-1 p-1 rounded-full bg-[#131318]/78 backdrop-blur-xl border border-white/[0.1] shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => startCall('audio')}
+                  className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <Phone className="w-4 h-4" strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startCall('video')}
+                  className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <Video className="w-4 h-4" strokeWidth={1.8} />
+                </button>
+              </div>
             </div>
           </header>
         )}
@@ -623,7 +715,13 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
 
                         {/* IN-PLACE TRANSLATION: Replaces message text directly! Click empty space anywhere to restore original. */}
                         {msg.msgType === 'audio' && msg.mediaUrl ? (
-                          <SmartVoicePill url={msg.mediaUrl} transcript={msg.transcript} isMine={isMine} />
+                          <SmartVoicePill
+                            url={msg.mediaUrl}
+                            transcript={msg.transcript}
+                            recordId={msg.id}
+                            table="messages"
+                            isMine={isMine}
+                          />
                         ) : msg.isSpoiler && !revealedSpoilers[msg.id] ? (
                           <button
                             type="button"
@@ -634,7 +732,13 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           </button>
                         ) : (
                           <div>
-                            <RichMessageText text={translated ? translated.text : msg.content} />
+                            {isAi && !translated ? (
+                              <div className="prose-sm space-y-1.5 text-[#F2F2F5] leading-relaxed">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                              </div>
+                            ) : (
+                              <RichMessageText text={translated ? translated.text : msg.content} />
+                            )}
                             {translated && (
                               <div className="mt-1 flex items-center gap-1 text-[10px] text-[#8E8E93]">
                                 <Languages className="w-2.5 h-2.5" />
@@ -735,6 +839,23 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
               </div>
             );
           })}
+          {/* Live LM AI Typing Indicator inside Chat Stream */}
+          {aiTypingConvId === activeConvId && (
+            <div className="flex flex-col items-start">
+              <div className="flex items-end gap-2 max-w-[78%]">
+                <UserAvatar initials="AI" avatarUrl={null} size={28} />
+                <div className="px-3.5 py-2.5 rounded-2xl bg-[#15151B] border border-white/[0.14] text-xs text-[#D4D4D8] flex items-center gap-2.5">
+                  <Sparkles className="w-3.5 h-3.5 text-white animate-pulse" />
+                  <span>LM AI يكتب الآن</span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/75 animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/75 animate-bounce [animation-delay:140ms]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/75 animate-bounce [animation-delay:280ms]" />
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -766,14 +887,30 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
         {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Hidden when mobile full bottom dock is expanded!) */}
         {!mobileNavExpanded && (
           <div className="pointer-events-none absolute bottom-3.5 inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center">
-            <div className="pointer-events-auto w-full max-w-[780px] space-y-2">
+            <div className="pointer-events-auto w-full max-w-[780px] flex flex-col gap-2">
+              {/* Compact Side-Aligned Reply / AI Context Card (Never oversized or paper-thin!) */}
               {(replyTarget || sharedForAi) && (
-                <div className="px-3.5 py-1.5 rounded-full bg-[#131318]/95 backdrop-blur-xl border border-white/[0.1] flex items-center justify-between text-xs">
-                  <span className="truncate text-[#D4D4D8]">
-                    {sharedForAi
-                      ? `AI ← "${sharedForAi.content.slice(0, 50)}"`
-                      : `${replyTarget?.displayName}: ${replyTarget?.content.slice(0, 50)}`}
-                  </span>
+                <div className="w-fit max-w-[300px] sm:max-w-[340px] self-start rounded-2xl bg-[#15151C]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-2 flex items-center gap-2.5 shadow-xl">
+                  <span
+                    className={`w-[2.5px] self-stretch rounded-full shrink-0 ${
+                      sharedForAi ? 'bg-[#A78BFA]' : 'bg-white/55'
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold text-white flex items-center gap-1 truncate">
+                      {sharedForAi ? (
+                        <>
+                          <Sparkles className="w-3 h-3 text-[#C4B5FD] shrink-0" />
+                          <span>سياق AI • {sharedForAi.displayName}</span>
+                        </>
+                      ) : (
+                        <span>الرد على {replyTarget?.displayName}</span>
+                      )}
+                    </div>
+                    <div className="text-[11.5px] text-[#A1A1AA] truncate max-w-[215px]">
+                      {(sharedForAi ? sharedForAi.content : replyTarget?.content || '').slice(0, 68)}
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -781,9 +918,9 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                       setSharedForAi(null);
                       setInvokeAiMode(false);
                     }}
-                    className="text-[#7A7A85] hover:text-white ms-2 cursor-pointer"
+                    className="w-5 h-5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-3 h-3" />
                   </button>
                 </div>
               )}
@@ -856,10 +993,18 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                       extraEnd={
                         <button
                           type="button"
-                          onClick={() => setSlashMenuOpen(v => !v)}
+                          onClick={() => {
+                            if (invokeAiMode) {
+                              setInvokeAiMode(false);
+                              setSlashMenuOpen(false);
+                            } else {
+                              setInvokeAiMode(true);
+                              setSlashMenuOpen(true);
+                            }
+                          }}
                           title="استدعاء الذكاء الاصطناعي"
                           className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
-                            invokeAiMode || slashMenuOpen ? 'text-white bg-white/[0.12]' : 'text-[#7A7A85] hover:text-white'
+                            invokeAiMode || slashMenuOpen ? 'bg-white text-black' : 'text-[#7A7A85] hover:text-white'
                           }`}
                         >
                           <NavAiIcon active={invokeAiMode || slashMenuOpen} className="w-[18px] h-[18px]" />
@@ -944,6 +1089,21 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
               placeholder="الاسم..."
               className="w-full h-11 rounded-xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none"
             />
+            <button
+              type="button"
+              onClick={() => setNewChatAiEnabled(v => !v)}
+              className={`w-full px-3.5 py-2.5 rounded-xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                newChatAiEnabled
+                  ? 'bg-white/[0.08] border-white/25 text-white'
+                  : 'bg-[#0A0A0C] border-white/[0.08] text-[#8E8E93]'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>تفعيل LM AI كعضو أساسي يرى المحادثة</span>
+              </span>
+              <span className={`w-2.5 h-2.5 rounded-full ${newChatAiEnabled ? 'bg-[#22C55E]' : 'bg-[#585860]'}`} />
+            </button>
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2 text-xs">
                 <button

@@ -1,18 +1,30 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ThumbsUp } from 'lucide-react';
 
 export interface ReactionDef {
   id: string;
   label: string;
+  accent: string;
+  particleColors: [string, string, string];
+  idleMotion: {
+    y?: number[];
+    scale?: number[];
+    rotate?: number[];
+  };
   renderIcon: (size?: number) => React.ReactNode;
 }
 
 /**
- * 2026 Custom Sculpted Vector Reaction Badges (Facebook-Grade Glossy Vector Design — ZERO generic OS Emoji!)
+ * 2026 Custom Sculpted Floating Animated Reaction Badges (Facebook-Grade Fluid Motion — ZERO generic OS Emoji!)
  */
 export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'like',
     label: 'إعجاب',
+    accent: '#60A5FA',
+    particleColors: ['#60A5FA', '#3B82F6', '#BFDBFE'],
+    idleMotion: { y: [0, -2.5, 0], rotate: [0, -7, 0] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -32,6 +44,9 @@ export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'love',
     label: 'أحببته',
+    accent: '#FB7185',
+    particleColors: ['#FB7185', '#E11D48', '#FECDD3'],
+    idleMotion: { scale: [1, 1.11, 1, 1.07, 1] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -51,6 +66,9 @@ export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'fire',
     label: 'مذهل',
+    accent: '#FBBF24',
+    particleColors: ['#FBBF24', '#EA580C', '#FEF08A'],
+    idleMotion: { y: [0, -3, 0], scale: [1, 1.06, 0.98, 1] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -70,6 +88,9 @@ export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'haha',
     label: 'أضحكني',
+    accent: '#FDE047',
+    particleColors: ['#FDE047', '#F59E0B', '#FEF9C3'],
+    idleMotion: { y: [0, -2.5, 0.5, -1.5, 0], rotate: [-4, 4, -3, 0] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -89,6 +110,9 @@ export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'wow',
     label: 'واو',
+    accent: '#C084FC',
+    particleColors: ['#C084FC', '#7C3AED', '#E9D5FF'],
+    idleMotion: { scale: [1, 1.09, 0.96, 1] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -107,6 +131,9 @@ export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'zap',
     label: 'قوي',
+    accent: '#34D399',
+    particleColors: ['#34D399', '#059669', '#A7F3D0'],
+    idleMotion: { rotate: [0, 8, -6, 0], y: [0, -2, 0] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -123,6 +150,9 @@ export const REACTION_LIST: ReactionDef[] = [
   {
     id: 'sad',
     label: 'تأثر',
+    accent: '#7DD3FC',
+    particleColors: ['#7DD3FC', '#0284C7', '#BAE6FD'],
+    idleMotion: { rotate: [-5, 5, -5], y: [0, 1.5, 0] },
     renderIcon: (size = 20) => (
       <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
         <defs>
@@ -150,36 +180,357 @@ const KEY_ALIAS: Record<string, string> = {
 
 export function resolveReaction(key: string): ReactionDef {
   const mapped = KEY_ALIAS[key] || key;
-  return REACTION_LIST.find(r => r.id === mapped) || REACTION_LIST[1];
+  return REACTION_LIST.find(r => r.id === mapped) || REACTION_LIST[0];
 }
 
-/** Crisp 2026 Vector Reaction Bar */
-export function TelegramReactionStrip({
-  onSelect,
-}: {
-  onSelect: (reactionId: string) => void;
-}) {
+const BURST_VECTORS = [
+  { x: -34, y: -38, rot: -28, size: 7, shape: 'star' },
+  { x: -16, y: -50, rot: -12, size: 6, shape: 'dot' },
+  { x: 4, y: -54, rot: 14, size: 8, shape: 'ring' },
+  { x: 24, y: -44, rot: 26, size: 6, shape: 'star' },
+  { x: 38, y: -26, rot: 40, size: 5, shape: 'dot' },
+  { x: -38, y: -16, rot: -35, size: 6, shape: 'ring' },
+  { x: 16, y: -24, rot: 18, size: 5, shape: 'dot' },
+] as const;
+
+interface BurstEvent {
+  uid: number;
+  reactionId: string;
+}
+
+/**
+ * Multi-Effect Particle Burst Overlay triggered whenever a reaction is clicked!
+ */
+function ReactionBurstEffect({ bursts }: { bursts: BurstEvent[] }) {
   return (
-    <div className="inline-flex items-center gap-1 px-2 py-1.5 rounded-full bg-[#16161C]/96 backdrop-blur-xl border border-white/[0.14] shadow-2xl select-none">
-      {REACTION_LIST.map((r) => (
-        <button
-          key={r.id}
-          type="button"
-          title={r.label}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect(r.id);
-          }}
-          className="w-7 h-7 rounded-full flex items-center justify-center hover:scale-115 transition-transform cursor-pointer"
-        >
-          {r.renderIcon(22)}
-        </button>
-      ))}
+    <div className="pointer-events-none absolute inset-0 overflow-visible z-40">
+      <AnimatePresence>
+        {bursts.map(b => {
+          const def = resolveReaction(b.reactionId);
+          return (
+            <div key={b.uid} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              {/* Rising sculpted badge echo */}
+              <motion.div
+                initial={{ opacity: 0.95, y: 0, scale: 0.7 }}
+                animate={{ opacity: 0, y: -56, scale: 1.35 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.62, ease: [0.22, 1, 0.36, 1] }}
+                className="absolute -left-3.5 -top-3.5"
+              >
+                {def.renderIcon(28)}
+              </motion.div>
+
+              {/* Radial crisp expanding ring */}
+              <motion.span
+                initial={{ opacity: 0.8, scale: 0.3 }}
+                animate={{ opacity: 0, scale: 2.3 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
+                style={{ borderColor: def.accent }}
+                className="absolute -left-3 -top-3 w-6 h-6 rounded-full border-2"
+              />
+
+              {/* Multi-shape crisp radiating sparks */}
+              {BURST_VECTORS.map((vec, i) => {
+                const color = def.particleColors[i % def.particleColors.length];
+                return (
+                  <motion.span
+                    key={i}
+                    initial={{ opacity: 1, x: 0, y: 0, scale: 0.5, rotate: 0 }}
+                    animate={{
+                      opacity: [1, 1, 0],
+                      x: vec.x,
+                      y: vec.y,
+                      scale: [0.6, 1.15, 0.3],
+                      rotate: vec.rot,
+                    }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.58 + (i % 3) * 0.06, ease: [0.2, 0.85, 0.3, 1] }}
+                    className="absolute left-0 top-0"
+                  >
+                    {vec.shape === 'star' ? (
+                      <svg width={vec.size + 4} height={vec.size + 4} viewBox="0 0 12 12" fill={color}>
+                        <path d="M6 0L7.5 4.5L12 6L7.5 7.5L6 12L4.5 7.5L0 6L4.5 4.5Z" />
+                      </svg>
+                    ) : vec.shape === 'ring' ? (
+                      <span
+                        style={{ width: vec.size, height: vec.size, borderColor: color }}
+                        className="block rounded-full border-[1.75px]"
+                      />
+                    ) : (
+                      <span
+                        style={{ width: vec.size, height: vec.size, backgroundColor: color }}
+                        className="block rounded-full"
+                      />
+                    )}
+                  </motion.span>
+                );
+              })}
+            </div>
+          );
+        })}
+      </AnimatePresence>
     </div>
   );
 }
 
-/** Crisp Sculpted Reaction Counter Pill */
+/**
+ * Floating Animated Facebook-Style Reaction Dock (Used in both Chat & Community!)
+ * - Spring pop entrance with staggered icon lift
+ * - Living subtle idle animation per reaction
+ * - Hover magnification (scale 1.48 + lift -10px) + floating Arabic label pill
+ */
+export function TelegramReactionStrip({
+  onSelect,
+  activeReactionId,
+}: {
+  onSelect: (reactionId: string) => void;
+  activeReactionId?: string | null;
+}) {
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.86 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.9 }}
+      transition={{ type: 'spring', stiffness: 460, damping: 28 }}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-[#15151C]/96 backdrop-blur-2xl border border-white/[0.15] shadow-[0_14px_40px_rgba(0,0,0,0.65)] select-none"
+    >
+      {REACTION_LIST.map((r, idx) => {
+        const isHovered = hoveredId === r.id;
+        const isSelected = activeReactionId === r.id;
+        return (
+          <motion.button
+            key={r.id}
+            type="button"
+            initial={{ opacity: 0, y: 12, scale: 0.5 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ type: 'spring', stiffness: 520, damping: 22, delay: idx * 0.025 }}
+            onMouseEnter={() => setHoveredId(r.id)}
+            onMouseLeave={() => setHoveredId(cur => (cur === r.id ? null : cur))}
+            onClick={e => {
+              e.stopPropagation();
+              onSelect(r.id);
+            }}
+            className="relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer"
+          >
+            {/* Floating Arabic Tooltip Above Magnified Badge */}
+            <AnimatePresence>
+              {isHovered && (
+                <motion.span
+                  initial={{ opacity: 0, y: 4, scale: 0.85 }}
+                  animate={{ opacity: 1, y: -6, scale: 1 }}
+                  exit={{ opacity: 0, y: 3, scale: 0.85 }}
+                  transition={{ duration: 0.14 }}
+                  className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-black/92 border border-white/[0.16] text-[10px] font-semibold text-white whitespace-nowrap shadow-lg"
+                >
+                  {r.label}
+                </motion.span>
+              )}
+            </AnimatePresence>
+
+            {/* Living Floating & Hover-Magnifying Sculpted Badge */}
+            <motion.span
+              animate={
+                isHovered
+                  ? { scale: 1.48, y: -9, rotate: idx % 2 === 0 ? -6 : 6 }
+                  : {
+                      scale: isSelected ? 1.12 : 1,
+                      ...r.idleMotion,
+                    }
+              }
+              transition={
+                isHovered
+                  ? { type: 'spring', stiffness: 520, damping: 20 }
+                  : {
+                      duration: 2.1 + (idx % 3) * 0.35,
+                      repeat: Infinity,
+                      repeatType: 'mirror',
+                      ease: 'easeInOut',
+                      delay: idx * 0.14,
+                    }
+              }
+              whileTap={{ scale: 0.9 }}
+              className="flex items-center justify-center"
+            >
+              {r.renderIcon(26)}
+            </motion.span>
+
+            {isSelected && (
+              <span
+                style={{ backgroundColor: r.accent }}
+                className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full"
+              />
+            )}
+          </motion.button>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+/**
+ * Facebook-Style Floating Multi-Effect Like / Reaction Trigger for Community Posts!
+ * - Hover or long-press pops the floating animated 7-reaction dock smoothly
+ * - Single tap toggles default Like (or removes current reaction)
+ * - Every reaction triggers crisp multi-effect sparks + rising badge burst!
+ * - Displays overlapping mini-stack of top reactions + total count
+ */
+export function FacebookReactionButton({
+  reactions = {},
+  myReaction,
+  totalCount,
+  onReact,
+}: {
+  reactions?: Record<string, number>;
+  myReaction?: string | null;
+  totalCount: number;
+  onReact: (reactionId: string) => void;
+}) {
+  const [dockOpen, setDockOpen] = useState(false);
+  const [bursts, setBursts] = useState<BurstEvent[]>([]);
+  const closeTimerRef = useRef<number | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+
+  const activeDef = myReaction ? resolveReaction(myReaction) : null;
+
+  const topReactionKeys = Object.entries(reactions)
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([key]) => key);
+
+  function scheduleClose() {
+    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setDockOpen(false), 260);
+  }
+
+  function keepOpen() {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setDockOpen(true);
+  }
+
+  function triggerBurst(reactionId: string) {
+    const uid = Date.now() + Math.random();
+    setBursts(prev => [...prev.slice(-4), { uid, reactionId }]);
+    window.setTimeout(() => {
+      setBursts(prev => prev.filter(x => x.uid !== uid));
+    }, 700);
+  }
+
+  function handleSelect(reactionId: string) {
+    setDockOpen(false);
+    if (myReaction !== reactionId) {
+      triggerBurst(reactionId);
+    }
+    onReact(reactionId);
+  }
+
+  function handleQuickTap() {
+    if (longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
+    const targetId = myReaction || 'like';
+    if (!myReaction) triggerBurst('like');
+    onReact(targetId);
+  }
+
+  return (
+    <div
+      className="relative inline-flex items-center"
+      onMouseEnter={keepOpen}
+      onMouseLeave={scheduleClose}
+    >
+      {/* Floating Animated Facebook Reaction Dock Above Button (with seamless hover bridge!) */}
+      <AnimatePresence>
+        {dockOpen && (
+          <div
+            onMouseEnter={keepOpen}
+            onMouseLeave={scheduleClose}
+            className="absolute bottom-full start-0 pb-2.5 z-40"
+          >
+            <TelegramReactionStrip activeReactionId={myReaction} onSelect={handleSelect} />
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Main Reaction Pill + Stacked Reaction Badges */}
+      <motion.button
+        type="button"
+        whileTap={{ scale: 0.92 }}
+        onPointerDown={() => {
+          longPressedRef.current = false;
+          holdTimerRef.current = window.setTimeout(() => {
+            longPressedRef.current = true;
+            setDockOpen(true);
+          }, 260);
+        }}
+        onPointerUp={() => {
+          if (holdTimerRef.current) {
+            window.clearTimeout(holdTimerRef.current);
+            holdTimerRef.current = null;
+          }
+        }}
+        onPointerCancel={() => {
+          if (holdTimerRef.current) {
+            window.clearTimeout(holdTimerRef.current);
+            holdTimerRef.current = null;
+          }
+        }}
+        onClick={handleQuickTap}
+        className={`relative inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-xs transition-colors cursor-pointer select-none ${
+          activeDef
+            ? 'bg-white/[0.09] border-white/[0.18] text-white font-semibold'
+            : 'bg-[#131318] border-white/[0.08] text-[#A1A1AA] hover:border-white/20 hover:text-white'
+        }`}
+      >
+        <ReactionBurstEffect bursts={bursts} />
+
+        {/* Active Animated Icon or Default Crisp Like */}
+        <motion.span
+          key={myReaction || 'none'}
+          initial={{ scale: 0.6, rotate: -14 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: 'spring', stiffness: 520, damping: 20 }}
+          className="flex items-center justify-center"
+        >
+          {activeDef ? activeDef.renderIcon(18) : <ThumbsUp className="w-3.5 h-3.5" strokeWidth={1.9} />}
+        </motion.span>
+
+        <span style={activeDef ? { color: activeDef.accent } : undefined} className="text-[11.5px]">
+          {activeDef ? activeDef.label : 'إعجاب'}
+        </span>
+
+        {/* Overlapping Mini-Stack of Top Reactions + Count */}
+        {totalCount > 0 && (
+          <span className="flex items-center gap-1 ms-0.5 ps-1.5 border-s border-white/[0.1]">
+            {topReactionKeys.length > 0 && (
+              <span className="flex items-center -space-x-1 rtl:space-x-reverse">
+                {topReactionKeys.map(k => (
+                  <span
+                    key={k}
+                    className="inline-flex rounded-full ring-1 ring-[#0A0A0C]"
+                  >
+                    {resolveReaction(k).renderIcon(13)}
+                  </span>
+                ))}
+              </span>
+            )}
+            <span className="font-mono-num text-[11px] text-[#D4D4D8]">{totalCount}</span>
+          </span>
+        )}
+      </motion.button>
+    </div>
+  );
+}
+
+/** Crisp Sculpted Reaction Counter Pill (Used on Chat Messages with Spark Burst!) */
 export function TelegramReactionPill({
   reactionKey,
   count,
@@ -192,22 +543,33 @@ export function TelegramReactionPill({
   onToggle: () => void;
 }) {
   const def = resolveReaction(reactionKey);
+  const [bursts, setBursts] = useState<BurstEvent[]>([]);
+
+  function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!active) {
+      const uid = Date.now() + Math.random();
+      setBursts(prev => [...prev.slice(-2), { uid, reactionId: def.id }]);
+      window.setTimeout(() => setBursts(prev => prev.filter(x => x.uid !== uid)), 650);
+    }
+    onToggle();
+  }
 
   return (
-    <button
+    <motion.button
       type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      className={`ps-1.5 pe-2.5 py-0.5 rounded-full text-xs flex items-center gap-1.5 transition-colors cursor-pointer select-none ${
+      whileHover={{ scale: 1.08, y: -1 }}
+      whileTap={{ scale: 0.9 }}
+      onClick={handleClick}
+      className={`relative ps-1.5 pe-2.5 py-0.5 rounded-full text-xs flex items-center gap-1.5 transition-colors cursor-pointer select-none ${
         active
           ? 'bg-white/[0.16] border border-white/[0.26] text-white'
           : 'bg-[#131318] border border-white/[0.08] text-[#A1A1AA] hover:border-white/[0.18]'
       }`}
     >
+      <ReactionBurstEffect bursts={bursts} />
       <span className="flex items-center justify-center">{def.renderIcon(15)}</span>
       <span className="text-[11px] font-mono-num font-semibold">{count}</span>
-    </button>
+    </motion.button>
   );
 }

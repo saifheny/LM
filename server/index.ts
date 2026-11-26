@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import multer from 'multer';
 import { v4 as uuid } from 'uuid';
-import { GoogleGenAI } from '@google/genai';
 
 import { db, initDatabase, mapUserRow, loadProviderConfig, saveProviderConfig, UPLOADS_DIR } from './db.ts';
 import { liveEngine } from './liveEngine.ts';
@@ -130,17 +129,34 @@ app.post('/api/translate', async (req, res) => {
     return res.json({ ok: true, translated: SEED_TRANSLATIONS[clean][lang], targetLang: lang });
   }
 
-  // 2. If Gemini API key is configured, translate natively with Gemini 3.5 Flash-Lite
+  // 2. If Gemini API key is configured, translate natively with sub-second Gemini 2.5 Flash
   const cfg = loadProviderConfig();
   if (cfg.geminiApiKey) {
     try {
-      const ai = new GoogleGenAI({ apiKey: cfg.geminiApiKey });
-      const out = await ai.interactions.create({
-        model: 'gemini-3.5-flash-lite',
-        input: `Translate the following message naturally into ${LANG_NAMES[lang]}. Return ONLY the translated text without quotes or notes:\n\n${clean}`,
-      });
-      if (out.output_text?.trim()) {
-        return res.json({ ok: true, translated: out.output_text.trim(), targetLang: lang });
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.geminiApiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(7000),
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: `Translate the following message naturally into ${LANG_NAMES[lang]}. Return ONLY the translated text without quotes or notes:\n\n${clean}`,
+                  },
+                ],
+              },
+            ],
+          }),
+        }
+      );
+      if (resp.ok) {
+        const data = (await resp.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+        const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+        if (text) return res.json({ ok: true, translated: text, targetLang: lang });
       }
     } catch {
       // fall through to public open translation API
@@ -173,6 +189,134 @@ app.post('/api/translate', async (req, res) => {
     tr: `[TR Çeviri]: ${clean}`,
   };
   return res.json({ ok: true, translated: fallbackLabels[lang] || clean, targetLang: lang });
+});
+
+// ============================================================
+// REAL VOICE-TO-TEXT TRANSCRIPTION (Gemini Multimodal Audio / Whisper)
+// ============================================================
+function detectAudioMime(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.wav') return 'audio/wav';
+  if (ext === '.mp4' || ext === '.m4a') return 'audio/mp4';
+  if (ext === '.ogg' || ext === '.oga') return 'audio/ogg';
+  if (ext === '.mp3') return 'audio/mpeg';
+  return 'audio/webm';
+}
+
+app.post('/api/transcribe', async (req, res) => {
+  const { audioUrl, table, recordId } = req.body as {
+    audioUrl?: string;
+    table?: 'messages' | 'post_comments' | 'video_comments';
+    recordId?: string;
+  };
+
+  if (!audioUrl || !audioUrl.startsWith('/uploads/')) {
+    return res.status(400).json({ ok: false, error: 'رابط الملف الصوتي غير صالح.' });
+  }
+
+  const rel = audioUrl.replace(/^\/uploads\//, '');
+  const resolved = path.resolve(UPLOADS_DIR, rel);
+  if (!resolved.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(resolved)) {
+    return res.status(404).json({ ok: false, error: 'الملف الصوتي غير موجود.' });
+  }
+
+  const cfg = loadProviderConfig();
+  const audioBuffer = fs.readFileSync(resolved);
+  const mimeType = detectAudioMime(resolved);
+  let transcript = '';
+  let modelUsed = '';
+
+  // 1. Primary: Google Gemini multimodal native audio transcription (Arabic + English verbatim)
+  if (cfg.geminiApiKey) {
+    const base64 = audioBuffer.toString('base64');
+    const modelsToTry = ['gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite'];
+    for (const model of modelsToTry) {
+      try {
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.geminiApiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(18000),
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { inlineData: { mimeType, data: base64 } },
+                    {
+                      text: 'استمع إلى التسجيل الصوتي واكتب الكلام المنطوق فيه بدقة وحرفية بنفس اللغة المنطوقة فقط بدون أي مقدمات أو شروحات. إذا لم يوجد كلام واضح في الصوت فاكتب: (لم يتم رصد كلام واضح في التسجيل).',
+                    },
+                  ],
+                },
+              ],
+            }),
+          }
+        );
+        if (resp.ok) {
+          const data = (await resp.json()) as {
+            candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          };
+          const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+          if (out) {
+            transcript = out;
+            modelUsed = model;
+            break;
+          }
+        }
+      } catch {
+        // try next model
+      }
+    }
+  }
+
+  // 2. Fallback: OpenAI or Groq Whisper
+  if (!transcript && (cfg.openaiApiKey || cfg.groqApiKey)) {
+    const useGroq = !cfg.openaiApiKey && Boolean(cfg.groqApiKey);
+    const endpoint = useGroq
+      ? 'https://api.groq.com/openai/v1/audio/transcriptions'
+      : 'https://api.openai.com/v1/audio/transcriptions';
+    const apiKey = useGroq ? cfg.groqApiKey : cfg.openaiApiKey;
+    const whisperModel = useGroq ? 'whisper-large-v3-turbo' : 'whisper-1';
+    try {
+      const form = new FormData();
+      form.append('file', new Blob([audioBuffer], { type: mimeType }), path.basename(resolved));
+      form.append('model', whisperModel);
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: AbortSignal.timeout(18000),
+      });
+      if (resp.ok) {
+        const d = (await resp.json()) as { text?: string };
+        if (d.text?.trim()) {
+          transcript = d.text.trim();
+          modelUsed = whisperModel;
+        }
+      }
+    } catch {
+      // handled below
+    }
+  }
+
+  if (!transcript) {
+    return res.status(503).json({
+      ok: false,
+      error: 'تعذر تحويل الصوت إلى نص الآن. تأكد من إضافة مفتاح Gemini أو OpenAI أو Groq في الإعدادات.',
+    });
+  }
+
+  // Persist real transcript to SQLite so future clicks are instantaneous
+  if (recordId && (table === 'messages' || table === 'post_comments' || table === 'video_comments')) {
+    try {
+      db.prepare(`UPDATE ${table} SET transcript = ? WHERE id = ?`).run(transcript, recordId);
+    } catch {
+      // ignore if record not found
+    }
+  }
+
+  return res.json({ ok: true, transcript, modelUsed });
 });
 
 // ============================================================
@@ -295,6 +439,20 @@ app.get('/api/posts', (req, res) => {
   const voteMap = new Map<string, -1 | 0 | 1>();
   const pollVoteMap = new Map<string, string>();
   const likedSet = new Set<string>();
+  const reactionsByPost = new Map<string, Record<string, number>>();
+  const myReactionMap = new Map<string, string>();
+
+  const allRx = db.prepare('SELECT post_id, user_id, reaction FROM post_reactions').all() as Array<{
+    post_id: string;
+    user_id: string;
+    reaction: string;
+  }>;
+  for (const rx of allRx) {
+    const bucket = reactionsByPost.get(rx.post_id) || {};
+    bucket[rx.reaction] = (bucket[rx.reaction] || 0) + 1;
+    reactionsByPost.set(rx.post_id, bucket);
+    if (viewerId && rx.user_id === viewerId) myReactionMap.set(rx.post_id, rx.reaction);
+  }
 
   if (viewerId) {
     const vRows = db.prepare('SELECT post_id, vote FROM post_votes WHERE user_id = ?').all(viewerId) as Array<{ post_id: string; vote: number }>;
@@ -339,10 +497,12 @@ app.get('/api/posts', (req, res) => {
       poll,
       score: Number(r.score ?? r.likes_count ?? 0),
       myVote: voteMap.get(String(r.id)) || 0,
+      reactions: reactionsByPost.get(String(r.id)) || {},
+      myReaction: myReactionMap.get(String(r.id)) || null,
       likesCount: Number(r.likes_count || 0),
       commentsCount: Number(r.comments_count || 0),
       sharesCount: Number(r.shares_count || 0),
-      likedByMe: likedSet.has(String(r.id)),
+      likedByMe: likedSet.has(String(r.id)) || myReactionMap.has(String(r.id)),
       createdAt: r.created_at,
     };
   });
@@ -420,6 +580,55 @@ app.post('/api/posts/:id/vote', (req, res) => {
   res.json({ ok: true, score: Number(updated?.score || 0), myVote });
 });
 
+app.post('/api/posts/:id/react', (req, res) => {
+  const { userId, reaction, forceSet } = req.body as { userId: string; reaction: string; forceSet?: boolean };
+  const postId = req.params.id;
+  if (!userId || !reaction) return res.status(400).json({ ok: false });
+
+  const existing = db.prepare('SELECT reaction FROM post_reactions WHERE post_id = ? AND user_id = ?').get(postId, userId) as
+    | { reaction: string }
+    | undefined;
+
+  let myReaction: string | null = reaction;
+  let scoreDelta = 0;
+
+  if (existing && existing.reaction === reaction && !forceSet) {
+    db.prepare('DELETE FROM post_reactions WHERE post_id = ? AND user_id = ?').run(postId, userId);
+    myReaction = null;
+    scoreDelta = -1;
+  } else if (existing) {
+    db.prepare('UPDATE post_reactions SET reaction = ? WHERE post_id = ? AND user_id = ?').run(reaction, postId, userId);
+    myReaction = reaction;
+  } else {
+    db.prepare('INSERT INTO post_reactions (post_id, user_id, reaction) VALUES (?, ?, ?)').run(postId, userId, reaction);
+    myReaction = reaction;
+    scoreDelta = 1;
+  }
+
+  if (scoreDelta !== 0) {
+    db.prepare('UPDATE posts SET score = MAX(0, score + ?), likes_count = MAX(0, likes_count + ?) WHERE id = ?').run(
+      scoreDelta,
+      scoreDelta,
+      postId
+    );
+  }
+
+  const rxRows = db.prepare('SELECT reaction FROM post_reactions WHERE post_id = ?').all(postId) as Array<{ reaction: string }>;
+  const reactions: Record<string, number> = {};
+  for (const r of rxRows) reactions[r.reaction] = (reactions[r.reaction] || 0) + 1;
+  const postRow = db.prepare('SELECT score, likes_count FROM posts WHERE id = ?').get(postId) as
+    | { score: number; likes_count: number }
+    | undefined;
+
+  res.json({
+    ok: true,
+    reactions,
+    myReaction,
+    score: Number(postRow?.score || 0),
+    likesCount: Number(postRow?.likes_count || 0),
+  });
+});
+
 app.post('/api/posts/:id/poll-vote', (req, res) => {
   const { userId, optionId } = req.body as { userId: string; optionId: string };
   const postId = req.params.id;
@@ -495,16 +704,18 @@ app.post('/api/posts/:id/comments', async (req, res) => {
   if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف ردًا.' });
 
   const id = `pc_${uuid().slice(0, 8)}`;
+  const cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
   db.prepare(`
     INSERT INTO post_comments (id, post_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, req.params.id, userId, parentId || null, (content || '').trim(),
-    audioUrl || null, Number(audioDurationSec || 5), transcript || (audioUrl ? 'نص الرسالة الصوتية' : null), 'الآن'
+    audioUrl || null, Number(audioDurationSec || 5), cleanTranscript, 'الآن'
   );
   db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
 
   // Summon LM AI directly inside community comments when invoked or tagged with @LM AI
+  let aiReply = null;
   const shouldCallAi = Boolean(invokeAi) || (content && /@(lm\s*ai|ai)/i.test(content));
   if (shouldCallAi && content?.trim()) {
     const postRow = db.prepare('SELECT content FROM posts WHERE id = ?').get(req.params.id) as { content?: string } | undefined;
@@ -522,9 +733,10 @@ app.post('/api/posts/:id/comments', async (req, res) => {
       VALUES (?, ?, 'lm_ai', ?, ?, 'الآن')
     `).run(aiId, req.params.id, id, aiOut.reply);
     db.prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
+    aiReply = { id: aiId, ...aiOut };
   }
 
-  res.json({ ok: true, id });
+  res.json({ ok: true, id, aiReply });
 });
 
 // ============================================================
@@ -664,12 +876,13 @@ app.post('/api/videos/:id/comments', (req, res) => {
   };
   if (!content?.trim() && !audioUrl) return res.status(400).json({ ok: false, error: 'أضف تعليقًا.' });
   const id = `vc_${uuid().slice(0, 8)}`;
+  const cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
   db.prepare(`
     INSERT INTO video_comments (id, video_id, user_id, parent_id, content, audio_url, audio_duration_sec, transcript, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, req.params.id, userId, parentId || null, (content || '').trim(),
-    audioUrl || null, Number(audioDurationSec || 5), transcript || (audioUrl ? 'نص الرسالة الصوتية' : null), 'الآن'
+    audioUrl || null, Number(audioDurationSec || 5), cleanTranscript, 'الآن'
   );
   db.prepare('UPDATE short_videos SET comments_count = comments_count + 1 WHERE id = ?').run(req.params.id);
   res.json({ ok: true, id });
@@ -714,6 +927,8 @@ app.get('/api/conversations', (_req, res) => {
       unreadCount: Number(c.unread_count || 0),
       isEncrypted: Boolean(c.is_encrypted),
       memberCount: Number(c.member_count),
+      aiEnabled: Boolean(c.ai_enabled),
+      creatorId: String(c.creator_id || 'u_youssef'),
       lastMessage: last ? String(last.content) : '',
       lastMessageAt: last ? String(last.created_at) : 'الآن',
     };
@@ -722,19 +937,51 @@ app.get('/api/conversations', (_req, res) => {
 });
 
 app.post('/api/conversations', (req, res) => {
-  const { title, type, description } = req.body as {
+  const { title, type, description, creatorId, aiEnabled } = req.body as {
     title: string;
     type?: 'dm' | 'group' | 'community';
     description?: string;
+    creatorId?: string;
+    aiEnabled?: boolean;
   };
   if (!title?.trim()) return res.status(400).json({ ok: false, error: 'اسم المحادثة مطلوب.' });
   const id = `c_${uuid().slice(0, 8)}`;
-  const folder = type === 'community' ? 'channels' : type === 'group' ? 'groups' : 'personal';
+  const convType = type || 'group';
+  const folder = convType === 'community' ? 'channels' : convType === 'group' ? 'groups' : 'personal';
   db.prepare(`
-    INSERT INTO conversations (id, type, folder, title, description, avatar_color, is_encrypted, member_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, type || 'group', folder, title.trim(), description || 'مساحة جديدة', '#27272A', 1, type === 'community' ? 120 : 5);
+    INSERT INTO conversations (id, type, folder, title, description, avatar_color, is_encrypted, member_count, ai_enabled, creator_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    convType,
+    folder,
+    title.trim(),
+    description || 'مساحة جديدة',
+    '#27272A',
+    1,
+    convType === 'community' ? 120 : 5,
+    convType !== 'dm' && aiEnabled ? 1 : 0,
+    creatorId || 'u_youssef'
+  );
   res.json({ ok: true, id });
+});
+
+app.post('/api/conversations/:id/ai-mode', (req, res) => {
+  const { userId, aiEnabled } = req.body as { userId?: string; aiEnabled?: boolean };
+  const conv = db.prepare('SELECT id, type, creator_id FROM conversations WHERE id = ?').get(req.params.id) as
+    | { id: string; type: string; creator_id?: string }
+    | undefined;
+  if (!conv) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
+  if (conv.type === 'dm') {
+    return res.status(403).json({ ok: false, error: 'وضع العضو التلقائي متاح فقط للمجموعات والمجتمعات.' });
+  }
+  if (userId && conv.creator_id && conv.creator_id !== userId) {
+    return res.status(403).json({ ok: false, error: 'منشئ المجموعة فقط يمكنه تفعيل أو تعطيل AI كعضو أساسي.' });
+  }
+  const nextVal = aiEnabled ? 1 : 0;
+  db.prepare('UPDATE conversations SET ai_enabled = ? WHERE id = ?').run(nextVal, req.params.id);
+  broadcast('chat:message', { conversationId: req.params.id, aiEnabled: Boolean(nextVal) });
+  res.json({ ok: true, aiEnabled: Boolean(nextVal) });
 });
 
 app.get('/api/conversations/:id/messages', (req, res) => {
@@ -800,6 +1047,7 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const nowStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
   const msgId = `m_${uuid().slice(0, 8)}`;
 
+  const cleanTranscript = transcript && transcript.trim() ? transcript.trim() : null;
   db.prepare(`
     INSERT INTO messages (
       id, conversation_id, sender_id, content, msg_type, media_url, transcript,
@@ -807,7 +1055,7 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     msgId, req.params.id, senderId, (content || '').trim(), msgType || 'text', mediaUrl || null,
-    transcript || (msgType === 'audio' ? 'نص الرسالة الصوتية' : null),
+    cleanTranscript,
     isSpoiler ? 1 : 0,
     replyToId || null, replySender || null, replyText || null, nowStr
   );
@@ -815,19 +1063,57 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   broadcast('chat:message', { conversationId: req.params.id, msgId });
 
   let aiReply = null;
-  if (invokeAi) {
+  const shouldInvokeAi = Boolean(invokeAi) || /@(lm\s*ai|ai)\b/i.test(content || '');
+  if (shouldInvokeAi) {
+    const conv = db.prepare('SELECT type, ai_enabled FROM conversations WHERE id = ?').get(req.params.id) as
+      | { type?: string; ai_enabled?: number }
+      | undefined;
+
+    let groupHistoryContext: string | undefined;
+    if (conv && conv.type !== 'dm' && Number(conv.ai_enabled) === 1) {
+      const recent = db.prepare(`
+        SELECT m.sender_id, m.content, u.display_name
+        FROM messages m LEFT JOIN users u ON m.sender_id = u.id
+        WHERE m.conversation_id = ? AND m.id != ? AND m.msg_type IN ('text', 'ai_reply')
+        ORDER BY m.rowid DESC LIMIT 14
+      `).all(req.params.id, msgId) as Array<{ sender_id: string; content: string; display_name?: string }>;
+      if (recent.length > 0) {
+        groupHistoryContext = recent
+          .reverse()
+          .map(r => `${r.sender_id === 'lm_ai' ? 'LM AI' : r.display_name || 'عضو'}: ${r.content}`)
+          .join('\n');
+      }
+    }
+
+    const cleanPrompt = (content || '')
+      .replace(/^(\/ai|-ai|\/|-)\s*/i, '')
+      .replace(/@(lm\s*ai|ai)/gi, '')
+      .trim() || 'مرحبًا، كيف يمكنك مساعدتي؟';
+
     const aiResult = await runLmAi({
       userId: senderId,
-      prompt: content.replace(/@LM\s*AI/gi, '').trim() || 'لخص المحتوى.',
+      prompt: cleanPrompt,
       source: 'chat',
-      explicitUserConsent: Boolean(sharedSnippet),
-      sharedContext: sharedSnippet,
+      explicitUserConsent: Boolean(sharedSnippet) || Boolean(groupHistoryContext),
+      sharedContext: sharedSnippet || undefined,
+      groupHistoryContext,
     });
     const aiMsgId = `m_${uuid().slice(0, 8)}`;
     db.prepare(`
       INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, reply_to_id, reply_sender, reply_text, ai_consent_ref, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(aiMsgId, req.params.id, 'lm_ai', aiResult.reply, 'ai_reply', msgId, 'LM AI', sharedSnippet ? sharedSnippet.slice(0, 50) : null, aiResult.securityAuditId, nowStr);
+    `).run(
+      aiMsgId,
+      req.params.id,
+      'lm_ai',
+      aiResult.reply,
+      'ai_reply',
+      msgId,
+      'LM AI',
+      sharedSnippet ? sharedSnippet.slice(0, 50) : null,
+      aiResult.securityAuditId,
+      nowStr
+    );
     broadcast('chat:message', { conversationId: req.params.id, msgId: aiMsgId });
     aiReply = aiResult;
   }
@@ -1013,6 +1299,80 @@ function prettifyModelId(raw: string): string {
     .join(' ');
 }
 
+const NON_CHAT_MODEL_RX =
+  /image|imagen|banana|tts|lyria|robotics|computer-use|omni|transcribe|embed|whisper|dall-e|moderation|audio|realtime|sora|veo|aqa|bison|gecko|learnlm|vision-only|deep-research/i;
+
+function scoreTextModelPriority(providerId: string, id: string): number {
+  const low = id.toLowerCase();
+  if (providerId === 'gemini') {
+    const exactRank: Record<string, number> = {
+      'gemini-2.5-flash': 1010,
+      'gemini-3-flash-preview': 1005,
+      'gemini-3.8-flash': 1000,
+      'gemini-3.5-flash-lite': 990,
+      'gemini-4-neon': 980,
+      'gemini-4-hydrogen': 970,
+      'gemini-4-carbon': 960,
+      'gemini-4-argon': 950,
+      'gemini-3.7-flash': 940,
+      'gemini-3.6-flash': 930,
+      'gemini-3.5-flash': 920,
+      'gemini-3.1-pro-preview': 900,
+      'gemini-3-pro-preview': 890,
+      'gemini-2.5-pro': 860,
+      'gemini-2.5-flash-lite': 840,
+      'gemma-4-31b-it': 810,
+      'gemma-4-26b-a4b-it': 800,
+      'gemma-3-27b-it': 780,
+    };
+    if (exactRank[low] !== undefined) return exactRank[low];
+    if (low.startsWith('gemini-4')) return 945;
+    if (low.startsWith('gemini-3.')) return 870;
+    if (low.startsWith('gemini-2.5')) return 830;
+    if (low.startsWith('gemma-4')) return 790;
+    if (low.startsWith('gemini-2.0')) return 600;
+    if (low.startsWith('gemini-1.5')) return 400;
+    return 500;
+  }
+  if (providerId === 'openai') {
+    if (/^gpt-5\b/.test(low)) return 1000;
+    if (/^gpt-4\.1\b/.test(low)) return 960;
+    if (/^o4\b/.test(low)) return 940;
+    if (/^o3\b/.test(low)) return 920;
+    if (/^gpt-4o\b/.test(low)) return 900;
+    if (/^o1\b/.test(low)) return 820;
+    return 500;
+  }
+  if (providerId === 'anthropic') {
+    if (low.includes('opus-4')) return 1000;
+    if (low.includes('sonnet-4')) return 980;
+    if (low.includes('3-7-sonnet')) return 940;
+    if (low.includes('3-5-sonnet')) return 900;
+    if (low.includes('3-5-haiku')) return 880;
+    return 500;
+  }
+  if (providerId === 'deepseek') {
+    if (low.includes('reasoner') || low.includes('r1')) return 1000;
+    if (low.includes('chat') || low.includes('v3')) return 960;
+    return 500;
+  }
+  if (providerId === 'xai') {
+    if (low.includes('grok-3')) return 1000;
+    if (low.includes('grok-2')) return 900;
+    return 500;
+  }
+  return 500;
+}
+
+function tagForModel(id: string): string | undefined {
+  const low = id.toLowerCase();
+  if (/3\.8-flash|gpt-5\b|opus-4|grok-3\b|reasoner|sonar-pro/i.test(low)) return 'Latest';
+  if (/pro|large|max|4-neon|4-hydrogen/i.test(low)) return 'Flagship';
+  if (/flash|mini|lite|haiku|fast|turbo|instant/i.test(low)) return 'Fast';
+  if (/o3|o4|r1|thinking/i.test(low)) return 'Reasoning';
+  return undefined;
+}
+
 app.get('/api/providers/:providerId/models', async (req, res) => {
   const providerId = String(req.params.providerId || '').toLowerCase();
   const force = req.query.refresh === '1';
@@ -1033,22 +1393,33 @@ app.get('/api/providers/:providerId/models', async (req, res) => {
       if (r.ok) {
         const d = (await r.json()) as { models?: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }> };
         models = (d.models || [])
-          .filter(m => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'))
+          .filter(m => {
+            const id = m.name.replace(/^models\//, '');
+            if (NON_CHAT_MODEL_RX.test(id)) return false;
+            if (!/^(gemini|gemma)/i.test(id)) return false;
+            if (/-(001|002|exp|latest|preview-\d{2}-\d{2})$/i.test(id) && !/3\.1-pro-preview|3-pro-preview|3-flash-preview/i.test(id)) return false;
+            return !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent');
+          })
           .map(m => {
             const id = m.name.replace(/^models\//, '');
-            return { id, label: m.displayName || prettifyModelId(id) };
-          });
+            return { id, label: m.displayName || prettifyModelId(id), tag: tagForModel(id) };
+          })
+          .sort((a, b) => scoreTextModelPriority('gemini', b.id) - scoreTextModelPriority('gemini', a.id))
+          .slice(0, 18);
       }
     } else if (providerId === 'openrouter') {
-      // OpenRouter public catalog returns ALL 250+ free & paid live models even without auth!
       const r = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(5500) });
       if (r.ok) {
-        const d = (await r.json()) as { data?: Array<{ id: string; name?: string; pricing?: { prompt?: string } }> };
-        models = (d.data || []).slice(0, 120).map(m => ({
-          id: m.id,
-          label: (m.name || prettifyModelId(m.id)).replace(/^[^:]+:\s*/, ''),
-          tag: m.pricing?.prompt === '0' ? 'Free' : 'Pro',
-        }));
+        const d = (await r.json()) as { data?: Array<{ id: string; name?: string; created?: number; pricing?: { prompt?: string } }> };
+        models = (d.data || [])
+          .filter(m => m.id && !NON_CHAT_MODEL_RX.test(m.id))
+          .sort((a, b) => Number(b.created || 0) - Number(a.created || 0))
+          .slice(0, 60)
+          .map(m => ({
+            id: m.id,
+            label: (m.name || prettifyModelId(m.id)).replace(/^[^:]+:\s*/, ''),
+            tag: m.pricing?.prompt === '0' ? 'Free' : tagForModel(m.id),
+          }));
       }
     } else if (providerId === 'anthropic' && cfg.anthropicApiKey) {
       const r = await fetch('https://api.anthropic.com/v1/models', {
@@ -1057,7 +1428,11 @@ app.get('/api/providers/:providerId/models', async (req, res) => {
       });
       if (r.ok) {
         const d = (await r.json()) as { data?: Array<{ id: string; display_name?: string }> };
-        models = (d.data || []).map(m => ({ id: m.id, label: m.display_name || prettifyModelId(m.id) }));
+        models = (d.data || [])
+          .filter(m => !NON_CHAT_MODEL_RX.test(m.id))
+          .map(m => ({ id: m.id, label: m.display_name || prettifyModelId(m.id), tag: tagForModel(m.id) }))
+          .sort((a, b) => scoreTextModelPriority('anthropic', b.id) - scoreTextModelPriority('anthropic', a.id))
+          .slice(0, 20);
       }
     } else if (providerId === 'ollama' && cfg.ollamaUrl) {
       const r = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/tags`, { signal: AbortSignal.timeout(3000) });
@@ -1072,7 +1447,10 @@ app.get('/api/providers/:providerId/models', async (req, res) => {
       });
       if (r.ok) {
         const d = (await r.json()) as { models?: Array<{ name: string }> };
-        models = (d.models || []).map(m => ({ id: m.name, label: prettifyModelId(m.name) }));
+        models = (d.models || [])
+          .filter(m => !NON_CHAT_MODEL_RX.test(m.name))
+          .map(m => ({ id: m.name, label: prettifyModelId(m.name), tag: tagForModel(m.name) }))
+          .slice(0, 15);
       }
     } else {
       const compatList: Record<string, { url: string; key: string }> = {
@@ -1090,12 +1468,17 @@ app.get('/api/providers/:providerId/models', async (req, res) => {
           signal: AbortSignal.timeout(5000),
         });
         if (r.ok) {
-          const d = (await r.json()) as { data?: Array<{ id: string }> } | Array<{ id: string }>;
+          const d = (await r.json()) as { data?: Array<{ id: string; created?: number }> } | Array<{ id: string; created?: number }>;
           const arr = Array.isArray(d) ? d : (d.data || []);
           models = arr
-            .filter(m => m.id && !/embed|whisper|tts|dall-e|moderation|audio/i.test(m.id))
-            .slice(0, 100)
-            .map(m => ({ id: m.id, label: prettifyModelId(m.id) }));
+            .filter(m => m.id && !NON_CHAT_MODEL_RX.test(m.id) && !/ft:|davinci|babbage|curie|ada/i.test(m.id))
+            .sort((a, b) => {
+              const diff = scoreTextModelPriority(providerId, b.id) - scoreTextModelPriority(providerId, a.id);
+              if (diff !== 0) return diff;
+              return Number(b.created || 0) - Number(a.created || 0);
+            })
+            .slice(0, 24)
+            .map(m => ({ id: m.id, label: prettifyModelId(m.id), tag: tagForModel(m.id) }));
         }
       }
     }
@@ -1189,9 +1572,19 @@ app.post('/api/providers/test', async (req, res) => {
     }
     if (target === 'gemini') {
       if (!cfg.geminiApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح Gemini API أولًا.' });
-      const ai = new GoogleGenAI({ apiKey: cfg.geminiApiKey });
-      const out = await ai.interactions.create({ model: 'gemini-3.5-flash-lite', input: 'Reply OK' });
-      return res.json({ ok: true, latencyMs: Date.now() - start, detail: `Gemini متصل (${(out.output_text || 'OK').slice(0, 20)})` });
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.geminiApiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply OK' }] }] }),
+        }
+      );
+      const d = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } };
+      if (!r.ok) return res.json({ ok: false, latencyMs: Date.now() - start, detail: d.error?.message || `HTTP ${r.status}` });
+      const txt = (d.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim() || 'OK';
+      return res.json({ ok: true, latencyMs: Date.now() - start, detail: `Gemini متصل (${txt.slice(0, 20)})` });
     }
     if (target === 'openai') {
       if (!cfg.openaiApiKey) return res.json({ ok: false, detail: 'أدخل مفتاح OpenAI API أولًا.' });
