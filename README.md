@@ -1,18 +1,27 @@
-# LM — 2026 Spatial Super App Platform (V3 Edition)
+---
+title: LM
+emoji: 🌐
+colorFrom: purple
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
 
-**LM** is an open-source, locally runnable 2026 Spatial Super App featuring **Dual Liquid-Glass Visual Systems** (`Cosmos Glass 2026` Dark & `Pearl Vision 2026` Daylight), a **Floating Magnetic Spatial Bottom Dock**, **Three.js 3D Sentient Companions & Artifacts**, **TikTok Voice-Reply Comments**, and **Circular Video & Spectrum Voice Messaging**.
+# LM — Unified Social, Pulse, Live, Chat & AI Platform
 
-## Key 2026 Capabilities
+**LM** is an integrated real-time web & PWA super app built with **React 19, Vite 6, Tailwind CSS v4, Three.js WebGL, Express, WebSockets, WebRTC, and native Node 24 SQLite**.
 
-- **Floating Spatial Bottom Dock (`AppShell.tsx`):** Spring-physics sliding glass capsule (`framer-motion`), bespoke multi-layer duotone gradient icons (`Icons2026.tsx`), and 1-tap switching between **Cosmos Dark** and **Pearl Vision Light**.
-- **Interactive Three.js 3D WebGL (`Spatial3D.tsx`):**
-  - **3D Sentient AI Companion:** Cursor-tracking, blinking, levitating 3D holo-bot reactive to live voice input & spoken TTS output.
-  - **Drag-to-Rotate 3D Prestige Artifacts:** PBR 24K Gold, Sapphire, Emerald, and Platinum octahedral gems with orbital crown halos in VIP.
-- **TikTok 2026 Reels & Voice Replies (`ShortVideosView.tsx`):** Full-screen HD vertical Swiper reels, multi-reaction radial hover picker (`❤️ 🔥 😂 🤯 👏`), `2x` fast-forward speed toggle, nested comment threads, and **playable/recordable Voice Comments & Voice Replies** (`VoiceStudio2026.tsx`).
-- **Next-Gen Messaging (`ChatView.tsx`):** Live 24-band microphone frequency spectrum recorder, `1x / 1.5x / 2x` voice speed + instant `أ ب` voice-to-text transcripts, **Circular Floating Video Note Bubbles**, send particle effects (`🔥 🎉 ❤️ ⚡`), and `@LM AI` privacy consent.
-- **Markets & API Hub:** Interactive **TradingView `lightweight-charts`** candlesticks + Multi-Provider AI Gateway (**Google `@google/genai`, OpenAI, Claude, OpenRouter, Groq, Ollama**).
+## Core Features
 
-## Run Locally ($0 Cost)
+- **Interactive 3D Earth Landing Page:** GPU-accelerated Three.js WebGL dotted planet powered by Natural Earth 1:110m geography (`world-atlas`), quick 3-word registration, and instant neutral guest mode.
+- **Community Feed:** Stories, multi-photo posts, polls, licensed background music tracks, horizontally swipeable expressive reactions, reposts & quote reposts, threaded comments with voice notes, inline translation, and proportional anti-brigading reporting.
+- **Pulse Short Videos:** Full-screen vertical swipe feed, long-press `2x` speed, voice & AI comments, unique per-user share & like accounting, and mobile-optimized adaptive HUD.
+- **Live Broadcasts:** Portrait (`9:16`) and rounded Landscape (`16:9`) rooms, WebRTC live camera streaming, full-screen floating TikTok-style Go Live studio, real-time scrollable chat, and tap-to-like energy gauge.
+- **Real-Time Chat & Voice Calls:** Direct messages, groups & communities, circular video notes, instant voice notes with AI transcription, 1-on-1 & room WebRTC voice calls, and `@LM AI` assistant.
+- **LM AI Multi-Provider Hub:** Supports Google Gemini, OpenAI, Anthropic, DeepSeek, Groq, OpenRouter, Ollama, and more via `GEMINI_API_KEY` env secret or the in-app **API Hub**.
+
+## Run Locally
 
 ```bash
 npm install
@@ -20,4 +29,10 @@ npm run build
 npm start
 ```
 
-Open **`http://localhost:4000`**.
+Open `http://localhost:4000`.
+
+## Deploy Free on Hugging Face Spaces (Docker SDK)
+
+1. Create a new **Space** on Hugging Face with **SDK: Docker (Blank)**.
+2. Connect this repository (or sync via GitHub Actions using `HF_TOKEN` & `HF_SPACE_ID` secrets).
+3. *(Optional)* Add `GEMINI_API_KEY` and `SESSION_SECRET` under **Space Settings → Variables and secrets** to enable LM AI.

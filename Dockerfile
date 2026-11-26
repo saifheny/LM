@@ -1,27 +1,32 @@
-# LM Super App — Phase 1 Zero-Cost Production Container (Node 24 + native node:sqlite)
+# LM Super App — Production Docker Container (Hugging Face Spaces + Render + Self-Hosted)
+# Node 24 Alpine with native node:sqlite, non-root UID 1000, port 7860
 FROM node:24-alpine
 
 WORKDIR /app
 
-# Install production + build deps cleanly
+# Install dependencies cleanly first (layer cached across code updates)
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-# Copy application source
+# Copy application source & essential seed media (uploads/seed & uploads/music)
 COPY . .
 
-# Build frontend production bundle (Vite)
+# Build Vite production bundle
 RUN npm run build
 
-# Ensure runtime storage directories exist
-RUN mkdir -p /app/data /app/uploads
+# Ensure runtime storage directories exist and are writable by Hugging Face non-root UID 1000 (`node` user)
+RUN mkdir -p /app/data /app/uploads/seed /app/uploads/music \
+ && chown -R 1000:1000 /app \
+ && chmod -R 775 /app/data /app/uploads
+
+USER 1000
 
 ENV NODE_ENV=production
-ENV PORT=4000
+ENV PORT=7860
 
-EXPOSE 4000
+EXPOSE 7860
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:${PORT}/api/health || exit 1
 
 CMD ["npm", "start"]

@@ -101,19 +101,28 @@ export function extractRequestToken(req: Request): string | null {
 
 export function setSessionCookie(res: Response, token: string): void {
   const isProd = process.env.NODE_ENV === 'production';
+  const isHfSpace = Boolean(process.env.SPACE_ID);
   const attrs = [
     `lm_session=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    isHfSpace ? 'SameSite=None' : 'SameSite=Lax',
     `Max-Age=${TOKEN_TTL_SEC}`,
-    ...(isProd ? ['Secure'] : []),
+    ...(isProd || isHfSpace ? ['Secure'] : []),
   ];
   res.setHeader('Set-Cookie', attrs.join('; '));
 }
 
 export function clearSessionCookie(res: Response): void {
-  res.setHeader('Set-Cookie', 'lm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  const isHfSpace = Boolean(process.env.SPACE_ID);
+  const attrs = [
+    'lm_session=',
+    'Path=/',
+    'HttpOnly',
+    isHfSpace ? 'SameSite=None; Secure' : 'SameSite=Lax',
+    'Max-Age=0',
+  ];
+  res.setHeader('Set-Cookie', attrs.join('; '));
 }
 
 /**

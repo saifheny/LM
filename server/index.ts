@@ -54,7 +54,12 @@ app.use(
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // Allow embedding cleanly inside Hugging Face Spaces iframe while preventing clickjacking elsewhere
+  if (process.env.SPACE_ID) {
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://huggingface.co https://*.hf.space");
+  } else {
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  }
 
   // Lightweight zero-dependency gzip for JSON API responses (> 1 KB)
   const acceptsGzip = /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
