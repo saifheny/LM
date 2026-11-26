@@ -1,8 +1,8 @@
 ﻿<#
 .SYNOPSIS
   LM Phase 1 Zero-Cost Instant Public Link Launcher (0 EGP / $0)
-  Opens a free HTTPS + WebSocket + WebRTC tunnel via Cloudflare Quick Tunnel
-  so up to ~10 friends can test LM immediately from their phones!
+  Opens a free HTTPS + WebSocket + WebRTC tunnel instantly so friends can test LM on their phones!
+  Uses Cloudflare Tunnel if installed, or Windows built-in OpenSSH (localhost.run) with ZERO downloads!
 #>
 
 $ErrorActionPreference = "Stop"
@@ -27,20 +27,23 @@ if (-not $healthOk) {
   Start-Sleep -Seconds 3
 }
 
-# 2. Check for cloudflared (Official Free Cloudflare Tunnel — Zero account required!)
-$cf = Get-Command cloudflared -ErrorAction SilentlyContinue
-if (-not $cf) {
-  Write-Host "  [!] cloudflared is not installed yet." -ForegroundColor Yellow
-  Write-Host "      Install it for free in 1 command:" -ForegroundColor White
-  Write-Host "      winget install --id Cloudflare.cloudflared -e" -ForegroundColor Green
-  Write-Host ""
-  Write-Host "      Then re-run: npm run share" -ForegroundColor Cyan
-  exit 1
+# 2. Prefer cloudflared if installed, otherwise use zero-download Windows OpenSSH -> localhost.run!
+$rootDir = Split-Path $PSScriptRoot -Parent
+$localCf = Join-Path $rootDir "tools\cloudflared.exe"
+$cfExe = $null
+if (Test-Path $localCf) {
+  $cfExe = $localCf
+} else {
+  $sysCf = Get-Command cloudflared -ErrorAction SilentlyContinue
+  if ($sysCf) { $cfExe = $sysCf.Source }
 }
 
-Write-Host "  [2/2] Opening FREE HTTPS + WebSocket tunnel to http://127.0.0.1:$Port ..." -ForegroundColor Green
-Write-Host "        Copy the https://*.trycloudflare.com link below and send it to your friends!" -ForegroundColor Yellow
-Write-Host "        (Press Ctrl+C anytime to stop public access)" -ForegroundColor DarkGray
-Write-Host ""
-
-& cloudflared tunnel --url "http://127.0.0.1:$Port"
+if ($cfExe) {
+  Write-Host "  [2/2] Opening FREE Cloudflare HTTPS tunnel to http://127.0.0.1:$Port ..." -ForegroundColor Green
+  & $cfExe tunnel --url "http://127.0.0.1:$Port"
+} else {
+  Write-Host "  [2/2] Opening FREE instant HTTPS + WebSocket tunnel (localhost.run) to http://127.0.0.1:$Port ..." -ForegroundColor Green
+  Write-Host "        Copy the https://*.lhr.life link below and send it to your friends!" -ForegroundColor Yellow
+  Write-Host ""
+  & ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R "80:127.0.0.1:$Port" nokey@localhost.run
+}

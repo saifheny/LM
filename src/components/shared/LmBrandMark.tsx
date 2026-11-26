@@ -43,9 +43,35 @@ export function UserAvatar({
 }) {
   const [imgErr, setImgErr] = useState(false);
 
+  const isNeutralAvatar = avatarUrl === 'lm:neutral';
+
   return (
     <div style={{ width: size, height: size }} className="relative shrink-0 select-none">
-      {avatarUrl && !imgErr ? (
+      {isNeutralAvatar ? (
+        <div
+          style={{ width: size, height: size }}
+          className="rounded-full border border-white/[0.14] bg-gradient-to-b from-[#23232D] to-[#111117] flex items-center justify-center overflow-hidden shadow-inner"
+        >
+          {/* Universally Gender-Neutral Sculpted Silhouette Avatar (Zero gender markers) */}
+          <svg
+            width={Math.round(size * 0.62)}
+            height={Math.round(size * 0.62)}
+            viewBox="0 0 32 32"
+            fill="none"
+            className="text-[#D4D4DC]"
+          >
+            <circle cx="16" cy="11.5" r="5.2" fill="currentColor" fillOpacity="0.88" />
+            <path
+              d="M6.5 26.8C7.4 21.8 11.2 19 16 19C20.8 19 24.6 21.8 25.5 26.8"
+              stroke="currentColor"
+              strokeWidth="2.8"
+              strokeLinecap="round"
+              fill="currentColor"
+              fillOpacity="0.22"
+            />
+          </svg>
+        </div>
+      ) : avatarUrl && !imgErr ? (
         <img
           src={avatarUrl}
           alt={initials}

@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Lang, NavTab, NotificationItem, UserProfile } from './types';
-import { apiGet, apiPost } from './lib/api';
+import { apiGet, apiPost, setAuthToken } from './lib/api';
 import { registerWsUser, subscribeWs, subscribeWsStatus } from './lib/wsHub';
 import { LayoutProvider } from './context/LayoutContext';
 import { AppShell } from './components/layout/AppShell';
@@ -186,10 +186,21 @@ export function App() {
 
   const loadUsers = useCallback(async () => {
     try {
-      const res = await apiGet<{ ok: boolean; users: UserProfile[] }>('/api/auth/users');
+      const [res, meRes] = await Promise.all([
+        apiGet<{ ok: boolean; users: UserProfile[] }>('/api/auth/users'),
+        apiGet<{ ok: boolean; user: UserProfile | null }>('/api/auth/me').catch(() => ({ ok: true, user: null })),
+      ]);
       setUsers(res.users);
       setCurrentUser(prev => {
         if (prev) return res.users.find(u => u.id === prev.id) || prev;
+        if (meRes.user) {
+          try {
+            localStorage.setItem('lm_current_user_id', meRes.user.id);
+          } catch {
+            // ignore
+          }
+          return res.users.find(u => u.id === meRes.user!.id) || meRes.user;
+        }
         try {
           const savedId = localStorage.getItem('lm_current_user_id');
           if (savedId) {
@@ -199,7 +210,8 @@ export function App() {
         } catch {
           // ignore
         }
-        return res.users[0] || null;
+        // First-time visitors see the interactive 3D Planet Landing Page!
+        return null;
       });
     } catch {
       // retry on reconnect
@@ -369,7 +381,17 @@ export function App() {
         onMarkNotificationsRead={markNotificationsRead}
         onOpenNotification={handleOpenNotification}
         onShareApp={shareApp}
-        onLogout={() => setLoggedOut(true)}
+        onLogout={() => {
+          apiPost('/api/auth/logout', {}).catch(() => {});
+          setAuthToken(null);
+          try {
+            localStorage.removeItem('lm_current_user_id');
+          } catch {
+            // ignore
+          }
+          setCurrentUser(null);
+          setLoggedOut(true);
+        }}
       >
         <Suspense fallback={<ViewLoadingFallback />}>
           {activeTab === 'social' && (

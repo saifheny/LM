@@ -612,6 +612,75 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   res.json({ ok: true, user, token });
 });
 
+function randomAlphaNum(len: number): string {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let out = '';
+  for (let i = 0; i < len; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+// Frictionless Name-Only Registration (Strict 3-word max, NO phone/email/password required!)
+app.post('/api/auth/quick-register', authLimiter, (req, res) => {
+  const { displayName, country } = req.body as { displayName?: string; country?: CountryCode };
+  const cleanName = String(displayName || '').trim().replace(/\s+/g, ' ');
+  if (cleanName.length < 2) {
+    return res.status(400).json({ ok: false, error: 'يرجى كتابة اسمك للدخول.' });
+  }
+  if (cleanName.length > 48) {
+    return res.status(400).json({ ok: false, error: 'الاسم طويل جدًا.' });
+  }
+  const words = cleanName.split(' ').filter(Boolean);
+  if (words.length > 3) {
+    return res.status(400).json({ ok: false, error: 'الاسم يجب ألا يتعدى 3 كلمات (الاسم الثلاثي كحد أقصى).' });
+  }
+
+  const asciiBase = cleanName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 12);
+  let cleanUser = asciiBase.length >= 3 ? `${asciiBase}_${randomAlphaNum(4)}` : `lm_${randomAlphaNum(7)}`;
+  while (db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(cleanUser)) {
+    cleanUser = `lm_${randomAlphaNum(8)}`;
+  }
+
+  const id = `u_${uuid().slice(0, 8)}`;
+  const initials = words.slice(0, 2).map(w => w[0]).join('') || 'LM';
+  const hashedPw = hashPassword(uuid());
+
+  db.prepare(`
+    INSERT INTO users (id, username, password, display_name, display_name_en, bio, avatar_color, avatar_initials, avatar_url, country, demo_balance_egp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, cleanUser, hashedPw, cleanName, cleanName, 'عضو جديد في منصة LM', '#27272A', initials, 'lm:neutral', country || 'EG', 10000);
+
+  const user = getUserOrNull(id);
+  const token = signSessionToken(id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, user, token });
+});
+
+// TikTok-Style Instant Guest / Trial Account (Random alphanumeric handle + neutral avatar, full interaction!)
+app.post('/api/auth/guest', authLimiter, (_req, res) => {
+  let guestHandle = `user_${randomAlphaNum(8)}`;
+  while (db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(guestHandle)) {
+    guestHandle = `user_${randomAlphaNum(9)}`;
+  }
+  const id = `u_g_${uuid().slice(0, 7)}`;
+  const hashedPw = hashPassword(uuid());
+
+  db.prepare(`
+    INSERT INTO users (id, username, password, display_name, display_name_en, bio, avatar_color, avatar_initials, avatar_url, country, demo_balance_egp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, guestHandle, hashedPw, guestHandle, guestHandle, 'حساب تجريبي على منصة LM', '#27272A', 'LM', 'lm:neutral', 'EG', 10000);
+
+  const user = getUserOrNull(id);
+  const token = signSessionToken(id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, user, token, isGuest: true });
+});
+
 app.get('/api/users/by-username/:username', (req, res) => {
   const handle = String(req.params.username || '').replace(/^@/, '').trim().toLowerCase();
   if (!handle) return res.status(400).json({ ok: false, error: 'اسم المستخدم مطلوب.' });
