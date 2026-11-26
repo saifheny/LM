@@ -7,12 +7,14 @@ import {
   MapPin,
   MessageCircle,
   Play,
+  Share2,
   UserCheck,
   UserPlus,
   X,
 } from 'lucide-react';
 import { Lang, ShortVideoItem, SocialPost, UserProfile } from '../../types';
 import { RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
+import type { SharePayload } from '../shared/ShareSheetModal';
 import { ChromeArrowButton } from '../shared/HardwareUI';
 import {
   CoverCanvasIcon,
@@ -33,6 +35,7 @@ interface ProfileViewProps {
   onOpenProfile: (uid: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
   onOpenHashtag?: (tag: string) => void;
+  onShare?: (payload: SharePayload) => void;
   onOpenVideos: () => void;
 }
 
@@ -51,6 +54,7 @@ export function ProfileView({
   onOpenProfile,
   onOpenProfileByUsername,
   onOpenHashtag,
+  onShare,
   onOpenVideos,
 }: ProfileViewProps) {
   const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
@@ -342,6 +346,27 @@ export function ProfileView({
             </div>
 
             <div className="flex items-center gap-2 pb-1">
+              {onShare && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onShare({
+                      kind: 'profile',
+                      title: profileUser.displayName,
+                      subtitle: `@${profileUser.username}`,
+                      snippet: profileUser.bio || profileUser.location || 'ملف شخصي على منصة LM',
+                      imageUrl: profileUser.coverUrl || profileUser.avatarUrl,
+                      avatarUrl: profileUser.avatarUrl,
+                      avatarInitials: profileUser.avatarInitials,
+                      path: `/u/${profileUser.username}`,
+                    })
+                  }
+                  title="مشاركة الملف الشخصي"
+                  className="w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.14] backdrop-blur-xl border border-white/[0.13] text-[#E4E4E7] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+              )}
               {isMe ? (
                 <button
                   type="button"

@@ -2644,11 +2644,136 @@ app.post('/api/providers/test', async (req, res) => {
   }
 });
 
+function escapeHtmlAttr(str: string): string {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function buildDynamicOgMeta(req: express.Request): {
+  title: string;
+  description: string;
+  image: string;
+  url: string;
+  type: string;
+} {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.get('host') || 'localhost:4000');
+  const origin = `${proto}://${host}`;
+  const fullUrl = `${origin}${req.originalUrl}`;
+  const toAbs = (p?: string | null) => {
+    if (!p) return `${origin}/lm-icon-512.png`;
+    if (/^https?:\/\//i.test(p)) return p;
+    return `${origin}${p.startsWith('/') ? p : `/${p}`}`;
+  };
+
+  let title = 'LM — المنصة الرقمية المتكاملة';
+  let description = 'المجتمع، نبض، بث مباشر، دردشة فورية، وLM AI في تطبيق واحد.';
+  let image = `${origin}/lm-icon-512.png`;
+  let type = 'website';
+
+  const postMatch = req.path.match(/^\/post\/([^/]+)$/);
+  const postId = postMatch ? decodeURIComponent(postMatch[1]) : String(req.query.post || '').trim();
+  if (postId) {
+    const r = db.prepare(`
+      SELECT p.content, p.media_url, p.media_urls_json, u.display_name, u.username, u.avatar_url
+      FROM posts p JOIN users u ON p.user_id = u.id WHERE p.id = ?
+    `).get(postId) as Record<string, unknown> | undefined;
+    if (r) {
+      let mediaUrls: string[] = [];
+      try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
+      const firstImg = mediaUrls[0] || (r.media_url ? String(r.media_url) : null) || (r.avatar_url ? String(r.avatar_url) : null);
+      title = `${String(r.display_name)} (@${String(r.username)}) على LM`;
+      const snippet = String(r.content || '').replace(/\s+/g, ' ').trim();
+      description = snippet ? (snippet.length > 165 ? `${snippet.slice(0, 162)}...` : snippet) : 'منشور مشارَك على منصة LM';
+      image = toAbs(firstImg);
+      type = 'article';
+      return { title, description, image, url: fullUrl, type };
+    }
+  }
+
+  const userMatch = req.path.match(/^\/u\/([^/]+)$/);
+  const handle = userMatch ? decodeURIComponent(userMatch[1]) : String(req.query.user || '').trim();
+  if (handle) {
+    const clean = handle.replace(/^@/, '').toLowerCase();
+    const u = db.prepare('SELECT * FROM users WHERE LOWER(username) = ? OR id = ?').get(clean, handle) as Record<string, unknown> | undefined;
+    if (u) {
+      title = `${String(u.display_name)} (@${String(u.username)}) • LM`;
+      const bio = String(u.bio || '').replace(/\s+/g, ' ').trim();
+      const loc = u.location ? ` • ${String(u.location)}` : '';
+      description = bio ? `${bio.slice(0, 150)}${loc}` : `الملف الشخصي لـ ${String(u.display_name)} على LM`;
+      image = toAbs((u.cover_url as string | null) || (u.avatar_url as string | null));
+      type = 'profile';
+      return { title, description, image, url: fullUrl, type };
+    }
+  }
+
+  const videoMatch = req.path.match(/^\/pulse\/([^/]+)$/);
+  const videoId = videoMatch ? decodeURIComponent(videoMatch[1]) : String(req.query.video || '').trim();
+  if (videoId) {
+    const v = db.prepare(`
+      SELECT v.title, v.description, v.tags, v.poster_url, u.display_name, u.username, u.avatar_url
+      FROM short_videos v JOIN users u ON v.user_id = u.id WHERE v.id = ?
+    `).get(videoId) as Record<string, unknown> | undefined;
+    if (v) {
+      title = `${String(v.title)} — ${String(v.display_name)} على نبض LM`;
+      const desc = String(v.description || v.tags || '').trim();
+      description = desc || `شاهد هذا الفيديو القصير من @${String(v.username)} على LM`;
+      image = toAbs((v.poster_url as string | null) || (v.avatar_url as string | null));
+      type = 'video.other';
+      return { title, description, image, url: fullUrl, type };
+    }
+  }
+
+  const liveMatch = req.path.match(/^\/live\/([^/]+)$/);
+  const liveId = liveMatch ? decodeURIComponent(liveMatch[1]) : String(req.query.live || '').trim();
+  if (liveId) {
+    const lr = db.prepare(`
+      SELECT r.title, r.category, u.display_name, u.avatar_url
+      FROM live_rooms r JOIN users u ON r.host_id = u.id WHERE r.id = ?
+    `).get(liveId) as Record<string, unknown> | undefined;
+    if (lr) {
+      title = `🔴 بث مباشر: ${String(lr.title)} • ${String(lr.display_name)}`;
+      description = `شاهد البث المباشر الآن على LM (${String(lr.category || 'عام')})`;
+      image = toAbs(lr.avatar_url as string | null);
+      type = 'video.other';
+      return { title, description, image, url: fullUrl, type };
+    }
+  }
+
+  return { title, description, image, url: fullUrl, type };
+}
+
 const distDir = path.resolve(__dirname, '../dist');
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(distDir, 'index.html'));
+  app.use(express.static(distDir, { index: false }));
+  app.get('*', (req, res) => {
+    const indexPath = path.join(distDir, 'index.html');
+    try {
+      let html = fs.readFileSync(indexPath, 'utf-8');
+      const og = buildDynamicOgMeta(req);
+      const ogTags = `
+    <meta property="og:site_name" content="LM" />
+    <meta property="og:type" content="${escapeHtmlAttr(og.type)}" />
+    <meta property="og:title" content="${escapeHtmlAttr(og.title)}" />
+    <meta property="og:description" content="${escapeHtmlAttr(og.description)}" />
+    <meta property="og:image" content="${escapeHtmlAttr(og.image)}" />
+    <meta property="og:url" content="${escapeHtmlAttr(og.url)}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${escapeHtmlAttr(og.title)}" />
+    <meta name="twitter:description" content="${escapeHtmlAttr(og.description)}" />
+    <meta name="twitter:image" content="${escapeHtmlAttr(og.image)}" />`;
+      html = html
+        .replace(/<title>.*?<\/title>/i, `<title>${escapeHtmlAttr(og.title)}</title>`)
+        .replace(/<meta name="description" content="[^"]*"\s*\/?>/i, `<meta name="description" content="${escapeHtmlAttr(og.description)}" />`)
+        .replace('</head>', `${ogTags}\n  </head>`);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch {
+      res.sendFile(indexPath);
+    }
   });
 }
 

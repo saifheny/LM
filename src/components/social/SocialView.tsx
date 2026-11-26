@@ -34,6 +34,7 @@ import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { FacebookReactionButton, resolveReaction } from '../shared/TelegramReactions';
 import { NavAiIcon } from '../shared/Icons2026Pro';
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
+import type { SharePayload } from '../shared/ShareSheetModal';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 
 interface SocialViewProps {
@@ -42,9 +43,12 @@ interface SocialViewProps {
   lang: Lang;
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
   activeHashtag?: string | null;
+  focusedPostId?: string | null;
+  onClearFocusedPost?: () => void;
   onSelectHashtag?: (tag: string | null) => void;
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
+  onShare?: (payload: SharePayload) => void;
 }
 
 function isVideoMediaUrl(url: string): boolean {
@@ -63,9 +67,12 @@ export function SocialView({
   lang,
   lastWsEvent,
   activeHashtag = null,
+  focusedPostId = null,
+  onClearFocusedPost,
   onSelectHashtag,
   onOpenProfile,
   onOpenProfileByUsername,
+  onShare,
 }: SocialViewProps) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -727,9 +734,30 @@ export function SocialView({
           </div>
         </form>
 
+        {/* Shared Post Deep-Link Banner (Appears when opened via /post/:id!) */}
+        {focusedPostId && posts.some(p => p.id === focusedPostId) && (
+          <div className="px-4 py-2.5 border-b border-white/[0.08] bg-white/[0.04] flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-white">منشور مشارَك</span>
+            <button
+              type="button"
+              onClick={() => onClearFocusedPost?.()}
+              className="px-2.5 py-1 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-[#E4E4E7] flex items-center gap-1 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+              <span>عرض كل المنشورات</span>
+            </button>
+          </div>
+        )}
+
         {/* Continuous Borderless Feed */}
         <div className="divide-y divide-white/[0.07]">
-          {posts.map(post => {
+          {(focusedPostId && posts.some(p => p.id === focusedPostId)
+            ? [
+                ...posts.filter(p => p.id === focusedPostId),
+                ...posts.filter(p => p.id !== focusedPostId),
+              ]
+            : posts
+          ).map(post => {
             const isThreadOpen = Boolean(openThreads[post.id]);
             const postComments = commentsByPost[post.id] || [];
             const rootComments = postComments.filter(c => !c.parentId);
@@ -943,8 +971,23 @@ export function SocialView({
                         </button>
                         <button
                           type="button"
-                          onClick={() => navigator.clipboard?.writeText(window.location.href)}
-                          title="مشاركة"
+                          onClick={() => {
+                            if (onShare) {
+                              onShare({
+                                kind: 'post',
+                                title: post.displayName,
+                                subtitle: `@${post.username}`,
+                                snippet: post.content || 'منشور مصوّر على منصة LM',
+                                imageUrl: post.mediaUrls[0] || null,
+                                avatarUrl: post.avatarUrl,
+                                avatarInitials: post.avatarInitials,
+                                path: `/post/${post.id}`,
+                              });
+                            } else {
+                              navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
+                            }
+                          }}
+                          title="مشاركة المنشور"
                           className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                         >
                           <Share2 className="w-3.5 h-3.5" strokeWidth={1.8} />

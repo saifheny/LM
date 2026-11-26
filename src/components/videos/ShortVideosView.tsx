@@ -41,6 +41,7 @@ import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 interface ShortVideosViewProps {
   user: UserProfile;
   lang: Lang;
+  focusedVideoId?: string | null;
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
   onOpenHashtag?: (tag: string) => void;
@@ -135,6 +136,7 @@ const SHARE_PLATFORMS: Array<{ id: keyof typeof SharePlatformIcons; label: strin
 export function ShortVideosView({
   user,
   lang,
+  focusedVideoId = null,
   onOpenProfile,
   onOpenProfileByUsername,
   onOpenHashtag,
@@ -296,6 +298,16 @@ export function ShortVideosView({
     if (feedTab === 'friends') return videos.slice(1).concat(videos.slice(0, 1));
     return videos;
   }, [videos, feedTab]);
+
+  // Deep-link jump when opened via /pulse/:id
+  useEffect(() => {
+    if (!focusedVideoId || orderedVideos.length === 0) return;
+    const targetIdx = orderedVideos.findIndex(v => v.id === focusedVideoId);
+    if (targetIdx >= 0) {
+      setActiveIndex(targetIdx);
+      swiperRef.current?.slideTo(targetIdx, 0);
+    }
+  }, [focusedVideoId, orderedVideos, setActiveIndex]);
 
   useEffect(() => {
     setPaused(false);
@@ -1009,10 +1021,27 @@ export function ShortVideosView({
               onClick={e => e.stopPropagation()}
               className="w-full rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pb-6 pt-2.5 px-4 space-y-4"
             >
-            {/* Drag Handle Pill (NO X Button!) */}
+            {/* Drag Handle Pill + Rich Video Preview Card */}
             <div className="flex flex-col items-center gap-2">
               <div className="w-10 h-1 rounded-full bg-white/25" />
-              <span className="text-xs font-semibold text-white">مشاركة إلى</span>
+              <span className="text-xs font-semibold text-white">مشاركة فيديو نبض</span>
+            </div>
+
+            <div className="rounded-2xl overflow-hidden bg-[#0A0A0D] border border-white/[0.1] flex items-stretch text-start">
+              {shareVideo.posterUrl ? (
+                <img src={shareVideo.posterUrl} alt="" className="w-16 h-20 object-cover shrink-0 bg-black" />
+              ) : (
+                <div className="w-16 h-20 bg-black shrink-0 flex items-center justify-center">
+                  <UserAvatar initials={shareVideo.avatarInitials} avatarUrl={shareVideo.avatarUrl} size={36} />
+                </div>
+              )}
+              <div className="flex-1 min-w-0 p-2.5 flex flex-col justify-center gap-0.5">
+                <div className="text-[11px] text-[#A1A1AA] font-mono-num truncate">@{shareVideo.username}</div>
+                <div className="text-xs font-semibold text-white line-clamp-2 leading-snug">{shareVideo.title}</div>
+                <div dir="ltr" className="text-[10px] font-mono-num text-[#7A7A85] truncate">
+                  {`${window.location.origin}/pulse/${shareVideo.id}`}
+                </div>
+              </div>
             </div>
 
             {/* Row 1: Direct LM Contacts */}
@@ -1044,15 +1073,32 @@ export function ShortVideosView({
               </div>
             )}
 
-            {/* Row 2: Authentic Vector Brand Icons (ZERO Emojis!) */}
+            {/* Row 2: Authentic Vector Brand Icons with REAL Deep-Link Sharing */}
             <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pt-2 border-t border-white/[0.07]">
               {SHARE_PLATFORMS.map(p => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => {
-                    navigator.clipboard?.writeText(window.location.href);
-                    showToast(p.id === 'copy' ? 'تم نسخ الرابط' : `مشاركة عبر ${p.label}`);
+                    const deepUrl = `${window.location.origin}/pulse/${shareVideo.id}`;
+                    const txt = `${shareVideo.title} — @${shareVideo.username}`;
+                    if (p.id === 'copy') {
+                      navigator.clipboard?.writeText(deepUrl);
+                      showToast('تم نسخ رابط الفيديو');
+                    } else if (p.id === 'whatsapp') {
+                      window.open(`https://wa.me/?text=${encodeURIComponent(`${txt}\n${deepUrl}`)}`, '_blank', 'noopener');
+                    } else if (p.id === 'telegram') {
+                      window.open(`https://t.me/share/url?url=${encodeURIComponent(deepUrl)}&text=${encodeURIComponent(txt)}`, '_blank', 'noopener');
+                    } else if (p.id === 'x') {
+                      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(txt)}&url=${encodeURIComponent(deepUrl)}`, '_blank', 'noopener');
+                    } else if (p.id === 'facebook') {
+                      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(deepUrl)}`, '_blank', 'noopener');
+                    } else if (p.id === 'sms') {
+                      window.open(`sms:?body=${encodeURIComponent(`${txt}\n${deepUrl}`)}`, '_self');
+                    } else {
+                      navigator.clipboard?.writeText(deepUrl);
+                      showToast(`تم نسخ الرابط للمشاركة عبر ${p.label}`);
+                    }
                     setShareVideo(null);
                   }}
                   className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"

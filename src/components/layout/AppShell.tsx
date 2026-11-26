@@ -13,6 +13,7 @@ import {
   CheckCheck,
   User,
   Download,
+  Share2,
 } from 'lucide-react';
 import { Lang, NavTab, NotificationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
@@ -41,6 +42,7 @@ interface AppShellProps {
   unreadNotifications: number;
   onMarkNotificationsRead: (id?: string) => void;
   onOpenNotification: (n: NotificationItem) => void;
+  onShareApp?: () => void;
   onLogout: () => void;
   children: React.ReactNode;
 }
@@ -228,6 +230,7 @@ export function AppShell({
   unreadNotifications,
   onMarkNotificationsRead,
   onOpenNotification,
+  onShareApp,
   onLogout,
   children,
 }: AppShellProps) {
@@ -455,6 +458,20 @@ export function AppShell({
         </div>
 
         <div className="space-y-1.5">
+          {onShareApp && (
+            <button
+              type="button"
+              onClick={onShareApp}
+              title={lang === 'ar' ? 'مشاركة التطبيق' : 'Share LM'}
+              className={`w-full h-10 rounded-2xl flex items-center text-[13.5px] text-[#8E8E93] hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer ${
+                sidebarCollapsed ? 'justify-center px-0' : 'gap-3.5 px-3'
+              }`}
+            >
+              <Share2 className="w-[18px] h-[18px] shrink-0" strokeWidth={1.8} />
+              {!sidebarCollapsed && <span className="truncate">{lang === 'ar' ? 'مشاركة التطبيق' : 'Share App'}</span>}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => onSelectTab('settings')}
@@ -682,8 +699,21 @@ export function AppShell({
               </button>
             </div>
 
-            {installPromptEvt && (
-              <div className="px-4 py-2.5 border-b border-white/[0.08]">
+            <div className="px-4 py-2.5 border-b border-white/[0.08] flex items-center gap-2">
+              {onShareApp && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAccountOpen(false);
+                    onShareApp();
+                  }}
+                  className="flex-1 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] text-xs font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>{lang === 'ar' ? 'مشاركة التطبيق' : 'Share LM'}</span>
+                </button>
+              )}
+              {installPromptEvt && (
                 <button
                   type="button"
                   onClick={async () => {
@@ -691,13 +721,13 @@ export function AppShell({
                     setInstallPromptEvt(null);
                     setAccountOpen(false);
                   }}
-                  className="w-full py-2 rounded-xl bg-gradient-to-r from-[#F59E0B] via-[#FB7185] to-[#34D399] text-black text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-2 rounded-xl bg-white hover:bg-white/90 text-black text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>{lang === 'ar' ? 'تثبيت تطبيق LM على الجهاز' : 'Install LM App'}</span>
+                  <span>{lang === 'ar' ? 'تثبيت LM' : 'Install LM'}</span>
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="py-1 border-b border-white/[0.08]">
               {allUsers.map(u => (

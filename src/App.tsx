@@ -6,6 +6,7 @@ import { LayoutProvider } from './context/LayoutContext';
 import { AppShell } from './components/layout/AppShell';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { CallLaunchRequest, WebRtcCallController } from './components/shared/WebRtcCallModal';
+import { SharePayload, ShareSheetModal } from './components/shared/ShareSheetModal';
 
 // React.lazy Route-Level Code Splitting for instant sub-second mobile startup!
 const SocialView = lazy(() => import('./components/social/SocialView').then(m => ({ default: m.SocialView })));
@@ -69,9 +70,21 @@ export function App() {
   });
   const [pendingChatConvId, setPendingChatConvId] = useState<string | null>(null);
   const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
+  const [focusedPostId, setFocusedPostId] = useState<string | null>(null);
+  const [focusedVideoId, setFocusedVideoId] = useState<string | null>(null);
+  const [sharePayload, setSharePayload] = useState<SharePayload | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [outgoingCall, setOutgoingCall] = useState<CallLaunchRequest | null>(null);
+
+  const shareApp = useCallback(() => {
+    setSharePayload({
+      kind: 'app',
+      title: 'LM — المنصة الرقمية المتكاملة',
+      snippet: 'المجتمع، نبض، بث مباشر، دردشة فورية، وLM AI في تطبيق واحد.',
+      path: '/',
+    });
+  }, []);
 
   const setActiveTab = useCallback((t: NavTab) => {
     setActiveTabState(t);
@@ -241,6 +254,46 @@ export function App() {
     loadUsers();
   }, [loadUsers]);
 
+  // Deep-Link Auto-Router: Opens the EXACT shared Post, Profile, Pulse Video, or Live Room!
+  useEffect(() => {
+    const pathname = window.location.pathname;
+    const params = new URLSearchParams(window.location.search);
+
+    const postMatch = pathname.match(/^\/post\/([^/]+)$/);
+    const postId = postMatch ? decodeURIComponent(postMatch[1]) : params.get('post');
+    if (postId) {
+      setFocusedPostId(postId);
+      setActiveTab('social');
+      return;
+    }
+
+    const userMatch = pathname.match(/^\/u\/([^/]+)$/);
+    const handle = userMatch ? decodeURIComponent(userMatch[1]) : params.get('user');
+    if (handle) {
+      openProfileByUsername(handle);
+      return;
+    }
+
+    const videoMatch = pathname.match(/^\/pulse\/([^/]+)$/);
+    const videoId = videoMatch ? decodeURIComponent(videoMatch[1]) : params.get('video');
+    if (videoId) {
+      setFocusedVideoId(videoId);
+      setActiveTab('videos');
+      return;
+    }
+
+    const liveMatch = pathname.match(/^\/live\/([^/]+)$/);
+    const liveId = liveMatch ? decodeURIComponent(liveMatch[1]) : params.get('live');
+    if (liveId) {
+      try {
+        localStorage.setItem('lm_live_room_id', liveId);
+      } catch {
+        // ignore
+      }
+      setActiveTab('live');
+    }
+  }, [openProfileByUsername, setActiveTab]);
+
   // Register active user with zero-drop WebSocket Hub for targeted WebRTC signaling
   useEffect(() => {
     registerWsUser(currentUser?.id || null);
@@ -303,6 +356,7 @@ export function App() {
         unreadNotifications={unreadNotifications}
         onMarkNotificationsRead={markNotificationsRead}
         onOpenNotification={handleOpenNotification}
+        onShareApp={shareApp}
         onLogout={() => setLoggedOut(true)}
       >
         <Suspense fallback={<ViewLoadingFallback />}>
@@ -313,22 +367,32 @@ export function App() {
               lang={lang}
               lastWsEvent={lastWsEvent}
               activeHashtag={activeHashtag}
+              focusedPostId={focusedPostId}
+              onClearFocusedPost={() => setFocusedPostId(null)}
               onSelectHashtag={setActiveHashtag}
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
+              onShare={setSharePayload}
             />
           )}
           {activeTab === 'videos' && (
             <ShortVideosView
               user={currentUser}
               lang={lang}
+              focusedVideoId={focusedVideoId}
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
               onOpenHashtag={openHashtagFeed}
             />
           )}
           {activeTab === 'live' && (
-            <LiveView user={currentUser} lang={lang} lastWsEvent={lastWsEvent} onOpenProfile={openProfile} />
+            <LiveView
+              user={currentUser}
+              lang={lang}
+              lastWsEvent={lastWsEvent}
+              onOpenProfile={openProfile}
+              onShare={setSharePayload}
+            />
           )}
           {activeTab === 'chat' && (
             <ChatView
@@ -354,6 +418,7 @@ export function App() {
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
               onOpenHashtag={openHashtagFeed}
+              onShare={setSharePayload}
               onProfileUpdated={updated => {
                 setCurrentUser(updated);
                 loadUsers();
@@ -373,6 +438,13 @@ export function App() {
         currentUser={currentUser}
         outgoingRequest={outgoingCall}
         onClearOutgoing={() => setOutgoingCall(null)}
+      />
+
+      {/* Global Universal Context-Aware Share Sheet */}
+      <ShareSheetModal
+        payload={sharePayload}
+        currentUser={currentUser}
+        onClose={() => setSharePayload(null)}
       />
     </LayoutProvider>
   );

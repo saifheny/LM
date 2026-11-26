@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
 import { UserAvatar } from '../shared/LmBrandMark';
+import type { SharePayload } from '../shared/ShareSheetModal';
 import { ObsidianComposerPill } from '../shared/HardwareUI';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
@@ -26,11 +27,12 @@ interface LiveViewProps {
   lang: Lang;
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
   onOpenProfile?: (userId: string) => void;
+  onShare?: (payload: SharePayload) => void;
 }
 
 const LIVE_CATEGORIES = ['عام', 'دردشة', 'تقنية', 'موسيقى', 'ألعاب', 'رياضة'];
 
-export function LiveView({ user, lang, lastWsEvent, onOpenProfile }: LiveViewProps) {
+export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: LiveViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
   const [activeRoomId, setActiveRoomIdState] = useState<string>(() => {
@@ -719,8 +721,20 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile }: LiveViewPro
             <button
               type="button"
               onClick={() => {
-                navigator.clipboard?.writeText(window.location.href);
-                showNotice('تم نسخ رابط البث');
+                if (activeRoom && onShare) {
+                  onShare({
+                    kind: 'live',
+                    title: activeRoom.title,
+                    subtitle: activeRoom.hostName,
+                    snippet: `شاهد البث المباشر الآن على LM • ${activeRoom.category}`,
+                    avatarUrl: activeRoom.hostAvatarUrl,
+                    avatarInitials: activeRoom.hostInitials,
+                    path: `/live/${activeRoom.id}`,
+                  });
+                } else {
+                  navigator.clipboard?.writeText(window.location.href);
+                  showNotice('تم نسخ رابط البث');
+                }
               }}
               className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer"
             >
