@@ -5,8 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { UserProfile, ProviderConfig } from './types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.resolve(__dirname, '../data');
-export const UPLOADS_DIR = path.resolve(__dirname, '../uploads');
+export const DATA_DIR = process.env.LM_DATA_DIR
+  ? path.resolve(process.env.LM_DATA_DIR)
+  : path.resolve(__dirname, '../data');
+export const UPLOADS_DIR = process.env.LM_UPLOADS_DIR
+  ? path.resolve(process.env.LM_UPLOADS_DIR)
+  : path.resolve(__dirname, '../uploads');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -402,6 +406,11 @@ export function initDatabase() {
   }
   try {
     db.exec('ALTER TABLE posts ADD COLUMN music_title TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE posts ADD COLUMN quoted_post_id TEXT;');
   } catch {
     // column already exists
   }

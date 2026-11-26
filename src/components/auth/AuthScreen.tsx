@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Lang, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton } from '../shared/HardwareUI';
-import { apiPost } from '../../lib/api';
+import { apiPost, setAuthToken } from '../../lib/api';
 
 interface AuthScreenProps {
   users: UserProfile[];
@@ -23,14 +23,19 @@ export function AuthScreen({ users, lang, onToggleLang, onAuthenticated }: AuthS
     setErr('');
     try {
       if (mode === 'login') {
-        const res = await apiPost<{ ok: boolean; user: UserProfile }>('/api/auth/login', { username, password });
+        const res = await apiPost<{ ok: boolean; user: UserProfile; token?: string }>('/api/auth/login', {
+          username,
+          password,
+        });
+        if (res.token) setAuthToken(res.token);
         onAuthenticated(res.user);
       } else {
-        const res = await apiPost<{ ok: boolean; user: UserProfile }>('/api/auth/register', {
+        const res = await apiPost<{ ok: boolean; user: UserProfile; token?: string }>('/api/auth/register', {
           username,
           displayName,
           password,
         });
+        if (res.token) setAuthToken(res.token);
         onAuthenticated(res.user);
       }
     } catch (error) {

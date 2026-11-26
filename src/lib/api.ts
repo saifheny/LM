@@ -29,13 +29,35 @@ const CLIENT_LIMITS: Record<UploadContext, { maxBytes: number; imageOnly?: boole
 
 const BLOCKED_EXTS = /\.(svg|html?|xhtml|js|mjs|cjs|exe|dll|bat|cmd|ps1|sh|php|jsp|asp|msi|apk|scr|vbs)$/i;
 
+const TOKEN_STORAGE_KEY = 'lm_auth_token';
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export async function api<T = Record<string, unknown>>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
+  const token = getAuthToken();
   const res = await fetch(path, {
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options?.headers || {}),
     },
     ...options,

@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Plus, ThumbsUp } from 'lucide-react';
+import { ThumbsUp } from 'lucide-react';
 
 export interface ReactionDef {
   id: string;
@@ -287,9 +287,6 @@ export const REACTION_LIST: ReactionDef[] = [
   },
 ];
 
-const CORE_REACTIONS = REACTION_LIST.filter(r => !r.extra);
-const EXTRA_REACTIONS = REACTION_LIST.filter(r => r.extra);
-
 const KEY_ALIAS: Record<string, string> = {
   heart: 'love',
   thumbs: 'like',
@@ -393,7 +390,8 @@ function ReactionBurstEffect({ bursts }: { bursts: BurstEvent[] }) {
 /**
  * Floating Animated Facebook-Style Reaction Dock (Used in both Chat & Community!)
  * - Expressive IN-PLACE animations (ZERO vertical bouncing!)
- * - Clean '+' orb expands 4 extra sculpted reactions smoothly
+ * - Single sleek horizontally swipeable / scrollable capsule (NO '+' button!)
+ * - Floating label renders cleanly ABOVE the scroll viewport so it never clips
  */
 export function TelegramReactionStrip({
   onSelect,
@@ -405,11 +403,8 @@ export function TelegramReactionStrip({
   lang?: 'ar' | 'en';
 }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [showMore, setShowMore] = useState(() =>
-    Boolean(activeReactionId && EXTRA_REACTIONS.some(r => r.id === activeReactionId))
-  );
-
-  const visibleReactions = showMore ? REACTION_LIST : CORE_REACTIONS;
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const hoveredDef = hoveredId ? REACTION_LIST.find(r => r.id === hoveredId) || null : null;
 
   return (
     <motion.div
@@ -417,104 +412,97 @@ export function TelegramReactionStrip({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 6, scale: 0.92 }}
       transition={{ type: 'spring', stiffness: 460, damping: 28 }}
-      className={`inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#15151C]/96 backdrop-blur-2xl border border-white/[0.15] shadow-[0_14px_40px_rgba(0,0,0,0.68)] select-none ${
-        showMore ? 'flex-wrap max-w-[290px] sm:max-w-none rounded-2xl' : 'rounded-full'
-      }`}
+      className="relative inline-flex items-center select-none"
     >
-      {visibleReactions.map((r, idx) => {
-        const isHovered = hoveredId === r.id;
-        const isSelected = activeReactionId === r.id;
-        const text = lang === 'en' ? r.labelEn : r.label;
-        return (
-          <motion.button
-            key={r.id}
-            type="button"
-            initial={{ opacity: 0, scale: 0.55 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: 'spring', stiffness: 520, damping: 24, delay: Math.min(idx * 0.02, 0.16) }}
-            onMouseEnter={() => setHoveredId(r.id)}
-            onMouseLeave={() => setHoveredId(cur => (cur === r.id ? null : cur))}
-            onClick={e => {
-              e.stopPropagation();
-              onSelect(r.id);
-            }}
-            className="relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer"
+      {/* Floating Tooltip Above Strip (Outside overflow container so it NEVER clips!) */}
+      <AnimatePresence>
+        {hoveredDef && (
+          <motion.span
+            key={hoveredDef.id}
+            initial={{ opacity: 0, y: 4, scale: 0.88 }}
+            animate={{ opacity: 1, y: -4, scale: 1 }}
+            exit={{ opacity: 0, y: 2, scale: 0.88 }}
+            transition={{ duration: 0.14 }}
+            className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-black/92 border border-white/[0.16] text-[10.5px] font-semibold text-white whitespace-nowrap shadow-xl z-30"
           >
-            {/* Floating Tooltip Above Badge */}
-            <AnimatePresence>
-              {isHovered && (
-                <motion.span
-                  initial={{ opacity: 0, y: 3, scale: 0.88 }}
-                  animate={{ opacity: 1, y: -4, scale: 1 }}
-                  exit={{ opacity: 0, y: 2, scale: 0.88 }}
-                  transition={{ duration: 0.14 }}
-                  className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-black/92 border border-white/[0.16] text-[10px] font-semibold text-white whitespace-nowrap shadow-lg z-20"
-                >
-                  {text}
-                </motion.span>
-              )}
-            </AnimatePresence>
+            {lang === 'en' ? hoveredDef.labelEn : hoveredDef.label}
+          </motion.span>
+        )}
+      </AnimatePresence>
 
-            {/* In-Place Expressive Badge Animation (NO upward jumping!) */}
-            <motion.span
-              animate={
-                isHovered
-                  ? {
-                      scale: 1.32,
-                      rotate: r.id === 'haha' ? [-8, 8, -6, 6, 0] : idx % 2 === 0 ? -5 : 5,
-                    }
-                  : {
-                      scale: isSelected ? 1.1 : 1,
-                      ...r.idleMotion,
-                    }
-              }
-              transition={
-                isHovered
-                  ? { type: 'spring', stiffness: 480, damping: 18 }
-                  : {
-                      duration: 1.9 + (idx % 3) * 0.35,
-                      repeat: Infinity,
-                      repeatType: 'mirror',
-                      ease: 'easeInOut',
-                      delay: idx * 0.12,
-                    }
-              }
-              whileTap={{ scale: 0.88 }}
-              className="flex items-center justify-center"
-            >
-              {r.renderIcon(26)}
-            </motion.span>
-
-            {isSelected && (
-              <span
-                style={{ backgroundColor: r.accent }}
-                className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full"
-              />
-            )}
-          </motion.button>
-        );
-      })}
-
-      {/* Sculpted '+' Expand Button for More Reactions */}
-      <motion.button
-        type="button"
-        whileHover={{ scale: 1.12 }}
-        whileTap={{ scale: 0.9 }}
-        onClick={e => {
-          e.stopPropagation();
-          setShowMore(v => !v);
+      {/* Horizontally Swipeable / Scrollable Reaction Capsule */}
+      <div
+        ref={stripRef}
+        onWheel={e => {
+          const el = stripRef.current;
+          if (!el) return;
+          if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && e.deltaY !== 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            el.scrollLeft += e.deltaY;
+          }
         }}
-        title={showMore ? (lang === 'en' ? 'Show fewer' : 'إخفاء المزيد') : lang === 'en' ? 'More reactions' : 'المزيد من التفاعلات'}
-        className={`w-7 h-7 rounded-full flex items-center justify-center border transition-colors cursor-pointer ms-0.5 ${
-          showMore
-            ? 'bg-white/[0.14] border-white/[0.25] text-white'
-            : 'bg-white/[0.06] border-white/[0.12] text-[#D4D4D8] hover:bg-white/[0.14] hover:text-white'
-        }`}
+        style={{ WebkitOverflowScrolling: 'touch' }}
+        className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-[#15151C]/96 backdrop-blur-2xl border border-white/[0.15] shadow-[0_14px_40px_rgba(0,0,0,0.68)] max-w-[264px] sm:max-w-[308px] overflow-x-auto no-scrollbar scroll-smooth touch-pan-x"
       >
-        <motion.span animate={{ rotate: showMore ? 45 : 0 }} transition={{ duration: 0.2 }}>
-          <Plus className="w-3.5 h-3.5" strokeWidth={2.2} />
-        </motion.span>
-      </motion.button>
+        {REACTION_LIST.map((r, idx) => {
+          const isHovered = hoveredId === r.id;
+          const isSelected = activeReactionId === r.id;
+          return (
+            <motion.button
+              key={r.id}
+              type="button"
+              initial={{ opacity: 0, scale: 0.6 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 520, damping: 24, delay: Math.min(idx * 0.018, 0.14) }}
+              onMouseEnter={() => setHoveredId(r.id)}
+              onMouseLeave={() => setHoveredId(cur => (cur === r.id ? null : cur))}
+              onClick={e => {
+                e.stopPropagation();
+                onSelect(r.id);
+              }}
+              className="relative w-8 h-8 rounded-full flex items-center justify-center shrink-0 cursor-pointer"
+            >
+              {/* In-Place Expressive Badge Animation (NO upward jumping!) */}
+              <motion.span
+                animate={
+                  isHovered
+                    ? {
+                        scale: 1.28,
+                        rotate: r.id === 'haha' ? [-8, 8, -6, 6, 0] : idx % 2 === 0 ? -5 : 5,
+                      }
+                    : {
+                        scale: isSelected ? 1.1 : 1,
+                        ...r.idleMotion,
+                      }
+                }
+                transition={
+                  isHovered
+                    ? { type: 'spring', stiffness: 480, damping: 18 }
+                    : {
+                        duration: 1.9 + (idx % 3) * 0.35,
+                        repeat: Infinity,
+                        repeatType: 'mirror',
+                        ease: 'easeInOut',
+                        delay: idx * 0.1,
+                      }
+                }
+                whileTap={{ scale: 0.88 }}
+                className="flex items-center justify-center"
+              >
+                {r.renderIcon(26)}
+              </motion.span>
+
+              {isSelected && (
+                <span
+                  style={{ backgroundColor: r.accent }}
+                  className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full"
+                />
+              )}
+            </motion.button>
+          );
+        })}
+      </div>
     </motion.div>
   );
 }

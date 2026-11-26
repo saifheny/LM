@@ -19,14 +19,49 @@ import {
   recordUserInteraction,
 } from './recommendEngine.ts';
 import { enforceCanonicalExtension, verifyUploadedFile } from './uploadSecurity.ts';
+import {
+  clearSessionCookie,
+  createRateLimiter,
+  extractRequestToken,
+  hashPassword,
+  isHashedPassword,
+  setSessionCookie,
+  signSessionToken,
+  verifyPassword,
+  verifySessionToken,
+} from './authSecurity.ts';
+import {
+  computePostPositiveEngagement,
+  computeSensitiveReportThreshold,
+  isContentSensitive,
+} from './moderation.ts';
 import { CountryCode } from './types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 initDatabase();
 
 const app = express();
-app.use(cors());
+app.set('trust proxy', 1);
+const allowedOrigin = process.env.CORS_ORIGIN || '*';
+app.use(
+  cors({
+    origin: allowedOrigin === '*' ? true : allowedOrigin.split(',').map(s => s.trim()),
+    credentials: true,
+  })
+);
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
+});
 app.use(express.json({ limit: '16mb' }));
+
+// Phase 1 Zero-Cost Sliding-Window Rate Limiters
+const authLimiter = createRateLimiter({ windowMs: 15 * 60_000, max: 40, message: 'محاولات دخول كثيرة، حاول بعد دقائق.' });
+const uploadLimiter = createRateLimiter({ windowMs: 5 * 60_000, max: 60, message: 'تجاوزت حد رفع الملفات المؤقت، انتظر قليلًا.' });
+const reportLimiter = createRateLimiter({ windowMs: 10 * 60_000, max: 35, message: 'يرجى الانتظار قبل إرسال إبلاغات إضافية.' });
+const aiLimiter = createRateLimiter({ windowMs: 60_000, max: 30, message: 'طلبات الذكاء الاصطناعي سريعة جدًا، انتظر بضع ثوانٍ.' });
 app.use(
   '/uploads',
   (_req, res, next) => {
@@ -127,7 +162,53 @@ function getUserOrNull(id: string) {
   return row ? mapUserRow(row) : null;
 }
 
-const SENSITIVE_REPORT_THRESHOLD = 3;
+function loadQuotedPostMap(quotedIds: string[]) {
+  const unique = Array.from(new Set(quotedIds.filter(Boolean)));
+  const map = new Map<string, {
+    id: string;
+    userId: string;
+    displayName: string;
+    username: string;
+    avatarInitials: string;
+    avatarUrl: string | null;
+    verified: boolean;
+    content: string;
+    mediaUrl: string | null;
+    createdAt: string;
+  }>();
+  if (unique.length === 0) return map;
+  const placeholders = unique.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT p.id, p.user_id, p.content, p.media_url, p.media_urls_json, p.created_at,
+           u.display_name, u.username, u.avatar_initials, u.avatar_url, u.verified
+    FROM posts p JOIN users u ON p.user_id = u.id
+    WHERE p.id IN (${placeholders})
+  `).all(...unique) as Array<Record<string, unknown>>;
+  for (const r of rows) {
+    let mediaUrl: string | null = r.media_url ? String(r.media_url) : null;
+    if (!mediaUrl && r.media_urls_json) {
+      try {
+        const arr = JSON.parse(String(r.media_urls_json));
+        if (Array.isArray(arr) && arr[0]) mediaUrl = String(arr[0]);
+      } catch {
+        // ignore
+      }
+    }
+    map.set(String(r.id), {
+      id: String(r.id),
+      userId: String(r.user_id),
+      displayName: String(r.display_name || 'مستخدم'),
+      username: String(r.username || 'user'),
+      avatarInitials: String(r.avatar_initials || 'LM'),
+      avatarUrl: r.avatar_url ? String(r.avatar_url) : null,
+      verified: Boolean(r.verified),
+      content: String(r.content || ''),
+      mediaUrl,
+      createdAt: String(r.created_at || ''),
+    });
+  }
+  return map;
+}
 
 function getReportCountsMap(targetType: string): Map<string, number> {
   const map = new Map<string, number>();
@@ -161,10 +242,17 @@ function createNotification(params: {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'LM Core v6', wsClients: wsClients.size });
+  res.json({
+    ok: true,
+    service: 'LM Core v6',
+    mode: 'phase1-free',
+    uptimeSec: Math.round(process.uptime()),
+    memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+    wsClients: wsClients.size,
+  });
 });
 
-app.post('/api/upload', (req, res) => {
+app.post('/api/upload', uploadLimiter, (req, res) => {
   upload.single('file')(req, res, err => {
     if (err) {
       const code = (err as { code?: string }).code;
@@ -463,19 +551,40 @@ app.get('/api/auth/users', (_req, res) => {
   res.json({ ok: true, users: rows.map(mapUserRow) });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.get('/api/auth/me', (req, res) => {
+  const token = extractRequestToken(req);
+  const verified = verifySessionToken(token);
+  if (!verified) return res.json({ ok: true, user: null });
+  const user = getUserOrNull(verified.userId);
+  return res.json({ ok: true, user });
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/login', authLimiter, (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
   if (!username) return res.status(400).json({ ok: false, error: 'أدخل اسم المستخدم.' });
   const clean = username.trim().replace(/^@/, '').toLowerCase();
   const row = db.prepare('SELECT * FROM users WHERE LOWER(username) = ?').get(clean) as Record<string, unknown> | undefined;
   if (!row) return res.status(404).json({ ok: false, error: 'الحساب غير موجود.' });
-  if (password && String(row.password) !== password) {
-    return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة (123456).' });
+  const storedPassword = String(row.password || '');
+  if (password !== undefined && password !== '' && !verifyPassword(password, storedPassword)) {
+    return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
   }
-  res.json({ ok: true, user: mapUserRow(row) });
+  // Transparently upgrade legacy plaintext passwords to Scrypt hash on successful login!
+  if (password && !isHashedPassword(storedPassword)) {
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), String(row.id));
+  }
+  const user = mapUserRow(row);
+  const token = signSessionToken(user.id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, user, token });
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', authLimiter, (req, res) => {
   const { username, displayName, password, country } = req.body as {
     username?: string;
     displayName?: string;
@@ -490,13 +599,17 @@ app.post('/api/auth/register', (req, res) => {
 
   const id = `u_${uuid().slice(0, 8)}`;
   const initials = displayName.trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('') || 'LM';
+  const hashedPw = hashPassword((password || '123456').trim() || '123456');
 
   db.prepare(`
     INSERT INTO users (id, username, password, display_name, display_name_en, bio, avatar_color, avatar_initials, country, demo_balance_egp)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, cleanUser, password || '123456', displayName.trim(), displayName.trim(), 'عضو في LM', '#27272A', initials, country || 'EG', 10000);
+  `).run(id, cleanUser, hashedPw, displayName.trim(), displayName.trim(), 'عضو في LM', '#27272A', initials, country || 'EG', 10000);
 
-  res.json({ ok: true, user: getUserOrNull(id) });
+  const user = getUserOrNull(id);
+  const token = signSessionToken(id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, user, token });
 });
 
 app.get('/api/users/by-username/:username', (req, res) => {
@@ -543,11 +656,14 @@ app.get('/api/users/:id/profile', (req, res) => {
     ).map(r => r.post_id)
   );
 
+  const profileQuotedMap = loadQuotedPostMap(postRows.map(r => String(r.quoted_post_id || '')));
+
   const posts = postRows.map(r => {
     let mediaUrls: string[] = [];
     try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
     if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
     const isRepost = Number(r.is_repost || 0) === 1;
+    const quotedId = r.quoted_post_id ? String(r.quoted_post_id) : '';
     return {
       id: r.id,
       userId: r.user_id,
@@ -577,6 +693,7 @@ app.get('/api/users/:id/profile', (req, res) => {
       repostedBy: isRepost
         ? { userId: user.id, displayName: user.displayName, username: user.username }
         : null,
+      quotedPost: quotedId ? profileQuotedMap.get(quotedId) || null : null,
       isEdited: Boolean(r.is_edited),
       createdAt: r.created_at,
     };
@@ -971,7 +1088,7 @@ app.get('/api/recommendations/profile', (req, res) => {
   });
 });
 
-app.post('/api/reports', (req, res) => {
+app.post('/api/reports', reportLimiter, (req, res) => {
   const { targetType, targetId, reporterId, reason } = req.body as {
     targetType?: 'post' | 'post_comment' | 'video' | 'video_comment' | 'live';
     targetId?: string;
@@ -1005,7 +1122,8 @@ app.post('/api/reports', (req, res) => {
     'SELECT COUNT(*) as c FROM content_reports WHERE target_type = ? AND target_id = ?'
   ).get(targetType, targetId) as { c: number };
   const reportsCount = Number(cntRow?.c || 0);
-  const isSensitive = reportsCount >= SENSITIVE_REPORT_THRESHOLD;
+  // Proportional anti-brigading check: scales automatically with positive engagement!
+  const isSensitive = isContentSensitive(targetType, targetId, reportsCount);
 
   // Teach recommendation engine to show less of this reported item/author to reporter
   if (targetType === 'post') {
@@ -1020,7 +1138,8 @@ app.post('/api/reports', (req, res) => {
   }
 
   broadcast('content:reported', { targetType, targetId, reportsCount, isSensitive });
-  res.json({ ok: true, reportsCount, isSensitive, threshold: SENSITIVE_REPORT_THRESHOLD });
+  // Discreet response: never leak internal threshold!
+  res.json({ ok: true, reportsCount, isSensitive });
 });
 
 app.get('/api/hashtags/:tag', (req, res) => {
@@ -1053,11 +1172,22 @@ app.get('/api/hashtags/:tag', (req, res) => {
     ORDER BY p.rowid DESC
   `).all(likeTag) as Array<Record<string, unknown>>;
 
+  const tagQuotedMap = loadQuotedPostMap(postRows.map(r => String(r.quoted_post_id || '')));
+
   const posts = postRows.map(r => {
     let mediaUrls: string[] = [];
     try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
     if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
     const rCnt = postReports.get(String(r.id)) || 0;
+    const rxMap = rxByPost.get(String(r.id)) || {};
+    const eng = computePostPositiveEngagement({
+      reactions: rxMap,
+      likesCount: Number(r.likes_count || 0),
+      score: Number(r.score ?? r.likes_count ?? 0),
+      commentsCount: Number(r.comments_count || 0),
+      sharesCount: Number(r.shares_count || 0),
+    });
+    const quotedId = r.quoted_post_id ? String(r.quoted_post_id) : '';
     return {
       id: r.id,
       userId: r.user_id,
@@ -1078,16 +1208,17 @@ app.get('/api/hashtags/:tag', (req, res) => {
       poll: null,
       score: Number(r.score ?? r.likes_count ?? 0),
       myVote: 0,
-      reactions: rxByPost.get(String(r.id)) || {},
+      reactions: rxMap,
       myReaction: myRxMap.get(String(r.id)) || null,
       likesCount: Number(r.likes_count || 0),
       commentsCount: Number(r.comments_count || 0),
       sharesCount: Number(r.shares_count || 0),
       likedByMe: myRxMap.has(String(r.id)),
       savedByMe: savedSet.has(String(r.id)),
+      quotedPost: quotedId ? tagQuotedMap.get(quotedId) || null : null,
       isEdited: Boolean(r.is_edited),
       reportsCount: rCnt,
-      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      isSensitive: rCnt >= computeSensitiveReportThreshold(eng),
       createdAt: r.created_at,
     };
   });
@@ -1101,6 +1232,12 @@ app.get('/api/hashtags/:tag', (req, res) => {
 
   const videos = videoRows.map(r => {
     const rCnt = videoReports.get(String(r.id)) || 0;
+    const vidEng = Math.floor(
+      Number(r.likes_count || 0) +
+        Number(r.comments_count || 0) * 0.5 +
+        Number(r.saves_count || 0) * 0.5 +
+        Number(r.shares_count || 0) * 0.5
+    );
     return {
       id: r.id,
       userId: r.user_id,
@@ -1127,7 +1264,7 @@ app.get('/api/hashtags/:tag', (req, res) => {
       likedByMe: false,
       savedByMe: false,
       reportsCount: rCnt,
-      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      isSensitive: rCnt >= computeSensitiveReportThreshold(vidEng),
       createdAt: r.created_at,
     };
   });
@@ -1415,6 +1552,8 @@ app.get('/api/posts', (req, res) => {
     }
   }
 
+  const quotedPostMap = loadQuotedPostMap(rows.map(r => String(r.quoted_post_id || '')));
+
   const rawPosts = rows.map((r, idx) => {
     let mediaUrls: string[] = [];
     try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
@@ -1431,8 +1570,17 @@ app.get('/api/posts', (req, res) => {
     }
 
     const rCnt = postReports.get(String(r.id)) || 0;
-    const isSensitive = rCnt >= SENSITIVE_REPORT_THRESHOLD;
+    const rxMap = reactionsByPost.get(String(r.id)) || {};
+    const postEng = computePostPositiveEngagement({
+      reactions: rxMap,
+      likesCount: Number(r.likes_count || 0),
+      score: Number(r.score ?? r.likes_count ?? 0),
+      commentsCount: Number(r.comments_count || 0),
+      sharesCount: Number(r.shares_count || 0),
+    });
+    const isSensitive = rCnt >= computeSensitiveReportThreshold(postEng);
     const reposter = latestRepostMap.get(String(r.id)) || null;
+    const quotedId = r.quoted_post_id ? String(r.quoted_post_id) : '';
 
     return {
       id: String(r.id),
@@ -1454,7 +1602,7 @@ app.get('/api/posts', (req, res) => {
       poll,
       score: Number(r.score ?? r.likes_count ?? 0),
       myVote: voteMap.get(String(r.id)) || 0,
-      reactions: reactionsByPost.get(String(r.id)) || {},
+      reactions: rxMap,
       myReaction: myReactionMap.get(String(r.id)) || null,
       likesCount: Number(r.likes_count || 0),
       commentsCount: Number(r.comments_count || 0),
@@ -1463,6 +1611,7 @@ app.get('/api/posts', (req, res) => {
       savedByMe: savedSet.has(String(r.id)),
       repostedByMe: myRepostSet.has(String(r.id)),
       repostedBy: reposter && reposter.userId !== String(r.user_id) ? reposter : null,
+      quotedPost: quotedId ? quotedPostMap.get(quotedId) || null : null,
       isEdited: Boolean(r.is_edited),
       reportsCount: rCnt,
       isSensitive,
@@ -1485,7 +1634,7 @@ app.get('/api/posts', (req, res) => {
 });
 
 app.post('/api/posts', (req, res) => {
-  const { userId, content, mediaUrl, mediaUrls, musicUrl, musicTitle, poll } = req.body as {
+  const { userId, content, mediaUrl, mediaUrls, musicUrl, musicTitle, poll, quotedPostId } = req.body as {
     userId: string;
     content: string;
     mediaUrl?: string;
@@ -1493,6 +1642,7 @@ app.post('/api/posts', (req, res) => {
     musicUrl?: string | null;
     musicTitle?: string | null;
     poll?: { question: string; options: string[] } | null;
+    quotedPostId?: string | null;
   };
   const cleanMedia = Array.isArray(mediaUrls)
     ? mediaUrls.filter(Boolean).slice(0, 4)
@@ -1500,7 +1650,19 @@ app.post('/api/posts', (req, res) => {
     ? [mediaUrl]
     : [];
 
-  if (!userId || (!content?.trim() && cleanMedia.length === 0)) {
+  let validQuotedId: string | null = null;
+  let quotedOwnerId: string | null = null;
+  if (quotedPostId) {
+    const qRow = db.prepare('SELECT id, user_id FROM posts WHERE id = ?').get(quotedPostId) as
+      | { id: string; user_id: string }
+      | undefined;
+    if (qRow) {
+      validQuotedId = qRow.id;
+      quotedOwnerId = qRow.user_id;
+    }
+  }
+
+  if (!userId || (!content?.trim() && cleanMedia.length === 0 && !validQuotedId)) {
     return res.status(400).json({ ok: false, error: 'محتوى المنشور مطلوب.' });
   }
   const id = `p_${uuid().slice(0, 8)}`;
@@ -1519,9 +1681,23 @@ app.post('/api/posts', (req, res) => {
   }
 
   db.prepare(`
-    INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, music_url, music_title, poll_json, score, likes_count, created_at)
-    VALUES (?, ?, 'عام', ?, ?, ?, ?, ?, ?, 1, 1, 'الآن')
-  `).run(id, userId, (content || '').trim(), firstMedia, urlsJson, musicUrl || null, musicTitle || null, pollJson);
+    INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, music_url, music_title, quoted_post_id, poll_json, score, likes_count, created_at)
+    VALUES (?, ?, 'عام', ?, ?, ?, ?, ?, ?, ?, 1, 1, 'الآن')
+  `).run(id, userId, (content || '').trim(), firstMedia, urlsJson, musicUrl || null, musicTitle || null, validQuotedId, pollJson);
+
+  if (validQuotedId) {
+    db.prepare('UPDATE posts SET shares_count = shares_count + 1 WHERE id = ?').run(validQuotedId);
+    if (quotedOwnerId && quotedOwnerId !== userId) {
+      createNotification({
+        userId: quotedOwnerId,
+        actorId: userId,
+        type: 'react',
+        text: 'اقتبس منشورك وعلّق عليه',
+        refTab: 'social',
+        refId: id,
+      });
+    }
+  }
 
   db.prepare('INSERT OR REPLACE INTO post_votes (post_id, user_id, vote) VALUES (?, ?, 1)').run(id, userId);
   broadcast('social:new_post', { id });
@@ -1796,7 +1972,7 @@ app.get('/api/posts/:id/comments', (req, res) => {
         audioDurationSec: Number(r.audio_duration_sec || 6),
         transcript: r.transcript ? String(r.transcript) : null,
         reportsCount: rCnt,
-        isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+        isSensitive: rCnt > 0 && isContentSensitive('post_comment', String(r.id), rCnt),
         createdAt: r.created_at,
       };
     }),
@@ -1935,7 +2111,13 @@ app.get('/api/videos', (req, res) => {
 
   const rawVideos = rows.map((r, idx) => {
     const rCnt = videoReports.get(String(r.id)) || 0;
-    const isSensitive = rCnt >= SENSITIVE_REPORT_THRESHOLD;
+    const vidEng = Math.floor(
+      Number(r.likes_count || 0) +
+        Number(r.comments_count || 0) * 0.5 +
+        Number(r.saves_count || 0) * 0.5 +
+        Number(r.shares_count || 0) * 0.5
+    );
+    const isSensitive = rCnt >= computeSensitiveReportThreshold(vidEng);
     return {
       id: String(r.id),
       userId: String(r.user_id),
@@ -2138,7 +2320,7 @@ app.get('/api/videos/:id/comments', (req, res) => {
       likedByMe: viewerId ? likedBy.includes(viewerId) : false,
       isEdited: Boolean(r.is_edited),
       reportsCount: rCnt,
-      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      isSensitive: rCnt >= computeSensitiveReportThreshold(Number(r.likes_count || 0)),
       createdAt: r.created_at || 'الآن',
     };
   });
@@ -2894,7 +3076,7 @@ app.get('/api/live/rooms', (req, res) => {
       cooldownSec: runtime.cooldownSec,
       hasActiveStory: storyUsers.has(String(r.host_id)),
       reportsCount: rCnt,
-      isSensitive: rCnt >= SENSITIVE_REPORT_THRESHOLD,
+      isSensitive: rCnt >= computeSensitiveReportThreshold(Math.floor(Number(runtime.likesCount || 0) + Number(runtime.viewersCount || 0) * 0.1)),
       // ranking fields: live popularity grows directly with taps/likes + active comments + viewers!
       authorId: String(r.host_id),
       text: `${String(r.title || '')} ${String(r.category || '')}`,
@@ -3078,7 +3260,7 @@ app.delete('/api/ai/sessions/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/ai/chat', async (req, res) => {
+app.post('/api/ai/chat', aiLimiter, async (req, res) => {
   const { userId, prompt, provider, model, sessionId, audioUrl, transcript } = req.body as {
     userId: string;
     prompt?: string;
@@ -3759,6 +3941,19 @@ if (fs.existsSync(distDir)) {
 }
 
 const PORT = Number(process.env.PORT || 4000);
-server.listen(PORT, () => {
-  console.log(`\n  ✦ LM Core v6 running at http://localhost:${PORT}\n`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n  ✦ LM Core v6 (Phase 1 Free Production) running at http://localhost:${PORT}\n`);
 });
+
+function gracefulShutdown(signal: string) {
+  console.log(`\n  [LM] Received ${signal} — checkpointing SQLite WAL & closing cleanly...`);
+  try {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  } catch {
+    // ignore
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 4000).unref();
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

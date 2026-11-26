@@ -687,6 +687,39 @@ export function ProfileView({
                       ))}
                     </div>
                   )}
+
+                  {/* Embedded Quoted Post Card */}
+                  {post.quotedPost && (
+                    <div
+                      onClick={() => onOpenProfile(post.quotedPost!.userId)}
+                      className="mt-2 rounded-2xl bg-[#111116] border border-white/[0.1] hover:border-white/[0.2] p-3 space-y-2 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center gap-2 text-xs">
+                        <UserAvatar
+                          initials={post.quotedPost.avatarInitials}
+                          avatarUrl={post.quotedPost.avatarUrl}
+                          size={22}
+                        />
+                        <span className="font-semibold text-white truncate">{post.quotedPost.displayName}</span>
+                        {post.quotedPost.verified && <VerifiedIcon />}
+                        <span className="text-[11px] text-[#7A7A85] font-mono-num">@{post.quotedPost.username}</span>
+                        <span className="text-[#585860]">·</span>
+                        <span className="text-[10.5px] text-[#7A7A85]">{post.quotedPost.createdAt}</span>
+                      </div>
+                      {post.quotedPost.content && (
+                        <p className="text-xs text-[#D4D4D8] leading-relaxed line-clamp-3">
+                          {post.quotedPost.content}
+                        </p>
+                      )}
+                      {post.quotedPost.mediaUrl && (
+                        <img
+                          src={post.quotedPost.mediaUrl}
+                          alt=""
+                          className="w-full max-h-[200px] rounded-xl object-cover border border-white/[0.08]"
+                        />
+                      )}
+                    </div>
+                  )}
                 </article>
                 );
               })

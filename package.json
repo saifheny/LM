@@ -9,6 +9,7 @@
     "dev": "concurrently -k -n SERVER,CLIENT -c cyan,green \"tsx watch server/index.ts\" \"vite\"",
     "build": "vite build",
     "start": "tsx server/index.ts",
+    "share": "powershell -ExecutionPolicy Bypass -File scripts/share-with-friends.ps1",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

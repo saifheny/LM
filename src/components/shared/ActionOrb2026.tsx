@@ -8,9 +8,18 @@ import { StylusEditIcon, RemoveCrossIcon } from './Icons2026Pro';
  * - Spring-animated glass menu with sculpted jewel-toned duotone icons
  * - 2-tap inline morphing confirmation on Remove ("إزالة" -> "تأكيد الإزالة") — ZERO ugly trash-can icon!
  */
+export interface ActionMenuExtraItem {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  danger?: boolean;
+  onClick: () => void;
+}
+
 export function ActionMenuOrb({
   onEdit,
   onRemove,
+  extraItems,
   editLabel = 'تعديل',
   removeLabel = 'إزالة',
   align = 'end',
@@ -19,6 +28,7 @@ export function ActionMenuOrb({
 }: {
   onEdit?: () => void;
   onRemove?: () => void;
+  extraItems?: ActionMenuExtraItem[];
   editLabel?: string;
   removeLabel?: string;
   align?: 'start' | 'end';
@@ -87,6 +97,25 @@ export function ActionMenuOrb({
                 <span>{editLabel}</span>
               </button>
             )}
+
+            {extraItems?.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  item.onClick();
+                }}
+                className={`w-full px-3 py-2 rounded-xl flex items-center gap-2.5 text-xs font-medium cursor-pointer transition-colors text-start ${
+                  item.danger
+                    ? 'hover:bg-[#EF4444]/12 text-[#FB7185] font-semibold'
+                    : 'hover:bg-white/[0.08] text-[#F2F2F5]'
+                }`}
+              >
+                <span className="shrink-0 flex items-center justify-center">{item.icon}</span>
+                <span className="truncate">{item.label}</span>
+              </button>
+            ))}
 
             {onRemove && (
               <button

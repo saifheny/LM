@@ -72,6 +72,19 @@ export interface LicensedMusicTrack {
   url: string;
 }
 
+export interface QuotedPostSummary {
+  id: string;
+  userId: string;
+  displayName: string;
+  username: string;
+  avatarInitials: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  content: string;
+  mediaUrl: string | null;
+  createdAt: string;
+}
+
 export interface SocialPost {
   id: string;
   userId: string;
@@ -105,6 +118,7 @@ export interface SocialPost {
     displayName: string;
     username: string;
   } | null;
+  quotedPost?: QuotedPostSummary | null;
   isEdited?: boolean;
   reportsCount?: number;
   isSensitive?: boolean;

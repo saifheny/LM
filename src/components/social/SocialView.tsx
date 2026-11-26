@@ -31,6 +31,8 @@ import {
   Send,
   Languages,
   Square,
+  Link2,
+  Quote,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Swiper, SwiperSlide } from 'swiper/react';
@@ -147,6 +149,12 @@ export function SocialView({
   const [commentTranslations, setCommentTranslations] = useState<Record<string, { text: string; lang: string }>>({});
   const [translatingCommentId, setTranslatingCommentId] = useState<string | null>(null);
   const [commentLangMenuId, setCommentLangMenuId] = useState<string | null>(null);
+
+  // 2026 Repost Menu & Quote Repost Studio
+  const [repostMenuPostId, setRepostMenuPostId] = useState<string | null>(null);
+  const [quotingPost, setQuotingPost] = useState<SocialPost | null>(null);
+  const [quoteDraft, setQuoteDraft] = useState('');
+  const [publishingQuote, setPublishingQuote] = useState(false);
 
   // Sensitive Content Blur & Universal Reporting
   const [reportRequest, setReportRequest] = useState<ReportRequest | null>(null);
@@ -800,6 +808,24 @@ export function SocialView({
     }
   }
 
+  async function submitQuotePost(e: React.FormEvent) {
+    e.preventDefault();
+    if (!quotingPost || publishingQuote) return;
+    setPublishingQuote(true);
+    try {
+      await apiPost('/api/posts', {
+        userId: user.id,
+        content: quoteDraft.trim() || (lang === 'en' ? 'Shared this post' : 'مشاركة هذا المنشور'),
+        quotedPostId: quotingPost.id,
+      });
+      setQuotingPost(null);
+      setQuoteDraft('');
+      await loadFeed();
+    } finally {
+      setPublishingQuote(false);
+    }
+  }
+
   async function translateCommentText(commentId: string, text: string, targetLang: string) {
     if (!text.trim()) return;
     setCommentLangMenuId(null);
@@ -945,6 +971,7 @@ export function SocialView({
   return (
     <div
       onClick={() => {
+        if (repostMenuPostId) setRepostMenuPostId(null);
         // Clicking anywhere outside an open comments section collapses it while PRESERVING drafts!
         if (Object.values(openThreads).some(Boolean)) {
           setOpenThreads({});
@@ -1416,19 +1443,56 @@ export function SocialView({
                         {post.isEdited && <span className="text-[10.5px] text-[#7A7A85]">(معدّل)</span>}
                       </div>
 
-                      {post.userId === user.id && (
-                        <div onClick={e => e.stopPropagation()} className="shrink-0">
+                      <div onClick={e => e.stopPropagation()} className="shrink-0">
+                        {post.userId === user.id ? (
                           <ActionMenuOrb
-                            editLabel="تعديل المنشور"
-                            removeLabel="إزالة المنشور"
+                            editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
+                            removeLabel={lang === 'en' ? 'Remove post' : 'إزالة المنشور'}
                             onEdit={() => {
                               setEditingPostId(post.id);
                               setEditingPostText(post.content);
                             }}
                             onRemove={() => deletePost(post.id)}
                           />
-                        </div>
-                      )}
+                        ) : (
+                          <ActionMenuOrb
+                            extraItems={[
+                              {
+                                id: 'save',
+                                label: post.savedByMe
+                                  ? lang === 'en'
+                                    ? 'Remove from saved'
+                                    : 'إزالة من المحفوظات'
+                                  : lang === 'en'
+                                    ? 'Save post'
+                                    : 'حفظ المنشور',
+                                icon: <Bookmark className={`w-3.5 h-3.5 ${post.savedByMe ? 'text-[#FACC15] fill-current' : 'text-[#D4D4D8]'}`} />,
+                                onClick: () => toggleSavePost(post.id),
+                              },
+                              {
+                                id: 'copy_link',
+                                label: lang === 'en' ? 'Copy link' : 'نسخ رابط المنشور',
+                                icon: <Link2 className="w-3.5 h-3.5 text-[#D4D4D8]" />,
+                                onClick: () => {
+                                  navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
+                                },
+                              },
+                              {
+                                id: 'report',
+                                label: lang === 'en' ? 'Report post' : 'إبلاغ عن المنشور',
+                                icon: <Flag className="w-3.5 h-3.5 text-[#FB7185]" />,
+                                danger: true,
+                                onClick: () =>
+                                  setReportRequest({
+                                    targetType: 'post',
+                                    targetId: post.id,
+                                    label: lang === 'en' ? 'this post' : 'هذا المنشور',
+                                  }),
+                              },
+                            ]}
+                          />
+                        )}
+                      </div>
                     </div>
 
                     {editingPostId === post.id ? (
@@ -1633,7 +1697,43 @@ export function SocialView({
                       </div>
                     )}
 
-                    {/* Action Row with Facebook-Style Floating Animated Multi-Effect Reactions + X-Style Repost + Discreet Report Last */}
+                    {/* Embedded Quoted Post Card (Quote Repost) */}
+                    {post.quotedPost && (
+                      <div
+                        onClick={e => {
+                          e.stopPropagation();
+                          onOpenProfile?.(post.quotedPost!.userId);
+                        }}
+                        className="mt-3 rounded-2xl bg-[#111116] border border-white/[0.1] hover:border-white/[0.22] p-3 space-y-2 cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center gap-2 text-xs min-w-0">
+                          <UserAvatar
+                            initials={post.quotedPost.avatarInitials}
+                            avatarUrl={post.quotedPost.avatarUrl}
+                            size={22}
+                          />
+                          <span className="font-semibold text-white truncate">{post.quotedPost.displayName}</span>
+                          {post.quotedPost.verified && <VerifiedIcon />}
+                          <span className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{post.quotedPost.username}</span>
+                          <span className="text-[#585860]">·</span>
+                          <span className="text-[10.5px] text-[#7A7A85] shrink-0">{post.quotedPost.createdAt}</span>
+                        </div>
+                        {post.quotedPost.content && (
+                          <div className="text-[13px] text-[#D4D4D8] leading-relaxed line-clamp-3">
+                            {post.quotedPost.content}
+                          </div>
+                        )}
+                        {post.quotedPost.mediaUrl && (
+                          <img
+                            src={post.quotedPost.mediaUrl}
+                            alt=""
+                            className="w-full max-h-[220px] rounded-xl object-cover border border-white/[0.08]"
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    {/* Action Row — Clean Bottom Bar (Reactions + Comments + Upgraded Repost/Quote Menu + Save + Share; Report moved cleanly to TOP corner!) */}
                     <div className="mt-3 flex items-center justify-between text-[#7A7A85]">
                       <div className="flex items-center gap-4">
                         <FacebookReactionButton
@@ -1658,20 +1758,63 @@ export function SocialView({
                           <span className="font-mono-num">{formatCount(post.commentsCount)}</span>
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation();
-                            handleRepost(post.id);
-                          }}
-                          title={post.repostedByMe ? (lang === 'en' ? 'Undo Repost' : 'إلغاء إعادة النشر') : lang === 'en' ? 'Repost' : 'إعادة نشر'}
-                          className={`flex items-center gap-1.5 text-xs transition-colors cursor-pointer ${
-                            post.repostedByMe ? 'text-[#34D399] font-semibold' : 'hover:text-white'
-                          }`}
-                        >
-                          <Repeat2 className="w-4 h-4" strokeWidth={post.repostedByMe ? 2.2 : 1.75} />
-                          <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
-                        </button>
+                        {/* 2026 Upgraded Repost & Quote Repost Trigger */}
+                        <div className="relative" onClick={e => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRepostMenuPostId(cur => (cur === post.id ? null : post.id))
+                            }
+                            title={lang === 'en' ? 'Repost or Quote' : 'إعادة نشر أو اقتباس'}
+                            className={`flex items-center gap-1.5 text-xs transition-colors cursor-pointer ${
+                              post.repostedByMe ? 'text-[#34D399] font-semibold' : 'hover:text-white'
+                            }`}
+                          >
+                            <Repeat2 className="w-4 h-4" strokeWidth={post.repostedByMe ? 2.2 : 1.75} />
+                            <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
+                          </button>
+
+                          {repostMenuPostId === post.id && (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.92, y: 6 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              transition={{ type: 'spring', stiffness: 460, damping: 28 }}
+                              className="absolute bottom-full start-0 mb-2 z-40 min-w-[180px] p-1.5 rounded-2xl bg-[#15151C]/98 backdrop-blur-2xl border border-white/[0.14] shadow-[0_14px_40px_rgba(0,0,0,0.75)] space-y-1"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRepostMenuPostId(null);
+                                  handleRepost(post.id);
+                                }}
+                                className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs font-medium text-white cursor-pointer text-start transition-colors"
+                              >
+                                <Repeat2 className={`w-4 h-4 shrink-0 ${post.repostedByMe ? 'text-[#FB7185]' : 'text-[#34D399]'}`} />
+                                <span>
+                                  {post.repostedByMe
+                                    ? lang === 'en'
+                                      ? 'Undo repost'
+                                      : 'إلغاء إعادة النشر'
+                                    : lang === 'en'
+                                      ? 'Repost'
+                                      : 'إعادة نشر'}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRepostMenuPostId(null);
+                                  setQuotingPost(post);
+                                  setQuoteDraft('');
+                                }}
+                                className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs font-medium text-white cursor-pointer text-start transition-colors"
+                              >
+                                <Quote className="w-4 h-4 shrink-0 text-[#FBBF24]" />
+                                <span>{lang === 'en' ? 'Quote post' : 'اقتباس المنشور برأيك'}</span>
+                              </button>
+                            </motion.div>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-1.5">
@@ -1708,23 +1851,6 @@ export function SocialView({
                         >
                           <Share2 className="w-3.5 h-3.5" strokeWidth={1.8} />
                         </button>
-                        {post.userId !== user.id && (
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              setReportRequest({
-                                targetType: 'post',
-                                targetId: post.id,
-                                label: lang === 'en' ? 'this post' : 'هذا المنشور',
-                              });
-                            }}
-                            title={t(lang, 'report')}
-                            className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
-                          >
-                            <Flag className="w-3.5 h-3.5" strokeWidth={1.75} />
-                          </button>
-                        )}
                       </div>
                     </div>
 
@@ -2922,6 +3048,70 @@ export function SocialView({
               })()}
             </div>
           </div>
+        </StudioModalOverlay>
+      )}
+
+      {/* 2026 Quote Repost Studio Modal */}
+      {quotingPost && (
+        <StudioModalOverlay zClass="z-[78]" onClose={() => setQuotingPost(null)}>
+          <form onSubmit={submitQuotePost} className="p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <Quote className="w-4 h-4 text-[#FBBF24]" />
+                <span>{lang === 'en' ? 'Quote Post' : 'اقتباس المنشور برأيك'}</span>
+              </div>
+              <CloseOrbButton onClick={() => setQuotingPost(null)} />
+            </div>
+
+            <div className="flex items-start gap-3">
+              <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={36} />
+              <textarea
+                autoFocus
+                rows={3}
+                value={quoteDraft}
+                onChange={e => setQuoteDraft(e.target.value)}
+                placeholder={lang === 'en' ? 'Add your thoughts on this post...' : 'أضف تعليقك أو رأيك على هذا المنشور...'}
+                className="flex-1 bg-transparent resize-none text-sm text-white placeholder:text-[#63636C] outline-none leading-relaxed"
+              />
+            </div>
+
+            {/* Embedded Original Post Preview */}
+            <div className="rounded-2xl bg-[#0B0B0F] border border-white/[0.1] p-3 space-y-2">
+              <div className="flex items-center gap-2 text-xs">
+                <UserAvatar initials={quotingPost.avatarInitials} avatarUrl={quotingPost.avatarUrl} size={22} />
+                <span className="font-semibold text-white truncate">{quotingPost.displayName}</span>
+                {quotingPost.verified && <VerifiedIcon />}
+                <span className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{quotingPost.username}</span>
+              </div>
+              {quotingPost.content && (
+                <p className="text-xs text-[#C4C4CC] line-clamp-3 leading-relaxed">{quotingPost.content}</p>
+              )}
+              {quotingPost.mediaUrls[0] && (
+                <img
+                  src={quotingPost.mediaUrls[0]}
+                  alt=""
+                  className="w-full max-h-[150px] rounded-xl object-cover border border-white/[0.08]"
+                />
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setQuotingPost(null)}
+                className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer"
+              >
+                {t(lang, 'cancel')}
+              </button>
+              <PublishActionButton
+                type="submit"
+                variant="luminous"
+                loading={publishingQuote}
+                label={lang === 'en' ? 'Post Quote' : 'نشر الاقتباس'}
+                loadingLabel={t(lang, 'posting')}
+              />
+            </div>
+          </form>
         </StudioModalOverlay>
       )}
 

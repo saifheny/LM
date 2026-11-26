@@ -1,0 +1,9 @@
+node_modules
+dist
+data/providers.json
+data/.session_secret
+data/*.db-shm
+data/*.db-wal
+.git
+.env
+*.log
