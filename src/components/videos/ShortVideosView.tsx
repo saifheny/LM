@@ -1033,11 +1033,7 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
             <div className="pointer-events-none absolute bottom-3 inset-x-3 z-20 flex flex-col gap-2">
               {replyTo && (
                 <div className="pointer-events-auto w-fit max-w-[280px] self-start rounded-2xl bg-[#16161D]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-1.5 flex items-center gap-2.5 shadow-xl">
-                  <span
-                    className={`w-[2.5px] self-stretch rounded-full shrink-0 ${
-                      replyTo.isAi ? 'bg-[#6366F1]' : 'bg-white/50'
-                    }`}
-                  />
+                  <span className="w-[2.5px] self-stretch rounded-full shrink-0 bg-white/50" />
                   <div className="min-w-0">
                     <div className="text-[10.5px] font-semibold text-white truncate">الرد على {replyTo.name}</div>
                     {replyTo.snippet && (
@@ -1057,7 +1053,6 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
               <div className="pointer-events-auto">
                 {recordingVoice ? (
                   <LiveVoiceRecorder
-                    accent={aiMode ? 'ai' : 'default'}
                     onCancel={() => setRecordingVoice(false)}
                     onSend={submitVoiceComment}
                   />
@@ -1072,9 +1067,9 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                         type="button"
                         onClick={() => setAiMode(v => !v)}
                         title="استدعاء الذكاء الاصطناعي"
-                        className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+                        className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
                           aiMode
-                            ? 'bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white shadow-[0_2px_12px_rgba(99,102,241,0.5)]'
+                            ? 'bg-white/[0.15] text-white border border-white/25'
                             : 'text-[#7A7A85] hover:text-white'
                         }`}
                       >
@@ -1084,15 +1079,6 @@ export function ShortVideosView({ user, lang }: ShortVideosViewProps) {
                     customAction={
                       commentDraft.trim() ? (
                         <ChromeArrowButton type="submit" disabled={submittingComment} size={36} />
-                      ) : aiMode ? (
-                        <button
-                          type="button"
-                          onClick={() => setRecordingVoice(true)}
-                          title="رد صوتي لـ AI"
-                          className="w-[36px] h-[36px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_14px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
-                        >
-                          <Mic className="w-[16px] h-[16px]" strokeWidth={2} />
-                        </button>
                       ) : (
                         <button
                           type="button"

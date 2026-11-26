@@ -27,7 +27,7 @@ import {
 import { Lang, UserProfile } from '../../types';
 import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
-import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText } from '../shared/LmBrandMark';
+import { MARKDOWN_LINK_COMPONENTS, RichMessageText } from '../shared/LmBrandMark';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { AI_COMPANIES, AiCompanyDef, AiCompanyModel, shortenModelLabel } from './AiProvidersCatalog';
@@ -848,7 +848,7 @@ export function AiView({ user, lang }: AiViewProps) {
                 )}
 
                 {recordingVoice ? (
-                  <LiveVoiceRecorder accent="ai" onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
+                  <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
                 ) : (
                   <form
                     onSubmit={e => {
@@ -883,18 +883,20 @@ export function AiView({ user, lang }: AiViewProps) {
                         </button>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      {prompt.trim() ? (
+                        <ChromeArrowButton type="submit" disabled={loading} size={38} />
+                      ) : (
                         <button
                           type="button"
                           onClick={() => setRecordingVoice(true)}
-                          title="تسجيل رسالة صوتية للذكاء الاصطناعي"
-                          className="h-9 px-3 rounded-full bg-gradient-to-r from-[#0EA5E9]/20 via-[#6366F1]/25 to-[#A855F7]/20 hover:from-[#0EA5E9]/35 hover:to-[#A855F7]/35 border border-[#818CF8]/35 text-[#E0E7FF] hover:text-white flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-all"
+                          title="تسجيل رسالة صوتية"
+                          className="chrome-rim-btn w-[38px] h-[38px] shrink-0 cursor-pointer"
                         >
-                          <Mic className="w-3.5 h-3.5 text-[#38BDF8]" />
-                          <span>صوت</span>
+                          <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
+                            <Mic className="w-[17px] h-[17px]" strokeWidth={1.9} />
+                          </span>
                         </button>
-                        <ChromeArrowButton type="submit" disabled={!prompt.trim() || loading} size={38} />
-                      </div>
+                      )}
                     </div>
                   </form>
                 )}
@@ -910,17 +912,13 @@ export function AiView({ user, lang }: AiViewProps) {
                     {t.audioUrl ? (
                       <div
                         onClick={e => e.stopPropagation()}
-                        className="max-w-[85%] rounded-3xl rounded-ee-md px-3.5 py-2.5 border lm-ai-summon-ring space-y-1.5"
+                        className="max-w-[85%] rounded-3xl rounded-ee-md px-3.5 py-2.5 bg-[#1B1B22] border border-white/[0.1]"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <AiSummonBadge label="VOICE AI" compact />
-                        </div>
                         <SmartVoicePill
                           url={t.audioUrl}
                           transcript={t.transcript}
                           recordId={t.id}
                           table="ai_messages"
-                          accent="ai"
                           isMine
                         />
                       </div>
@@ -1064,24 +1062,6 @@ export function AiView({ user, lang }: AiViewProps) {
         </div>
       </div>
 
-      {/* SUBTLE TAPERED BOTTOM OPTICAL SHEEN (Edges cleanly tapered/trimmed away from corners!) */}
-      <div className="lm-ai-bottom-sheen absolute inset-x-0 bottom-0 h-[135px] z-[5]">
-        <div
-          style={{
-            background:
-              'radial-gradient(62% 95% at 50% 108%, rgba(255,255,255,0.13) 0%, rgba(125,211,252,0.08) 32%, rgba(99,102,241,0.05) 58%, transparent 82%)',
-          }}
-          className="w-full h-full"
-        />
-        <div
-          style={{
-            background:
-              'linear-gradient(90deg, transparent 8%, rgba(255,255,255,0.28) 35%, rgba(224,242,254,0.48) 50%, rgba(255,255,255,0.28) 65%, transparent 92%)',
-          }}
-          className="absolute inset-x-10 bottom-0 h-[1.5px] rounded-full"
-        />
-      </div>
-
       <input ref={fileInputRef} type="file" onChange={handleAttach} className="hidden" />
 
       {/* FLOATING COMPOSER: Desktop ChatGPT 2-Row Card (when chatting) + Mobile Floating Split Pill (always) */}
@@ -1103,10 +1083,10 @@ export function AiView({ user, lang }: AiViewProps) {
               </div>
             )}
 
-            {/* DESKTOP ChatGPT-Style 2-Row Floating Card */}
+            {/* DESKTOP ChatGPT-Style 2-Row Floating Card (Unified Voice/Send Button — Zero Blue!) */}
             <div className="hidden md:block">
               {recordingVoice ? (
-                <LiveVoiceRecorder accent="ai" onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
+                <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
               ) : (
                 <form
                   onSubmit={e => {
@@ -1139,30 +1119,32 @@ export function AiView({ user, lang }: AiViewProps) {
                       <Paperclip className="w-[16px] h-[16px]" strokeWidth={1.85} />
                     </button>
 
-                    <div className="flex items-center gap-2">
+                    {prompt.trim() ? (
+                      <ChromeArrowButton type="submit" disabled={loading} size={36} />
+                    ) : (
                       <button
                         type="button"
                         onClick={() => setRecordingVoice(true)}
-                        title="تسجيل رسالة صوتية للذكاء الاصطناعي"
-                        className="h-8 px-2.5 rounded-full bg-gradient-to-r from-[#0EA5E9]/20 via-[#6366F1]/25 to-[#A855F7]/20 hover:from-[#0EA5E9]/35 hover:to-[#A855F7]/35 border border-[#818CF8]/35 text-[#E0E7FF] hover:text-white flex items-center gap-1.5 text-[11.5px] font-medium cursor-pointer transition-all"
+                        title="تسجيل رسالة صوتية"
+                        className="chrome-rim-btn w-[36px] h-[36px] shrink-0 cursor-pointer"
                       >
-                        <Mic className="w-3.5 h-3.5 text-[#38BDF8]" />
-                        <span>صوت</span>
+                        <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
+                          <Mic className="w-[16px] h-[16px]" strokeWidth={1.9} />
+                        </span>
                       </button>
-                      <ChromeArrowButton type="submit" disabled={!prompt.trim() || loading} size={36} />
-                    </div>
+                    )}
                   </div>
                 </form>
               )}
             </div>
 
-            {/* MOBILE Floating Split Orb + Pill with Voice-to-AI */}
+            {/* MOBILE Floating Split Orb + Pill with Unified Voice/Send */}
             <div className="flex md:hidden items-end gap-2.5">
               <SplitComposerOrb onAttach={() => fileInputRef.current?.click()} showNavOption />
 
               <div className="flex-1 min-w-0">
                 {recordingVoice ? (
-                  <LiveVoiceRecorder accent="ai" onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
+                  <LiveVoiceRecorder onCancel={() => setRecordingVoice(false)} onSend={handleSendVoicePrompt} />
                 ) : (
                   <ObsidianComposerPill
                     value={prompt}
@@ -1182,10 +1164,12 @@ export function AiView({ user, lang }: AiViewProps) {
                         <button
                           type="button"
                           onClick={() => setRecordingVoice(true)}
-                          title="رسالة صوتية للذكاء الاصطناعي"
-                          className="w-[38px] h-[38px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_16px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
+                          title="تسجيل رسالة صوتية"
+                          className="chrome-rim-btn w-[38px] h-[38px] shrink-0 cursor-pointer"
                         >
-                          <Mic className="w-[17px] h-[17px]" strokeWidth={2} />
+                          <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
+                            <Mic className="w-[17px] h-[17px]" strokeWidth={1.9} />
+                          </span>
                         </button>
                       )
                     }

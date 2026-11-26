@@ -984,16 +984,12 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
               {/* Compact Side-Aligned Reply / AI Context Card (Never oversized or paper-thin!) */}
               {(replyTarget || sharedForAi) && (
                 <div className="w-fit max-w-[300px] sm:max-w-[340px] self-start rounded-2xl bg-[#15151C]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-2 flex items-center gap-2.5 shadow-xl">
-                  <span
-                    className={`w-[2.5px] self-stretch rounded-full shrink-0 ${
-                      sharedForAi ? 'bg-[#A78BFA]' : 'bg-white/55'
-                    }`}
-                  />
+                  <span className="w-[2.5px] self-stretch rounded-full shrink-0 bg-white/55" />
                   <div className="min-w-0">
                     <div className="text-[11px] font-semibold text-white flex items-center gap-1 truncate">
                       {sharedForAi ? (
                         <>
-                          <Sparkles className="w-3 h-3 text-[#C4B5FD] shrink-0" />
+                          <Sparkles className="w-3 h-3 text-[#D4D4D8] shrink-0" />
                           <span>سياق AI • {sharedForAi.displayName}</span>
                         </>
                       ) : (
@@ -1045,7 +1041,6 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                 <div className="flex-1 min-w-0">
                   {recordingVoice ? (
                     <LiveVoiceRecorder
-                      accent={invokeAiMode ? 'ai' : 'default'}
                       onCancel={() => setRecordingVoice(false)}
                       onSend={handleSendVoice}
                     />
@@ -1070,9 +1065,9 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           type="button"
                           onClick={() => setInvokeAiMode(v => !v)}
                           title={invokeAiMode ? 'إيقاف استدعاء AI' : 'تفعيل استدعاء الذكاء الاصطناعي'}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
                             invokeAiMode
-                              ? 'bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white shadow-[0_2px_12px_rgba(99,102,241,0.5)]'
+                              ? 'bg-white/[0.15] text-white border border-white/25'
                               : 'text-[#7A7A85] hover:text-white'
                           }`}
                         >
@@ -1086,10 +1081,12 @@ export function ChatView({ user, lang, lastWsEvent }: ChatViewProps) {
                           <button
                             type="button"
                             onClick={() => setRecordingVoice(true)}
-                            title="تسجيل رسالة صوتية للذكاء الاصطناعي"
-                            className="w-[38px] h-[38px] rounded-full bg-gradient-to-br from-[#0EA5E9] via-[#6366F1] to-[#A855F7] text-white flex items-center justify-center shrink-0 cursor-pointer shadow-[0_4px_16px_rgba(99,102,241,0.45)] active:scale-95 transition-transform"
+                            title="تسجيل رسالة صوتية"
+                            className="chrome-rim-btn w-[38px] h-[38px] shrink-0 cursor-pointer"
                           >
-                            <Mic className="w-[17px] h-[17px]" strokeWidth={2} />
+                            <span className="chrome-rim-btn-inner text-[#D4D4D8] hover:text-white transition-colors">
+                              <Mic className="w-[17px] h-[17px]" strokeWidth={1.9} />
+                            </span>
                           </button>
                         ) : (
                           <button
