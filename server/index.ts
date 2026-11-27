@@ -11,7 +11,14 @@ import { WebSocketServer, WebSocket } from 'ws';
 import multer from 'multer';
 import { v4 as uuid } from 'uuid';
 
-import { db, initDatabase, mapUserRow, loadProviderConfig, saveProviderConfig, UPLOADS_DIR } from './db.ts';
+import { db, DB_PATH, initDatabase, mapUserRow, loadProviderConfig, saveProviderConfig, UPLOADS_DIR } from './db.ts';
+import {
+  getCloudStorageStatus,
+  isTrustedMediaUrl,
+  loadTrustedMediaBytes,
+  storeVerifiedMedia,
+} from './cloudStorage.ts';
+import { flushCloudDbBeforeExit, getCloudDbSyncMeta, scheduleCloudDbSync } from './cloudPersistence.ts';
 import { liveEngine } from './liveEngine.ts';
 import { runLmAi, streamLmAi } from './aiGateway.ts';
 import {
@@ -87,6 +94,23 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '16mb' }));
+
+// Trigger debounced encrypted-in-transit SQLite cloud snapshot on Supabase after any mutating API call
+app.use((req, res, next) => {
+  if (
+    req.path.startsWith('/api/') &&
+    (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE') &&
+    req.path !== '/api/upload' &&
+    req.path !== '/api/translate'
+  ) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 400) {
+        scheduleCloudDbSync(db, DB_PATH);
+      }
+    });
+  }
+  next();
+});
 
 // Phase 1 Zero-Cost Sliding-Window Rate Limiters
 const authLimiter = createRateLimiter({ windowMs: 15 * 60_000, max: 40, message: 'محاولات دخول كثيرة، حاول بعد دقائق.' });
@@ -281,11 +305,15 @@ app.get('/api/health', (_req, res) => {
     uptimeSec: Math.round(process.uptime()),
     memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
     wsClients: wsClients.size,
+    cloud: {
+      ...getCloudStorageStatus(),
+      dbSync: getCloudDbSyncMeta(),
+    },
   });
 });
 
 app.post('/api/upload', uploadLimiter, (req, res) => {
-  upload.single('file')(req, res, err => {
+  upload.single('file')(req, res, async err => {
     if (err) {
       const code = (err as { code?: string }).code;
       if (code === 'LIMIT_FILE_SIZE') {
@@ -319,9 +347,15 @@ app.post('/api/upload', uploadLimiter, (req, res) => {
     }
 
     const safeFilename = path.basename(finalPath);
+    const stored = await storeVerifiedMedia({
+      filePath: finalPath,
+      safeFilename,
+      mimeType: verdict.mimeType,
+    });
     res.json({
       ok: true,
-      url: `/uploads/${safeFilename}`,
+      url: stored.url,
+      storage: stored.storage,
       originalName: path.basename(req.file.originalname || safeFilename).slice(0, 120),
       mimeType: verdict.mimeType,
       category: verdict.category,
@@ -463,14 +497,14 @@ function detectAudioMime(filePath: string): string {
 }
 
 async function transcribeAudioFile(audioUrl: string): Promise<{ transcript: string; modelUsed: string } | null> {
-  if (!audioUrl || !audioUrl.startsWith('/uploads/')) return null;
-  const rel = audioUrl.replace(/^\/uploads\//, '');
-  const resolved = path.resolve(UPLOADS_DIR, rel);
-  if (!resolved.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(resolved)) return null;
+  if (!isTrustedMediaUrl(audioUrl)) return null;
+  const loaded = await loadTrustedMediaBytes(audioUrl, UPLOADS_DIR, 20 * 1024 * 1024);
+  if (!loaded) return null;
 
   const cfg = loadProviderConfig();
-  const audioBuffer = fs.readFileSync(resolved);
-  const mimeType = detectAudioMime(resolved);
+  const audioBuffer = loaded.buffer;
+  const mimeType = loaded.mimeType.startsWith('audio/') ? loaded.mimeType : detectAudioMime(loaded.filename);
+  const audioFilename = loaded.filename;
 
   // 1. Primary: Google Gemini multimodal native audio transcription (Arabic + English verbatim)
   if (cfg.geminiApiKey) {
@@ -522,7 +556,7 @@ async function transcribeAudioFile(audioUrl: string): Promise<{ transcript: stri
     const whisperModel = useGroq ? 'whisper-large-v3-turbo' : 'whisper-1';
     try {
       const form = new FormData();
-      form.append('file', new Blob([audioBuffer], { type: mimeType }), path.basename(resolved));
+      form.append('file', new Blob([new Uint8Array(audioBuffer)], { type: mimeType }), audioFilename);
       form.append('model', whisperModel);
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -549,7 +583,7 @@ app.post('/api/transcribe', async (req, res) => {
     recordId?: string;
   };
 
-  if (!audioUrl || !audioUrl.startsWith('/uploads/')) {
+  if (!isTrustedMediaUrl(audioUrl)) {
     return res.status(400).json({ ok: false, error: 'رابط الملف الصوتي غير صالح.' });
   }
 
@@ -4402,18 +4436,29 @@ if (fs.existsSync(distDir)) {
 
 const PORT = Number(process.env.PORT || 4000);
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n  ✦ LM Core v6 (Phase 1 Free Production) running at http://localhost:${PORT}\n`);
+  const cloud = getCloudStorageStatus();
+  console.log(
+    `\n  ✦ LM Core v6 (Phase 1 Free Production) running at http://localhost:${PORT} [DB: ${cloud.dbPersistence} | Media: ${cloud.mediaProvider}]\n`
+  );
 });
 
-function gracefulShutdown(signal: string) {
-  console.log(`\n  [LM] Received ${signal} — checkpointing SQLite WAL & closing cleanly...`);
+let shuttingDown = false;
+async function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n  [LM] Received ${signal} — syncing cloud DB & checkpointing SQLite WAL...`);
+  try {
+    await flushCloudDbBeforeExit(db, DB_PATH);
+  } catch {
+    // ignore
+  }
   try {
     db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
   } catch {
     // ignore
   }
   server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 4000).unref();
+  setTimeout(() => process.exit(0), 6000).unref();
 }
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));

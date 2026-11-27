@@ -1,8 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
-import fs from 'node:fs';
-import path from 'node:path';
 import { v4 as uuid } from 'uuid';
 import { db, loadProviderConfig, UPLOADS_DIR } from './db.ts';
+import { loadTrustedMediaBytes } from './cloudStorage.ts';
 
 export interface AiChatRequest {
   userId: string;
@@ -19,31 +18,20 @@ export interface AiChatRequest {
   attachmentName?: string | null;
 }
 
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-};
+const ALLOWED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
-function resolveAttachmentPayload(attachmentUrl?: string | null, _attachmentName?: string | null): {
+async function resolveAttachmentPayload(
+  attachmentUrl?: string | null,
+  _attachmentName?: string | null
+): Promise<{
   inlineData?: { mimeType: string; data: string };
   extractedText?: string;
-} {
-  if (!attachmentUrl || !attachmentUrl.startsWith('/uploads/')) return {};
-  const rel = attachmentUrl.replace(/^\/uploads\//, '').replace(/\.\./g, '');
-  const fullPath = path.resolve(UPLOADS_DIR, rel);
-  if (!fullPath.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(fullPath)) return {};
-  const ext = path.extname(fullPath).toLowerCase();
-  // LM AI strictly accepts verified images only (max 8MB)
-  const mime = IMAGE_MIME_BY_EXT[ext];
-  if (!mime) return {};
+}> {
+  if (!attachmentUrl) return {};
   try {
-    const stat = fs.statSync(fullPath);
-    if (stat.size <= 0 || stat.size > 8 * 1024 * 1024) return {};
-    const b64 = fs.readFileSync(fullPath).toString('base64');
-    return { inlineData: { mimeType: mime, data: b64 } };
+    const loaded = await loadTrustedMediaBytes(attachmentUrl, UPLOADS_DIR, 8 * 1024 * 1024);
+    if (!loaded || !ALLOWED_IMAGE_MIMES.has(loaded.mimeType)) return {};
+    return { inlineData: { mimeType: loaded.mimeType, data: loaded.buffer.toString('base64') } };
   } catch {
     return {};
   }
@@ -267,7 +255,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   const config = loadProviderConfig();
   const requestedProvider = pickBestConfiguredProvider(config, req.provider);
 
-  const attachment = resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
+  const attachment = await resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
   const effectiveInlineData =
     req.imageBase64 && req.imageMimeType
       ? { mimeType: req.imageMimeType, data: req.imageBase64 }
@@ -503,7 +491,7 @@ export async function streamLmAi(
 
   // Real native Gemini SSE streaming when Gemini is active!
   if (requestedProvider === 'gemini' && config.geminiApiKey) {
-    const attachment = resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
+    const attachment = await resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
     const effectiveInlineData =
       req.imageBase64 && req.imageMimeType
         ? { mimeType: req.imageMimeType, data: req.imageBase64 }

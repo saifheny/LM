@@ -31,14 +31,13 @@ npm start
 
 Open `http://localhost:4000`.
 
-## Deploy Free ($0, No Credit Card) on Render
+## 100% Free Multi-Service Cloud Stack ($0 Forever, ZERO Credit Card!)
 
-1. Sign in with GitHub at https://dashboard.render.com (no credit card required for free Web Services).
-2. Click **New +** → **Web Service** → select **`saifheny/LM`**.
-3. Keep **Language/Runtime: Docker** and choose **Instance Type: Free ($0/month)**.
-4. Click **Deploy Web Service** — Render builds `Dockerfile` automatically and gives you a permanent HTTPS URL (`https://lm-super-app.onrender.com`) with WebSockets & auto-deploy on every GitHub push.
-5. *(Optional)* Add `GEMINI_API_KEY` under **Environment** to enable LM AI.
+LM automatically combines multiple free no-card cloud tiers to maximize storage and keep your data permanent across container restarts:
 
-## Alternative: Hugging Face Spaces (Requires HF PRO for Docker SDK)
+1. **App Container (Server + WebSockets):** **Back4App Containers** (Free 256 MB RAM / 100 GB bandwidth, no credit card) or **SnapDeploy** (Free 512 MB RAM, no credit card) — deploy directly from `saifheny/LM` using `Dockerfile`.
+2. **Permanent Cloud Database Sync + 1 GB Media Failover:** **Supabase** (Free, no credit card) — add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in container environment variables. LM automatically restores & syncs compressed SQLite snapshots to a private `lm-state` bucket so users, bound devices, posts, and chats survive every restart!
+3. **25 GB/month Cloud Media CDN (Photos, Videos, Voice Notes):** **Cloudinary** (Free, no credit card) — add `CLOUDINARY_URL` in container environment variables so all user uploads go directly to Cloudinary CDN instead of filling container disk.
+4. **AI Assistant (Optional):** Add `GEMINI_API_KEY` in environment variables for LM AI & voice transcription.
 
-Static Spaces are free on Hugging Face, while Docker Spaces require an active Hugging Face PRO subscription. If you have PRO, connect this repo or set `HF_TOKEN` in GitHub Secrets.
+Verify live cloud integration anytime at `GET /api/health` (`cloud.dbPersistence` & `cloud.mediaProvider`).

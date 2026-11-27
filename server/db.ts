@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UserProfile, ProviderConfig } from './types.ts';
+import { restoreDatabaseSnapshotIfConfigured } from './cloudPersistence.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DATA_DIR = process.env.LM_DATA_DIR
@@ -15,7 +16,10 @@ export const UPLOADS_DIR = process.env.LM_UPLOADS_DIR
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-export const db = new DatabaseSync(path.join(DATA_DIR, 'lm.db'));
+export const DB_PATH = path.join(DATA_DIR, 'lm.db');
+await restoreDatabaseSnapshotIfConfigured(DB_PATH);
+
+export const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL;');
 
 const TARGET_DB_VERSION = 13;
