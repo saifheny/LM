@@ -24,7 +24,7 @@ function loadOrCreateSessionSecret(): string {
 }
 
 const SESSION_SECRET = loadOrCreateSessionSecret();
-const TOKEN_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
+const TOKEN_TTL_SEC = 60 * 60 * 24 * 365; // 1 year persistent session on user's trusted device!
 
 /**
  * Zero-dependency Scrypt password hashing (Node built-in crypto, $0 / 0 external packages!)
@@ -99,18 +99,33 @@ export function extractRequestToken(req: Request): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-export function setSessionCookie(res: Response, token: string): void {
+export function extractDeviceId(req: Request): string | null {
+  const fromHeader = String(req.headers['x-lm-device-id'] || '').trim();
+  if (/^[A-Za-z0-9_-]{10,64}$/.test(fromHeader)) return fromHeader;
+  const cookieHeader = req.headers.cookie || '';
+  const match = cookieHeader.match(/(?:^|;\s*)lm_device=([^;]+)/);
+  if (match) {
+    const val = decodeURIComponent(match[1]).trim();
+    if (/^[A-Za-z0-9_-]{10,64}$/.test(val)) return val;
+  }
+  return null;
+}
+
+export function setSessionCookie(res: Response, token: string, deviceId?: string | null): void {
   const isProd = process.env.NODE_ENV === 'production';
   const isHfSpace = Boolean(process.env.SPACE_ID);
-  const attrs = [
-    `lm_session=${encodeURIComponent(token)}`,
+  const common = [
     'Path=/',
     'HttpOnly',
     isHfSpace ? 'SameSite=None' : 'SameSite=Lax',
     `Max-Age=${TOKEN_TTL_SEC}`,
     ...(isProd || isHfSpace ? ['Secure'] : []),
   ];
-  res.setHeader('Set-Cookie', attrs.join('; '));
+  const cookies = [`lm_session=${encodeURIComponent(token)}; ${common.join('; ')}`];
+  if (deviceId && /^[A-Za-z0-9_-]{10,64}$/.test(deviceId)) {
+    cookies.push(`lm_device=${encodeURIComponent(deviceId)}; ${common.join('; ')}`);
+  }
+  res.setHeader('Set-Cookie', cookies);
 }
 
 export function clearSessionCookie(res: Response): void {

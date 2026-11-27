@@ -203,6 +203,22 @@ export function initDatabase() {
       PRIMARY KEY (target_type, target_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS user_devices (
+      device_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      device_name TEXT DEFAULT 'Unknown Device',
+      platform TEXT DEFAULT '',
+      browser TEXT DEFAULT '',
+      screen_info TEXT DEFAULT '',
+      timezone TEXT DEFAULT '',
+      last_ip TEXT DEFAULT '',
+      user_agent TEXT DEFAULT '',
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      last_seen_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (device_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS video_comments (
       id TEXT PRIMARY KEY,
       video_id TEXT NOT NULL,

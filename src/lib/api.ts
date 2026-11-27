@@ -30,6 +30,64 @@ const CLIENT_LIMITS: Record<UploadContext, { maxBytes: number; imageOnly?: boole
 const BLOCKED_EXTS = /\.(svg|html?|xhtml|js|mjs|cjs|exe|dll|bat|cmd|ps1|sh|php|jsp|asp|msi|apk|scr|vbs)$/i;
 
 const TOKEN_STORAGE_KEY = 'lm_auth_token';
+const DEVICE_STORAGE_KEY = 'lm_device_id';
+
+export function getOrCreateDeviceId(): string {
+  try {
+    let existing = localStorage.getItem(DEVICE_STORAGE_KEY);
+    if (!existing) {
+      const m = document.cookie.match(/(?:^|;\s*)lm_device_pub=([^;]+)/);
+      if (m) existing = decodeURIComponent(m[1]);
+    }
+    if (existing && /^[A-Za-z0-9_-]{10,64}$/.test(existing)) {
+      localStorage.setItem(DEVICE_STORAGE_KEY, existing);
+      return existing;
+    }
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    const created = `dev_${hex}`;
+    localStorage.setItem(DEVICE_STORAGE_KEY, created);
+    document.cookie = `lm_device_pub=${encodeURIComponent(created)}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    return created;
+  } catch {
+    return 'dev_fallback_client';
+  }
+}
+
+function getDeviceProfileHeader(): string {
+  try {
+    const ua = navigator.userAgent || '';
+    const platform = /Android/i.test(ua)
+      ? 'Android'
+      : /iPhone|iPad|iPod/i.test(ua)
+        ? 'iOS'
+        : /Windows/i.test(ua)
+          ? 'Windows'
+          : /Macintosh|Mac OS/i.test(ua)
+            ? 'macOS'
+            : /Linux/i.test(ua)
+              ? 'Linux'
+              : 'Web';
+    const browser = /Edg\//i.test(ua)
+      ? 'Edge'
+      : /OPR\//i.test(ua)
+        ? 'Opera'
+        : /Chrome\//i.test(ua)
+          ? 'Chrome'
+          : /Safari\//i.test(ua)
+            ? 'Safari'
+            : /Firefox\//i.test(ua)
+              ? 'Firefox'
+              : 'Browser';
+    const dpr = Math.round((window.devicePixelRatio || 1) * 10) / 10;
+    const screen = `${window.screen?.width || 0}x${window.screen?.height || 0}@${dpr}x`;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    return JSON.stringify({ platform, browser, screen, tz });
+  } catch {
+    return '{}';
+  }
+}
 
 export function getAuthToken(): string | null {
   try {
@@ -53,10 +111,13 @@ export async function api<T = Record<string, unknown>>(
   options?: RequestInit
 ): Promise<T> {
   const token = getAuthToken();
+  const deviceId = getOrCreateDeviceId();
   const res = await fetch(path, {
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
+      'X-LM-Device-Id': deviceId,
+      'X-LM-Device-Profile': getDeviceProfileHeader(),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options?.headers || {}),
     },

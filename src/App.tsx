@@ -190,29 +190,20 @@ export function App() {
     try {
       const [res, meRes] = await Promise.all([
         apiGet<{ ok: boolean; users: UserProfile[] }>('/api/auth/users'),
-        apiGet<{ ok: boolean; user: UserProfile | null }>('/api/auth/me').catch(() => ({ ok: true, user: null })),
+        apiGet<{ ok: boolean; user: UserProfile | null; token?: string }>('/api/auth/me').catch(() => ({
+          ok: true,
+          user: null,
+          token: undefined as string | undefined,
+        })),
       ]);
       setUsers(res.users);
+      if (meRes.token) setAuthToken(meRes.token);
       setCurrentUser(prev => {
         if (prev) return res.users.find(u => u.id === prev.id) || prev;
+        // Strict Device-Bound & Cryptographic Session Auto-Login (ZERO unverified userId spoofing!)
         if (meRes.user) {
-          try {
-            localStorage.setItem('lm_current_user_id', meRes.user.id);
-          } catch {
-            // ignore
-          }
           return res.users.find(u => u.id === meRes.user!.id) || meRes.user;
         }
-        try {
-          const savedId = localStorage.getItem('lm_current_user_id');
-          if (savedId) {
-            const match = res.users.find(u => u.id === savedId);
-            if (match) return match;
-          }
-        } catch {
-          // ignore
-        }
-        // First-time visitors see the interactive 3D Planet Landing Page!
         return null;
       });
     } catch {

@@ -24,6 +24,7 @@ import { enforceCanonicalExtension, verifyUploadedFile } from './uploadSecurity.
 import {
   clearSessionCookie,
   createRateLimiter,
+  extractDeviceId,
   extractRequestToken,
   hashPassword,
   isHashedPassword,
@@ -575,43 +576,243 @@ app.post('/api/transcribe', async (req, res) => {
 });
 
 // ============================================================
-// AUTH & USERS
+// AUTH, DEVICE-BOUND IDENTITY & ANTI-IMPERSONATION SECURITY
 // ============================================================
+function getClientIp(req: express.Request): string {
+  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return (fwd || req.ip || req.socket?.remoteAddress || 'unknown').replace(/^::ffff:/, '').slice(0, 64);
+}
+
+function parseDeviceProfileHeader(req: express.Request): {
+  deviceName: string;
+  platform: string;
+  browser: string;
+  screenInfo: string;
+  timezone: string;
+  userAgent: string;
+} {
+  const ua = String(req.headers['user-agent'] || '').slice(0, 220);
+  let platform = /Android/i.test(ua)
+    ? 'Android'
+    : /iPhone|iPad|iPod/i.test(ua)
+      ? 'iOS'
+      : /Windows/i.test(ua)
+        ? 'Windows'
+        : /Macintosh|Mac OS/i.test(ua)
+          ? 'macOS'
+          : /Linux/i.test(ua)
+            ? 'Linux'
+            : 'Web';
+  let browser = /Edg\//i.test(ua)
+    ? 'Edge'
+    : /OPR\//i.test(ua)
+      ? 'Opera'
+      : /Chrome\//i.test(ua)
+        ? 'Chrome'
+        : /Safari\//i.test(ua)
+          ? 'Safari'
+          : /Firefox\//i.test(ua)
+            ? 'Firefox'
+            : 'Browser';
+  let screenInfo = '';
+  let timezone = '';
+  try {
+    const raw = String(req.headers['x-lm-device-profile'] || '');
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      if (parsed.platform) platform = String(parsed.platform).slice(0, 32);
+      if (parsed.browser) browser = String(parsed.browser).slice(0, 32);
+      if (parsed.screen) screenInfo = String(parsed.screen).slice(0, 32);
+      if (parsed.tz) timezone = String(parsed.tz).slice(0, 48);
+    }
+  } catch {
+    // ignore malformed header
+  }
+  return {
+    deviceName: `${platform} · ${browser}`,
+    platform,
+    browser,
+    screenInfo,
+    timezone,
+    userAgent: ua,
+  };
+}
+
+function bindDeviceToUser(req: express.Request, res: express.Response, userId: string): string {
+  const deviceId = extractDeviceId(req) || `dev_${crypto.randomBytes(12).toString('hex')}`;
+  const info = parseDeviceProfileHeader(req);
+  const ip = getClientIp(req);
+
+  // Deactivate any other account previously marked active on this exact physical device
+  db.prepare('UPDATE user_devices SET is_active = 0 WHERE device_id = ? AND user_id != ?').run(deviceId, userId);
+
+  db.prepare(`
+    INSERT INTO user_devices (device_id, user_id, device_name, platform, browser, screen_info, timezone, last_ip, user_agent, is_active, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+    ON CONFLICT(device_id, user_id) DO UPDATE SET
+      device_name = excluded.device_name,
+      platform = excluded.platform,
+      browser = excluded.browser,
+      screen_info = excluded.screen_info,
+      timezone = excluded.timezone,
+      last_ip = excluded.last_ip,
+      user_agent = excluded.user_agent,
+      is_active = 1,
+      last_seen_at = datetime('now')
+  `).run(deviceId, userId, info.deviceName, info.platform, info.browser, info.screenInfo, info.timezone, ip, info.userAgent);
+
+  const token = signSessionToken(userId);
+  setSessionCookie(res, token, deviceId);
+  return token;
+}
+
 app.get('/api/auth/users', (_req, res) => {
   const rows = db.prepare('SELECT * FROM users ORDER BY followers_count DESC').all() as Array<Record<string, unknown>>;
   res.json({ ok: true, users: rows.map(mapUserRow) });
 });
 
 app.get('/api/auth/me', (req, res) => {
+  const deviceId = extractDeviceId(req);
   const token = extractRequestToken(req);
   const verified = verifySessionToken(token);
-  if (!verified) return res.json({ ok: true, user: null });
-  const user = getUserOrNull(verified.userId);
-  return res.json({ ok: true, user });
+
+  if (verified) {
+    const user = getUserOrNull(verified.userId);
+    if (user) {
+      if (deviceId) {
+        const info = parseDeviceProfileHeader(req);
+        const ip = getClientIp(req);
+        db.prepare(`
+          INSERT INTO user_devices (device_id, user_id, device_name, platform, browser, screen_info, timezone, last_ip, user_agent, is_active, last_seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+          ON CONFLICT(device_id, user_id) DO UPDATE SET
+            last_ip = excluded.last_ip,
+            last_seen_at = datetime('now'),
+            is_active = 1
+        `).run(deviceId, user.id, info.deviceName, info.platform, info.browser, info.screenInfo, info.timezone, ip, info.userAgent);
+      }
+      return res.json({ ok: true, user, deviceBound: Boolean(deviceId) });
+    }
+  }
+
+  // Seamless Device-Bound Auto-Login: If user's device is already bound & active, resume automatically (ZERO re-typing!)
+  if (deviceId) {
+    const bound = db
+      .prepare('SELECT user_id FROM user_devices WHERE device_id = ? AND is_active = 1 ORDER BY last_seen_at DESC LIMIT 1')
+      .get(deviceId) as { user_id: string } | undefined;
+    if (bound?.user_id) {
+      const user = getUserOrNull(bound.user_id);
+      if (user) {
+        const freshToken = bindDeviceToUser(req, res, user.id);
+        return res.json({ ok: true, user, token: freshToken, autoResumed: true, deviceBound: true });
+      }
+    }
+  }
+
+  return res.json({ ok: true, user: null });
 });
 
-app.post('/api/auth/logout', (_req, res) => {
+// Returns ONLY accounts previously created/signed-in on THIS exact physical device (ZERO exposure of other people's accounts!)
+app.get('/api/auth/device-accounts', (req, res) => {
+  const deviceId = extractDeviceId(req);
+  if (!deviceId) return res.json({ ok: true, accounts: [] });
+  const rows = db
+    .prepare(`
+      SELECT u.*, d.last_seen_at
+      FROM user_devices d
+      JOIN users u ON d.user_id = u.id
+      WHERE d.device_id = ?
+      ORDER BY d.last_seen_at DESC
+      LIMIT 4
+    `)
+    .all(deviceId) as Array<Record<string, unknown>>;
+  return res.json({ ok: true, accounts: rows.map(mapUserRow) });
+});
+
+// Resume ONLY an account cryptographically verified to belong to THIS exact physical device
+app.post('/api/auth/device-resume', authLimiter, (req, res) => {
+  const deviceId = extractDeviceId(req);
+  const { userId } = req.body as { userId?: string };
+  if (!deviceId || !userId) {
+    return res.status(403).json({ ok: false, error: 'هذا الجهاز غير مرتبط بهذا الحساب.' });
+  }
+  const bound = db
+    .prepare('SELECT 1 FROM user_devices WHERE device_id = ? AND user_id = ?')
+    .get(deviceId, userId);
+  if (!bound) {
+    return res.status(403).json({ ok: false, error: 'لا يمكنك الدخول لحساب غير مرتبط بجهازك.' });
+  }
+  const user = getUserOrNull(userId);
+  if (!user) return res.status(404).json({ ok: false, error: 'الحساب غير موجود.' });
+  const token = bindDeviceToUser(req, res, user.id);
+  return res.json({ ok: true, user, token });
+});
+
+// List trusted devices for the currently signed-in account
+app.get('/api/auth/devices', (req, res) => {
+  const token = extractRequestToken(req);
+  const verified = verifySessionToken(token);
+  if (!verified) return res.status(401).json({ ok: false, error: 'غير مصرح.' });
+  const currentDeviceId = extractDeviceId(req);
+  const rows = db
+    .prepare('SELECT device_id, device_name, platform, browser, screen_info, timezone, last_ip, is_active, created_at, last_seen_at FROM user_devices WHERE user_id = ? ORDER BY last_seen_at DESC')
+    .all(verified.userId) as Array<Record<string, unknown>>;
+  res.json({
+    ok: true,
+    devices: rows.map(r => ({
+      deviceId: String(r.device_id),
+      deviceName: String(r.device_name || 'Unknown Device'),
+      platform: String(r.platform || ''),
+      browser: String(r.browser || ''),
+      screenInfo: String(r.screen_info || ''),
+      timezone: String(r.timezone || ''),
+      lastIp: String(r.last_ip || ''),
+      isActive: Boolean(r.is_active),
+      isCurrent: Boolean(currentDeviceId && String(r.device_id) === currentDeviceId),
+      createdAt: String(r.created_at || ''),
+      lastSeenAt: String(r.last_seen_at || ''),
+    })),
+  });
+});
+
+// Optional: Let quick-registered users set a personal password to log in from another device
+app.post('/api/auth/set-password', authLimiter, (req, res) => {
+  const token = extractRequestToken(req);
+  const verified = verifySessionToken(token);
+  if (!verified) return res.status(401).json({ ok: false, error: 'يجب تسجيل الدخول أولًا.' });
+  const { password } = req.body as { password?: string };
+  const clean = String(password || '').trim();
+  if (clean.length < 4) return res.status(400).json({ ok: false, error: 'كلمة المرور 4 أحرف على الأقل.' });
+  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(clean), verified.userId);
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const deviceId = extractDeviceId(req);
+  if (deviceId) {
+    db.prepare('UPDATE user_devices SET is_active = 0 WHERE device_id = ?').run(deviceId);
+  }
   clearSessionCookie(res);
   res.json({ ok: true });
 });
 
 app.post('/api/auth/login', authLimiter, (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
-  if (!username) return res.status(400).json({ ok: false, error: 'أدخل اسم المستخدم.' });
+  if (!username) return res.status(400).json({ ok: false, error: 'Enter your username.' });
   const clean = username.trim().replace(/^@/, '').toLowerCase();
   const row = db.prepare('SELECT * FROM users WHERE LOWER(username) = ?').get(clean) as Record<string, unknown> | undefined;
-  if (!row) return res.status(404).json({ ok: false, error: 'الحساب غير موجود.' });
+  if (!row) return res.status(404).json({ ok: false, error: 'Account not found.' });
   const storedPassword = String(row.password || '');
-  if (password !== undefined && password !== '' && !verifyPassword(password, storedPassword)) {
-    return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
+  // STRICT anti-impersonation check: password is ALWAYS required (ZERO empty-password bypass!)
+  if (!password || !verifyPassword(password, storedPassword)) {
+    return res.status(401).json({ ok: false, error: 'Incorrect password.' });
   }
   // Transparently upgrade legacy plaintext passwords to Scrypt hash on successful login!
-  if (password && !isHashedPassword(storedPassword)) {
+  if (!isHashedPassword(storedPassword)) {
     db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), String(row.id));
   }
   const user = mapUserRow(row);
-  const token = signSessionToken(user.id);
-  setSessionCookie(res, token);
+  const token = bindDeviceToUser(req, res, user.id);
   res.json({ ok: true, user, token });
 });
 
@@ -638,8 +839,7 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   `).run(id, cleanUser, hashedPw, displayName.trim(), displayName.trim(), 'عضو في LM', '#27272A', initials, country || 'EG', 10000);
 
   const user = getUserOrNull(id);
-  const token = signSessionToken(id);
-  setSessionCookie(res, token);
+  const token = bindDeviceToUser(req, res, id);
   res.json({ ok: true, user, token });
 });
 
@@ -652,19 +852,19 @@ function randomAlphaNum(len: number): string {
   return out;
 }
 
-// Frictionless Name-Only Registration (Strict 3-word max, NO phone/email/password required!)
+// Frictionless Name-Only Registration (Strict 3-word max, bound permanently to THIS device!)
 app.post('/api/auth/quick-register', authLimiter, (req, res) => {
   const { displayName, country } = req.body as { displayName?: string; country?: CountryCode };
   const cleanName = String(displayName || '').trim().replace(/\s+/g, ' ');
   if (cleanName.length < 2) {
-    return res.status(400).json({ ok: false, error: 'يرجى كتابة اسمك للدخول.' });
+    return res.status(400).json({ ok: false, error: 'Please enter your name.' });
   }
   if (cleanName.length > 48) {
-    return res.status(400).json({ ok: false, error: 'الاسم طويل جدًا.' });
+    return res.status(400).json({ ok: false, error: 'Name is too long.' });
   }
   const words = cleanName.split(' ').filter(Boolean);
   if (words.length > 3) {
-    return res.status(400).json({ ok: false, error: 'الاسم يجب ألا يتعدى 3 كلمات (الاسم الثلاثي كحد أقصى).' });
+    return res.status(400).json({ ok: false, error: 'Maximum 3 words allowed.' });
   }
 
   const asciiBase = cleanName
@@ -687,13 +887,12 @@ app.post('/api/auth/quick-register', authLimiter, (req, res) => {
   `).run(id, cleanUser, hashedPw, cleanName, cleanName, 'عضو جديد في منصة LM', '#27272A', initials, 'lm:neutral', country || 'EG', 10000);
 
   const user = getUserOrNull(id);
-  const token = signSessionToken(id);
-  setSessionCookie(res, token);
+  const token = bindDeviceToUser(req, res, id);
   res.json({ ok: true, user, token });
 });
 
-// TikTok-Style Instant Guest / Trial Account (Random alphanumeric handle + neutral avatar, full interaction!)
-app.post('/api/auth/guest', authLimiter, (_req, res) => {
+// TikTok-Style Instant Guest / Trial Account (Bound permanently to THIS device so guest stays signed in!)
+app.post('/api/auth/guest', authLimiter, (req, res) => {
   let guestHandle = `user_${randomAlphaNum(8)}`;
   while (db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(guestHandle)) {
     guestHandle = `user_${randomAlphaNum(9)}`;
@@ -707,8 +906,7 @@ app.post('/api/auth/guest', authLimiter, (_req, res) => {
   `).run(id, guestHandle, hashedPw, guestHandle, guestHandle, 'حساب تجريبي على منصة LM', '#27272A', 'LM', 'lm:neutral', 'EG', 10000);
 
   const user = getUserOrNull(id);
-  const token = signSessionToken(id);
-  setSessionCookie(res, token);
+  const token = bindDeviceToUser(req, res, id);
   res.json({ ok: true, user, token, isGuest: true });
 });
 

@@ -441,6 +441,7 @@ export function CosmicPlanetCanvas() {
         uTime: { value: 0 },
         uPixelRatio: { value: dpr },
         uDotScale: { value: 1.0 },
+        uCameraZ: { value: 9.15 },
       },
       vertexShader: `
         attribute float aSeed;
@@ -448,6 +449,7 @@ export function CosmicPlanetCanvas() {
         uniform float uTime;
         uniform float uPixelRatio;
         uniform float uDotScale;
+        uniform float uCameraZ;
         varying float vVisibility;
         varying float vHotspot;
         varying float vSeed;
@@ -474,8 +476,8 @@ export function CosmicPlanetCanvas() {
           vSeed = aSeed;
           vEdge = 1.0 - ndotv;
 
-          float baseSize = mix(1.65, 2.50, horizonFade) + aHotspot * 0.58;
-          gl_PointSize = baseSize * uPixelRatio * uDotScale * (6.9 / max(-mvPos.z, 1.0));
+          float baseSize = mix(1.68, 2.55, horizonFade) + aHotspot * 0.62;
+          gl_PointSize = baseSize * uPixelRatio * uDotScale * ((uCameraZ * 0.76) / max(-mvPos.z, 1.0));
         }
       `,
       fragmentShader: `
@@ -535,29 +537,39 @@ export function CosmicPlanetCanvas() {
       hubMeshes.push({ mesh: decal, unitDir, baseOpacity: 0.42 * h.intensity });
     }
 
-    // 3D. Two Ultra-Sleek Minimal 3D Orbital Signal Arcs + Glowing Pinpoint Rings (Exact Sellix Curve)
+    // 3D. Four Unmistakable Luminous 3D Orbital Signal Arcs + Moving Comet Pulses + Pinpoint Rings!
     const beaconTex = createBeaconRingTexture();
+    const cometTex = createRadialGlowTexture(
+      'rgba(255, 255, 255, 1.0)',
+      'rgba(233, 213, 255, 0.85)',
+      'rgba(168, 85, 247, 0.25)'
+    );
     const arcSpecs = [
-      // Arc 1: Sweeping cleanly from Atlantic horizon into Europe/Mediterranean (Image 1 aesthetic)
-      { from: { lat: 14, lon: -66 }, to: { lat: 31, lon: 18 }, altitude: 1.24 },
-      // Arc 2: Sweeping cleanly across Asia-Pacific into East Asia (Image 2 aesthetic)
-      { from: { lat: 24, lon: 112 }, to: { lat: 12, lon: 174 }, altitude: 1.22 },
+      // Arc 1: Atlantic horizon sweeping cleanly into Cairo / Mediterranean
+      { from: { lat: 12, lon: -58 }, to: { lat: 30, lon: 31 }, altitude: 1.28, speed: 0.27, phase: 0.0 },
+      // Arc 2: Europe (London/Paris) sweeping gracefully into Riyadh / Mumbai
+      { from: { lat: 50, lon: 2 }, to: { lat: 19, lon: 73 }, altitude: 1.25, speed: 0.24, phase: 0.35 },
+      // Arc 3: Asia-Pacific sweeping cleanly from Mumbai to Tokyo
+      { from: { lat: 19, lon: 73 }, to: { lat: 36, lon: 140 }, altitude: 1.27, speed: 0.26, phase: 0.65 },
+      // Arc 4: Americas to Europe across North Atlantic
+      { from: { lat: 41, lon: -74 }, to: { lat: 51, lon: 0 }, altitude: 1.26, speed: 0.23, phase: 0.18 },
     ];
 
-    const arcDisposables: Array<{ dispose: () => void }> = [];
+    const arcDisposables: Array<{ dispose: () => void }> = [cometTex];
     const arcBeacons: Array<{ sprite: THREE.Sprite; unitDir: THREE.Vector3; phase: number }> = [];
+    const arcComets: Array<{ sprite: THREE.Sprite; curve: THREE.CatmullRomCurve3; speed: number; phase: number }> = [];
     const arcPulseMaterials: THREE.ShaderMaterial[] = [];
 
     for (let aIdx = 0; aIdx < arcSpecs.length; aIdx++) {
       const spec = arcSpecs[aIdx];
-      const start = latLonToVec3(spec.from.lat, spec.from.lon, GLOBE_RADIUS * 1.006);
-      const end = latLonToVec3(spec.to.lat, spec.to.lon, GLOBE_RADIUS * 1.006);
+      const start = latLonToVec3(spec.from.lat, spec.from.lon, GLOBE_RADIUS * 1.008);
+      const end = latLonToVec3(spec.to.lat, spec.to.lon, GLOBE_RADIUS * 1.008);
 
-      const mid1 = start.clone().lerp(end, 0.33).normalize().multiplyScalar(GLOBE_RADIUS * (1 + (spec.altitude - 1) * 0.85));
+      const mid1 = start.clone().lerp(end, 0.33).normalize().multiplyScalar(GLOBE_RADIUS * (1 + (spec.altitude - 1) * 0.88));
       const mid2 = start.clone().lerp(end, 0.67).normalize().multiplyScalar(GLOBE_RADIUS * spec.altitude);
 
       const curve = new THREE.CatmullRomCurve3([start, mid1, mid2, end]);
-      const tubeGeo = new THREE.TubeGeometry(curve, 72, 0.0085, 6, false);
+      const tubeGeo = new THREE.TubeGeometry(curve, 80, 0.017, 6, false);
       arcDisposables.push(tubeGeo);
 
       const tubeMat = new THREE.ShaderMaterial({
@@ -567,7 +579,8 @@ export function CosmicPlanetCanvas() {
         blending: THREE.AdditiveBlending,
         uniforms: {
           uTime: { value: 0 },
-          uPhase: { value: aIdx * 0.5 },
+          uPhase: { value: spec.phase },
+          uSpeed: { value: spec.speed },
         },
         vertexShader: `
           varying vec2 vUv;
@@ -579,14 +592,18 @@ export function CosmicPlanetCanvas() {
         fragmentShader: `
           uniform float uTime;
           uniform float uPhase;
+          uniform float uSpeed;
           varying vec2 vUv;
           void main() {
-            float progress = fract(uTime * 0.16 + uPhase);
-            float pulse = exp(-pow((vUv.x - progress) * 7.5, 2.0));
-            float endFade = smoothstep(0.0, 0.06, vUv.x) * smoothstep(1.0, 0.92, vUv.x);
-            vec3 col = mix(vec3(0.76, 0.56, 1.0), vec3(1.0, 0.98, 1.0), 0.35 + pulse * 0.65);
-            float alpha = (0.48 + pulse * 0.52) * endFade;
-            gl_FragColor = vec4(col, alpha);
+            float progress = fract(uTime * uSpeed + uPhase);
+            // Smooth luminous comet tail trailing behind the moving light bead!
+            float distBehind = fract(progress - vUv.x);
+            float tail = exp(-distBehind * 6.5) * smoothstep(0.65, 0.0, distBehind);
+            float head = exp(-pow((vUv.x - progress) * 14.0, 2.0));
+            float endFade = smoothstep(0.0, 0.05, vUv.x) * smoothstep(1.0, 0.94, vUv.x);
+            vec3 col = mix(vec3(0.74, 0.48, 1.0), vec3(1.0, 0.98, 1.0), clamp(0.32 + tail * 0.5 + head * 0.85, 0.0, 1.0));
+            float alpha = (0.34 + tail * 0.55 + head * 0.65) * endFade;
+            gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
           }
         `,
       });
@@ -596,8 +613,23 @@ export function CosmicPlanetCanvas() {
       const arcMesh = new THREE.Mesh(tubeGeo, tubeMat);
       globeRoot.add(arcMesh);
 
+      // Moving incandescent comet bead gliding smoothly along the 3D arc!
+      const cometMat = new THREE.SpriteMaterial({
+        map: cometTex,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+        opacity: 0.95,
+      });
+      arcDisposables.push(cometMat);
+      const cometSprite = new THREE.Sprite(cometMat);
+      cometSprite.scale.setScalar(0.28);
+      globeRoot.add(cometSprite);
+      arcComets.push({ sprite: cometSprite, curve, speed: spec.speed, phase: spec.phase });
+
       // Pinpoint glowing target ring on landing hub
-      const landing = aIdx === 0 ? spec.to : spec.from;
+      const landing = spec.to;
       const landingUnit = latLonToVec3(landing.lat, landing.lon, 1.0);
       const spriteMat = new THREE.SpriteMaterial({
         map: beaconTex,
@@ -605,14 +637,14 @@ export function CosmicPlanetCanvas() {
         depthWrite: false,
         depthTest: true,
         blending: THREE.AdditiveBlending,
-        opacity: 0.95,
+        opacity: 0.96,
       });
       arcDisposables.push(spriteMat);
       const sprite = new THREE.Sprite(spriteMat);
-      sprite.position.copy(landingUnit.clone().multiplyScalar(GLOBE_RADIUS * 1.018));
-      sprite.scale.setScalar(0.24);
+      sprite.position.copy(landingUnit.clone().multiplyScalar(GLOBE_RADIUS * 1.02));
+      sprite.scale.setScalar(0.28);
       globeRoot.add(sprite);
-      arcBeacons.push({ sprite, unitDir: landingUnit, phase: aIdx * 1.7 });
+      arcBeacons.push({ sprite, unitDir: landingUnit, phase: aIdx * 1.4 });
     }
 
     // ------------------------------------------------------------------
@@ -622,19 +654,32 @@ export function CosmicPlanetCanvas() {
       const w = container.clientWidth || window.innerWidth;
       const h = container.clientHeight || window.innerHeight;
       const aspect = w / Math.max(h, 1);
+      const isMobilePortrait = aspect < 0.88;
 
       renderer.setSize(w, h, false);
       camera.aspect = aspect;
 
       // Exact panoramic framing:
-      // Desktop (~16:10 / 16:9): sphere rises to ~15% from top, both glowing purple sides visible!
-      // Portrait mobile: pull camera back cleanly so giant purple dome fills lower-center beautifully!
-      const responsiveZ = aspect >= 1.15 ? 9.15 : 9.15 * Math.min(1.75, 1.18 / Math.max(aspect, 0.52));
+      // - Desktop: grand Sellix dome rising cleanly behind hero text (~16% from top)
+      // - Mobile portrait: set slightly farther back & neatly positioned in lower half (~84% width)
+      //   so BOTH curved violet glowing edges stay 100% visible below the compact mobile hero!
+      const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(18));
+      const responsiveZ = isMobilePortrait
+        ? Math.min(22.5, Math.max(13.2, (GLOBE_RADIUS * 2.38) / (2 * tanHalfFov * Math.max(aspect, 0.42))))
+        : aspect < 1.15
+          ? 11.2
+          : 9.15;
+
+      const targetGlobeY = isMobilePortrait ? -2.15 : GLOBE_Y_OFFSET;
+      globeRoot.position.y = targetGlobeY;
+      haloMesh.position.y = targetGlobeY;
+
       camera.position.set(0, 0, responsiveZ);
       camera.updateProjectionMatrix();
 
-      // Keep dot size crisp across desktop and smaller mobile screens
-      dotsMat.uniforms.uDotScale.value = aspect < 0.85 ? 0.86 : 1.0;
+      // Normalize dot pixel size across camera distances so mobile continents stay razor-sharp!
+      dotsMat.uniforms.uCameraZ.value = responsiveZ;
+      dotsMat.uniforms.uDotScale.value = isMobilePortrait ? 0.92 : 1.0;
     };
 
     updateCameraLayout();
@@ -712,9 +757,21 @@ export function CosmicPlanetCanvas() {
         worldDirTmp.copy(b.unitDir).applyQuaternion(rotQuat);
         const ndotv = worldDirTmp.dot(camDirTmp);
         const vis = THREE.MathUtils.smoothstep(ndotv, 0.05, 0.3);
-        const pulse = 0.88 + 0.16 * Math.sin(t * 2.8 + b.phase);
-        b.sprite.scale.setScalar(0.24 * pulse);
-        (b.sprite.material as THREE.SpriteMaterial).opacity = 0.95 * vis;
+        const pulse = 0.86 + 0.2 * Math.sin(t * 2.8 + b.phase);
+        b.sprite.scale.setScalar(0.28 * pulse);
+        (b.sprite.material as THREE.SpriteMaterial).opacity = 0.96 * vis;
+      }
+
+      // Advance glowing comet beads smoothly along each 3D orbital arc!
+      for (const c of arcComets) {
+        const u = (t * c.speed + c.phase) % 1;
+        const pt = c.curve.getPointAt(u);
+        c.sprite.position.copy(pt);
+        worldDirTmp.copy(pt).normalize().applyQuaternion(rotQuat);
+        const ndotv = worldDirTmp.dot(camDirTmp);
+        const edgeFade = Math.sin(u * Math.PI);
+        const vis = THREE.MathUtils.smoothstep(ndotv, -0.15, 0.2) * edgeFade;
+        (c.sprite.material as THREE.SpriteMaterial).opacity = 0.96 * vis;
       }
 
       renderer.render(scene, camera);

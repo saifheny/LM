@@ -3,34 +3,39 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, X } from 'lucide-react';
 import { Lang, UserProfile } from '../../types';
 import { UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
-import { apiPost, setAuthToken } from '../../lib/api';
+import { apiGet, apiPost, setAuthToken } from '../../lib/api';
 import { CosmicPlanetCanvas } from './CosmicPlanetCanvas';
 
 interface AuthScreenProps {
-  users: UserProfile[];
+  users?: UserProfile[];
   lang?: Lang;
   onToggleLang?: () => void;
   onAuthenticated: (u: UserProfile) => void;
 }
 
-export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
+export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [registerInlineOpen, setRegisterInlineOpen] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [submittingName, setSubmittingName] = useState(false);
   const [enteringGuest, setEnteringGuest] = useState(false);
   const [inlineErr, setInlineErr] = useState('');
 
-  // Optional Login Modal for returning users
+  // Optional Login Modal for returning users (ZERO public list of strangers' accounts!)
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginErr, setLoginErr] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
+  // Strictly accounts previously bound to THIS exact physical device only!
+  const [thisDeviceAccounts, setThisDeviceAccounts] = useState<UserProfile[]>([]);
 
   // Enforce pure crisp English tab title & LTR framing on the outer landing page
   useEffect(() => {
     const prevTitle = document.title;
     document.title = 'LM';
+    apiGet<{ ok: boolean; accounts: UserProfile[] }>('/api/auth/device-accounts')
+      .then(r => setThisDeviceAccounts(r.accounts || []))
+      .catch(() => {});
     return () => {
       document.title = prevTitle;
     };
@@ -83,7 +88,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
 
   async function handleReturningLogin(e: React.FormEvent) {
     e.preventDefault();
-    if (!loginUsername.trim() || loggingIn) return;
+    if (!loginUsername.trim() || !loginPassword || loggingIn) return;
     setLoginErr('');
     setLoggingIn(true);
     try {
@@ -101,6 +106,23 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
     }
   }
 
+  async function handleResumeOwnDeviceAccount(u: UserProfile) {
+    setLoginErr('');
+    setLoggingIn(true);
+    try {
+      const res = await apiPost<{ ok: boolean; user: UserProfile; token?: string }>('/api/auth/device-resume', {
+        userId: u.id,
+      });
+      if (res.token) setAuthToken(res.token);
+      setLoginModalOpen(false);
+      onAuthenticated(res.user);
+    } catch (err) {
+      setLoginErr(err instanceof Error ? err.message : 'Unable to resume account.');
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
   return (
     <div
       dir="ltr"
@@ -110,11 +132,14 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
       }}
       className="relative h-[100dvh] min-h-[100dvh] w-full max-w-[100vw] overflow-hidden bg-[#050409] text-white flex flex-col select-none"
     >
-      {/* 1:1 Interactive Three.js WebGL Dotted Cosmic Earth Planet */}
+      {/* 1:1 Interactive Three.js WebGL Dotted Cosmic Earth Planet with Moving Orbital Comets */}
       <CosmicPlanetCanvas />
 
       {/* Minimal Top Bar — ONLY crisp LM wordmark on left + Login & Get Started on right */}
-      <header className="relative z-20 w-full max-w-[1260px] mx-auto px-6 sm:px-10 pt-5 sm:pt-7 flex items-center justify-between pointer-events-none">
+      <header
+        style={{ paddingTop: 'max(18px, calc(env(safe-area-inset-top) + 10px))' }}
+        className="relative z-20 w-full max-w-[1260px] mx-auto px-5 sm:px-10 flex items-center justify-between pointer-events-none"
+      >
         <a
           href="/"
           onClick={e => {
@@ -122,7 +147,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
             setRegisterInlineOpen(false);
             setInlineErr('');
           }}
-          className="pointer-events-auto text-[21px] sm:text-[22px] font-bold tracking-[-0.04em] text-white hover:opacity-90 transition-opacity"
+          className="pointer-events-auto text-[19px] sm:text-[22px] font-bold tracking-[-0.04em] text-white hover:opacity-90 transition-opacity"
         >
           LM
         </a>
@@ -134,7 +159,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
               setLoginErr('');
               setLoginModalOpen(true);
             }}
-            className="h-8 sm:h-9 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] backdrop-blur-md text-[12px] font-medium text-white/90 hover:text-white cursor-pointer transition-colors"
+            className="h-8 sm:h-9 px-3.5 sm:px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] backdrop-blur-md text-[11.5px] sm:text-[12px] font-medium text-white/90 hover:text-white cursor-pointer transition-colors"
           >
             Login
           </button>
@@ -145,7 +170,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
               setRegisterInlineOpen(true);
               setInlineErr('');
             }}
-            className="h-8 sm:h-9 px-4 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors shadow-[0_6px_22px_rgba(255,255,255,0.18)]"
+            className="h-8 sm:h-9 px-3.5 sm:px-4 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] text-[11.5px] sm:text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors shadow-[0_6px_22px_rgba(255,255,255,0.18)]"
           >
             <span>Get Started</span>
             <ArrowRight className="w-3.5 h-3.5" strokeWidth={2.4} />
@@ -153,14 +178,14 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
         </div>
       </header>
 
-      {/* Hero Typography & Morphing CTAs Positioned Over Upper-Center of the Planet Dome */}
-      <main className="relative z-20 flex-1 flex flex-col items-center justify-center px-5 text-center -mt-12 sm:-mt-20 pointer-events-none">
+      {/* Hero Typography & Morphing CTAs: Cleanly framed in starry sky on mobile right above the planet dome! */}
+      <main className="relative z-20 flex-1 flex flex-col items-center justify-start pt-10 sm:justify-center sm:pt-0 sm:-mt-20 px-5 text-center pointer-events-none">
         <div className="max-w-[680px] mx-auto pointer-events-auto">
           <motion.h1
-            initial={{ opacity: 0, y: 14 }}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-            className="text-[40px] sm:text-[62px] md:text-[72px] font-semibold tracking-[-0.04em] leading-[1.03] text-white drop-shadow-[0_10px_40px_rgba(5,4,9,0.55)]"
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            className="text-[32px] sm:text-[60px] md:text-[72px] font-semibold tracking-[-0.04em] leading-[1.05] text-white drop-shadow-[0_10px_40px_rgba(5,4,9,0.55)]"
           >
             Connect without
             <br />
@@ -168,16 +193,16 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
           </motion.h1>
 
           <motion.p
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-            className="mt-4 sm:mt-5 text-[13px] sm:text-[14.5px] text-white/65 max-w-[440px] mx-auto leading-[1.6] font-normal drop-shadow-[0_4px_20px_rgba(5,4,9,0.75)]"
+            transition={{ duration: 0.5, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
+            className="mt-3 sm:mt-5 text-[12px] sm:text-[14.5px] text-white/65 max-w-[300px] sm:max-w-[440px] mx-auto leading-[1.55] font-normal drop-shadow-[0_4px_20px_rgba(5,4,9,0.75)]"
           >
             Share posts, stream live, chat in real time, watch short videos, and create with LM AI — all unified inside one seamless platform.
           </motion.p>
 
           {/* Morphing CTA Row: "Get Started ->" & "Explore Site ->" <-> Inline 3-Word Name Input + Next Arrow */}
-          <div className="mt-6 sm:mt-7 min-h-[76px] flex flex-col items-center justify-start">
+          <div className="mt-5 sm:mt-7 min-h-[72px] flex flex-col items-center justify-start">
             <AnimatePresence mode="wait">
               {!registerInlineOpen ? (
                 <motion.div
@@ -186,7 +211,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -6, scale: 0.96 }}
                   transition={{ duration: 0.2 }}
-                  className="flex items-center justify-center gap-2.5 sm:gap-3 flex-wrap"
+                  className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap"
                 >
                   <motion.button
                     type="button"
@@ -196,7 +221,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                       setRegisterInlineOpen(true);
                       setInlineErr('');
                     }}
-                    className="h-10 sm:h-11 px-5 sm:px-6 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-[0_10px_30px_rgba(255,255,255,0.18)] transition-colors"
+                    className="h-9 sm:h-11 px-4 sm:px-6 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] text-[12px] sm:text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-[0_10px_30px_rgba(255,255,255,0.18)] transition-colors"
                   >
                     <span>Get Started</span>
                     <ArrowRight className="w-3.5 h-3.5" strokeWidth={2.4} />
@@ -208,7 +233,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                     whileTap={{ scale: 0.97 }}
                     disabled={enteringGuest}
                     onClick={handleEnterAsGuest}
-                    className="h-10 sm:h-11 px-5 sm:px-6 rounded-full bg-[#110E1E]/75 hover:bg-[#19142C]/90 backdrop-blur-xl border border-white/[0.14] text-white/95 text-[13px] font-medium inline-flex items-center gap-1.5 cursor-pointer shadow-[0_10px_30px_rgba(0,0,0,0.45)] transition-colors disabled:opacity-60"
+                    className="h-9 sm:h-11 px-4 sm:px-6 rounded-full bg-[#110E1E]/75 hover:bg-[#19142C]/90 backdrop-blur-xl border border-white/[0.14] text-white/95 text-[12px] sm:text-[13px] font-medium inline-flex items-center gap-1.5 cursor-pointer shadow-[0_10px_30px_rgba(0,0,0,0.45)] transition-colors disabled:opacity-60"
                   >
                     <span>{enteringGuest ? 'Entering...' : 'Explore Site'}</span>
                     <ArrowRight className="w-3.5 h-3.5 text-white/75" strokeWidth={2.2} />
@@ -222,11 +247,11 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                   exit={{ opacity: 0, y: -6, scale: 0.96 }}
                   transition={{ type: 'spring', stiffness: 420, damping: 32 }}
                   onSubmit={handleQuickNameRegister}
-                  className="w-full max-w-[390px] mx-auto space-y-2.5"
+                  className="w-full max-w-[330px] sm:max-w-[390px] mx-auto space-y-2.5"
                 >
                   <div className="flex items-center gap-2">
                     <div
-                      className={`flex-1 h-11 rounded-full bg-[#0C0A16]/88 backdrop-blur-2xl border px-4 flex items-center gap-2 shadow-[0_14px_38px_rgba(0,0,0,0.65)] transition-colors ${
+                      className={`flex-1 h-10 sm:h-11 rounded-full bg-[#0C0A16]/90 backdrop-blur-2xl border px-3.5 sm:px-4 flex items-center gap-2 shadow-[0_14px_38px_rgba(0,0,0,0.65)] transition-colors ${
                         tooManyWords
                           ? 'border-[#FB7185]/75'
                           : 'border-white/[0.18] focus-within:border-[#C084FC]/75'
@@ -240,7 +265,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                           setInlineErr('');
                         }}
                         placeholder="Enter your name (max 3 words)"
-                        className="flex-1 bg-transparent text-[13px] text-white placeholder:text-white/45 outline-none min-w-0"
+                        className="flex-1 bg-transparent text-[12.5px] sm:text-[13px] text-white placeholder:text-white/45 outline-none min-w-0"
                       />
                       <span
                         className={`text-[10.5px] font-mono-num shrink-0 ${
@@ -257,7 +282,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                       whileTap={{ scale: 0.94 }}
                       disabled={submittingName || tooManyWords || nameInput.trim().length < 2}
                       title="Continue"
-                      className="w-11 h-11 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] flex items-center justify-center shrink-0 cursor-pointer shadow-[0_10px_28px_rgba(255,255,255,0.22)] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+                      className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] flex items-center justify-center shrink-0 cursor-pointer shadow-[0_10px_28px_rgba(255,255,255,0.22)] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
                     >
                       {submittingName ? (
                         <span className="w-4 h-4 rounded-full border-2 border-[#07060B] border-t-transparent animate-spin" />
@@ -268,9 +293,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                   </div>
 
                   {tooManyWords ? (
-                    <div className="text-[11.5px] text-[#FDA4AF] font-medium">
-                      Maximum 3 words allowed.
-                    </div>
+                    <div className="text-[11.5px] text-[#FDA4AF] font-medium">Maximum 3 words allowed.</div>
                   ) : inlineErr ? (
                     <div className="text-[11.5px] text-[#FDA4AF] font-medium">{inlineErr}</div>
                   ) : (
@@ -303,7 +326,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
         </div>
       </main>
 
-      {/* Returning Member Sign-In Modal — Pure English, Clean Glass */}
+      {/* Returning Member Sign-In Modal — Password Required + Strictly THIS Device's Own Accounts ONLY! */}
       <AnimatePresence>
         {loginModalOpen && (
           <motion.div
@@ -318,6 +341,7 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 12, scale: 0.97 }}
               onClick={e => e.stopPropagation()}
+              style={{ paddingBottom: 'max(20px, calc(env(safe-area-inset-bottom) + 12px))' }}
               className="w-full sm:max-w-[400px] rounded-t-[24px] sm:rounded-[24px] bg-[#0D0B16]/96 border-t sm:border border-white/[0.12] p-5 space-y-4 shadow-2xl text-left"
             >
               <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.08]">
@@ -348,25 +372,23 @@ export function AuthScreen({ users, onAuthenticated }: AuthScreenProps) {
                 {loginErr && <div className="text-[12px] text-[#FDA4AF] px-1">{loginErr}</div>}
                 <button
                   type="submit"
-                  disabled={loggingIn || !loginUsername.trim()}
+                  disabled={loggingIn || !loginUsername.trim() || !loginPassword}
                   className="w-full h-10 rounded-full bg-white hover:bg-[#ECECF2] text-[#07060B] text-[13px] font-semibold cursor-pointer disabled:opacity-45 transition-colors"
                 >
                   {loggingIn ? 'Signing in...' : 'Sign In'}
                 </button>
               </form>
 
-              {users.length > 0 && (
+              {thisDeviceAccounts.length > 0 && (
                 <div className="pt-2.5 border-t border-white/[0.08] space-y-2">
-                  <div className="text-[11px] text-white/45">Quick access</div>
+                  <div className="text-[11px] text-white/45">Your account on this device</div>
                   <div className="max-h-[156px] overflow-y-auto divide-y divide-white/[0.06] rounded-xl border border-white/[0.07] bg-[#08070F]">
-                    {users.slice(0, 5).map(u => (
+                    {thisDeviceAccounts.map(u => (
                       <button
                         key={u.id}
                         type="button"
-                        onClick={() => {
-                          setLoginModalOpen(false);
-                          onAuthenticated(u);
-                        }}
+                        disabled={loggingIn}
+                        onClick={() => handleResumeOwnDeviceAccount(u)}
                         className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-white/[0.05] text-left cursor-pointer transition-colors"
                       >
                         <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={30} />

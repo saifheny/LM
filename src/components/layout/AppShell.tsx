@@ -18,6 +18,9 @@ import {
   Globe,
   ChevronLeft,
   ChevronRight,
+  ShieldCheck,
+  Smartphone,
+  KeyRound,
 } from 'lucide-react';
 import { Lang, NavTab, NotificationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
@@ -31,7 +34,7 @@ import {
   NavBellIcon,
 } from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
-import { apiGet } from '../../lib/api';
+import { apiGet, apiPost } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
 interface AppShellProps {
@@ -308,6 +311,35 @@ export function AppShell({
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [installPromptEvt, setInstallPromptEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
+  const [trustedDevices, setTrustedDevices] = useState<
+    Array<{ deviceId: string; deviceName: string; screenInfo: string; lastIp: string; isCurrent: boolean; lastSeenAt: string }>
+  >([]);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [passwordSavedMsg, setPasswordSavedMsg] = useState('');
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    setPasswordSavedMsg('');
+    apiGet<{
+      ok: boolean;
+      devices: Array<{ deviceId: string; deviceName: string; screenInfo: string; lastIp: string; isCurrent: boolean; lastSeenAt: string }>;
+    }>('/api/auth/devices')
+      .then(r => setTrustedDevices(r.devices || []))
+      .catch(() => {});
+  }, [accountOpen]);
+
+  async function handleSaveAccountPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPasswordInput.trim().length < 4) return;
+    try {
+      await apiPost('/api/auth/set-password', { password: newPasswordInput.trim() });
+      setNewPasswordInput('');
+      setPasswordSavedMsg(lang === 'en' ? 'Password saved securely!' : 'تم حفظ كلمة المرور بأمان');
+      setTimeout(() => setPasswordSavedMsg(''), 3000);
+    } catch {
+      setPasswordSavedMsg(lang === 'en' ? 'Could not save password' : 'تعذر حفظ كلمة المرور');
+    }
+  }
 
   useEffect(() => {
     const onBeforeInstall = (e: Event) => {
@@ -855,32 +887,60 @@ export function AppShell({
                   </button>
                 </div>
 
-                {/* Accounts Switcher */}
-                <div className="space-y-2">
-                  <div className="text-xs font-semibold text-[#8E8E93] px-1">{t(lang, 'switch_account')}</div>
-                  <div className="divide-y divide-white/[0.06]">
-                    {allUsers.map(u => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => {
-                          onSwitchUser(u);
-                          setAccountOpen(false);
-                        }}
-                        className="w-full py-3 flex items-center justify-between gap-3 text-start cursor-pointer"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={36} />
-                          <div className="min-w-0">
-                            <div className={`text-sm truncate ${u.id === user.id ? 'text-white font-bold' : 'text-[#C4C4CC]'}`}>
-                              {u.displayName}
+                {/* Trusted Device Binding & Account Protection (ZERO unauthorized switching into other people's accounts!) */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#8E8E93] px-1">
+                    <ShieldCheck className="w-4 h-4 text-[#34D399]" />
+                    <span>{lang === 'en' ? 'Trusted Devices & Security' : 'حماية الحساب والأجهزة المرتبطة'}</span>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/[0.03] border border-white/[0.08] p-3.5 space-y-2.5">
+                    {trustedDevices.length > 0 ? (
+                      trustedDevices.slice(0, 3).map(d => (
+                        <div key={d.deviceId} className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Smartphone className="w-4 h-4 text-[#34D399] shrink-0" />
+                            <div className="min-w-0">
+                              <div className="font-medium text-white truncate">
+                                {d.deviceName} {d.isCurrent ? (lang === 'en' ? '(This device)' : '(هذا الجهاز)') : ''}
+                              </div>
+                              <div className="text-[10.5px] text-[#7A7A85] font-mono-num truncate">
+                                {d.lastIp} {d.screenInfo ? `· ${d.screenInfo}` : ''}
+                              </div>
                             </div>
-                            <div className="text-[11px] text-[#7A7A85] font-mono-num">@{u.username}</div>
                           </div>
+                          {d.isCurrent && (
+                            <span className="px-2 py-0.5 rounded-full bg-[#34D399]/15 text-[#6EE7B7] text-[10px] font-semibold shrink-0">
+                              {lang === 'en' ? 'Auto-login' : 'دخول تلقائي'}
+                            </span>
+                          )}
                         </div>
-                        {u.id === user.id && <span className="w-2.5 h-2.5 rounded-full bg-[#34D399]" />}
+                      ))
+                    ) : (
+                      <div className="text-xs text-[#9E9EA8] flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-[#34D399]" />
+                        <span>{lang === 'en' ? 'Your account is bound securely to this device.' : 'حسابك مربوط تلقائيًا بهذا الجهاز ولا يمكن لغيرك دخوله.'}</span>
+                      </div>
+                    )}
+
+                    <form onSubmit={handleSaveAccountPassword} className="pt-2 border-t border-white/[0.07] flex items-center gap-2">
+                      <KeyRound className="w-3.5 h-3.5 text-[#8E8E93] shrink-0" />
+                      <input
+                        type="password"
+                        value={newPasswordInput}
+                        onChange={e => setNewPasswordInput(e.target.value)}
+                        placeholder={lang === 'en' ? 'Set password for another device...' : 'تعيين كلمة مرور للدخول من جهاز آخر...'}
+                        className="flex-1 min-w-0 bg-transparent text-xs text-white placeholder:text-[#63636C] outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={newPasswordInput.trim().length < 4}
+                        className="px-3 py-1 rounded-full bg-white text-black text-[11px] font-bold cursor-pointer disabled:opacity-35 shrink-0"
+                      >
+                        {lang === 'en' ? 'Save' : 'حفظ'}
                       </button>
-                    ))}
+                    </form>
+                    {passwordSavedMsg && <div className="text-[11px] text-[#6EE7B7]">{passwordSavedMsg}</div>}
                   </div>
                 </div>
 
@@ -984,26 +1044,33 @@ export function AppShell({
                     )}
                   </div>
 
-                  <div className="py-1 border-b border-white/[0.08]">
-                    {allUsers.map(u => (
+                  <div className="px-4 py-3 border-b border-white/[0.08] space-y-2.5">
+                    <div className="flex items-center justify-between text-[11.5px] text-[#9E9EA8]">
+                      <span className="flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#34D399]" />
+                        <span>{lang === 'en' ? 'Bound to this device' : 'حسابك مربوط بهذا الجهاز تلقائيًا'}</span>
+                      </span>
+                      <span className="font-mono-num text-[10.5px] text-[#7A7A85]">
+                        {trustedDevices.find(d => d.isCurrent)?.deviceName || 'Web'}
+                      </span>
+                    </div>
+                    <form onSubmit={handleSaveAccountPassword} className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={newPasswordInput}
+                        onChange={e => setNewPasswordInput(e.target.value)}
+                        placeholder={lang === 'en' ? 'Set account password...' : 'تعيين كلمة مرور للحساب...'}
+                        className="flex-1 h-8 rounded-xl bg-[#0A0A0E] border border-white/[0.1] px-2.5 text-xs text-white placeholder:text-[#63636C] outline-none"
+                      />
                       <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => {
-                          onSwitchUser(u);
-                          setAccountOpen(false);
-                        }}
-                        className={`w-full px-4 py-2.5 flex items-center justify-between text-xs hover:bg-white/[0.04] cursor-pointer ${
-                          u.id === user.id ? 'text-white font-semibold' : 'text-[#A1A1AA]'
-                        }`}
+                        type="submit"
+                        disabled={newPasswordInput.trim().length < 4}
+                        className="h-8 px-3 rounded-xl bg-white text-black text-[11px] font-bold cursor-pointer disabled:opacity-35"
                       >
-                        <div className="flex items-center gap-2.5">
-                          <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={26} />
-                          <span>{u.displayName}</span>
-                        </div>
-                        {u.id === user.id && <span className="w-1.5 h-1.5 rounded-full bg-[#34D399]" />}
+                        {lang === 'en' ? 'Save' : 'حفظ'}
                       </button>
-                    ))}
+                    </form>
+                    {passwordSavedMsg && <div className="text-[11px] text-[#6EE7B7]">{passwordSavedMsg}</div>}
                   </div>
 
                   <div className="p-2.5 flex items-center justify-between gap-1.5">
