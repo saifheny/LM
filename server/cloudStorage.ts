@@ -54,9 +54,16 @@ export function getSupabaseConfig(): SupabaseConfig | null {
     ''
   ).trim();
   if (!rawUrl || !key || !/^https?:\/\//i.test(rawUrl)) return null;
+  let normalizedUrl = rawUrl;
+  try {
+    // Automatically normalize if user pasted Data API URL ending in `/rest/v1`!
+    normalizedUrl = new URL(rawUrl).origin;
+  } catch {
+    return null;
+  }
   const mediaBucket = (process.env.SUPABASE_MEDIA_BUCKET || 'lm-media').trim() || 'lm-media';
   const stateBucket = (process.env.SUPABASE_STATE_BUCKET || 'lm-state').trim() || 'lm-state';
-  return { url: rawUrl, serviceRoleKey: key, mediaBucket, stateBucket };
+  return { url: normalizedUrl, serviceRoleKey: key, mediaBucket, stateBucket };
 }
 
 /**
