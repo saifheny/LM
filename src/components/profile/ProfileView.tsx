@@ -26,6 +26,8 @@ import {
 } from '../shared/Icons2026Pro';
 import { ActionMenuOrb } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton } from '../shared/ModalChrome2026';
+import { FacebookReactionButton } from '../shared/TelegramReactions';
+import { MediaCollageGrid } from '../shared/MediaCollageGrid';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
@@ -39,6 +41,7 @@ interface ProfileViewProps {
   onOpenProfileByUsername?: (username: string) => void;
   onOpenHashtag?: (tag: string) => void;
   onShare?: (payload: SharePayload) => void;
+  onOpenPostComments?: (postId: string) => void;
   onOpenVideos: () => void;
 }
 
@@ -58,6 +61,7 @@ export function ProfileView({
   onOpenProfileByUsername,
   onOpenHashtag,
   onShare,
+  onOpenPostComments,
   onOpenVideos,
 }: ProfileViewProps) {
   const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
@@ -149,6 +153,63 @@ export function ProfileView({
     setEditAvatar(profileUser.avatarUrl);
     setEditCover(profileUser.coverUrl || null);
     setEditOpen(true);
+  }
+
+  async function handleProfilePostReact(postId: string, reactionId: string) {
+    // 0ms optimistic live reaction/like update inside Profile!
+    setPosts(prev =>
+      prev.map(p => {
+        if (p.id !== postId) return p;
+        const curRx = { ...(p.reactions || {}) };
+        const prevMine = p.myReaction || null;
+        let nextMine: string | null = reactionId;
+        let delta = 0;
+        if (prevMine === reactionId) {
+          if (curRx[reactionId]) curRx[reactionId] = Math.max(0, curRx[reactionId] - 1);
+          nextMine = null;
+          delta = -1;
+        } else {
+          if (prevMine && curRx[prevMine]) curRx[prevMine] = Math.max(0, curRx[prevMine] - 1);
+          else delta = 1;
+          curRx[reactionId] = (curRx[reactionId] || 0) + 1;
+        }
+        return {
+          ...p,
+          reactions: curRx,
+          myReaction: nextMine,
+          score: Math.max(0, (p.score || 0) + delta),
+          likesCount: Math.max(0, (p.likesCount || 0) + delta),
+          likedByMe: Boolean(nextMine),
+        };
+      })
+    );
+    try {
+      const res = await apiPost<{
+        ok: boolean;
+        score: number;
+        reactions: Record<string, number>;
+        myReaction: string | null;
+      }>(`/api/posts/${postId}/react`, {
+        userId: currentUser.id,
+        reaction: reactionId,
+      });
+      setPosts(prev =>
+        prev.map(p =>
+          p.id === postId
+            ? {
+                ...p,
+                score: res.score,
+                likesCount: res.score,
+                reactions: res.reactions,
+                myReaction: res.myReaction,
+                likedByMe: Boolean(res.myReaction),
+              }
+            : p
+        )
+      );
+    } catch {
+      loadProfile();
+    }
   }
 
   async function handleImageUpload(kind: 'avatar' | 'cover', e: React.ChangeEvent<HTMLInputElement>) {
@@ -569,9 +630,9 @@ export function ProfileView({
 
         {/* Content Area */}
         {tab === 'posts' ? (
-          <div className="mt-4 divide-y divide-white/[0.07]">
+          <div className="mt-4 space-y-3">
             {posts.length === 0 ? (
-              <div className="py-16 text-center text-xs text-[#7A7A85]">
+              <div className="py-16 text-center text-xs text-[#8DA2BC]">
                 {lang === 'en' ? 'No posts yet' : 'لا توجد منشورات بعد'}
               </div>
             ) : (
@@ -579,7 +640,10 @@ export function ProfileView({
                 const isRepostItem = Boolean(post.repostedBy);
                 const isOwnOriginal = post.userId === currentUser.id;
                 return (
-                <article key={`${post.id}_${isRepostItem ? 'rp' : 'orig'}`} className="py-5 space-y-3">
+                <article
+                  key={`${post.id}_${isRepostItem ? 'rp' : 'orig'}`}
+                  className="lm-feed-card rounded-[20px] p-4 space-y-3"
+                >
                   {/* X-Style Repost Header */}
                   {isRepostItem && post.repostedBy && (
                     <div className="flex items-center justify-between gap-2 text-[11.5px] font-medium text-[#8E8E93]">
@@ -678,17 +742,11 @@ export function ProfileView({
                   )}
 
                   {post.mediaUrls.length > 0 && (
-                    <div className={`grid gap-1.5 ${post.mediaUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-                      {post.mediaUrls.map((url, idx) => (
-                        <img
-                          key={idx}
-                          src={url}
-                          alt=""
-                          className={`w-full rounded-2xl object-cover border border-white/[0.08] ${
-                            post.mediaUrls.length === 1 ? 'max-h-[380px]' : 'h-[190px]'
-                          }`}
-                        />
-                      ))}
+                    <div className="rounded-[16px] overflow-hidden border border-[#94B3D6]/[0.12]">
+                      <MediaCollageGrid
+                        urls={post.mediaUrls}
+                        onSelect={() => onOpenPostComments?.(post.id)}
+                      />
                     </div>
                   )}
 
@@ -696,7 +754,7 @@ export function ProfileView({
                   {post.quotedPost && (
                     <div
                       onClick={() => onOpenProfile(post.quotedPost!.userId)}
-                      className="mt-2 rounded-2xl bg-[#111116] border border-white/[0.1] hover:border-white/[0.2] p-3 space-y-2 cursor-pointer transition-colors"
+                      className="mt-2 rounded-2xl bg-[#101925] border border-[#94B3D6]/[0.12] hover:border-[#94B3D6]/[0.24] p-3 space-y-2 cursor-pointer transition-colors"
                     >
                       <div className="flex items-center gap-2 text-xs">
                         <UserAvatar
@@ -706,12 +764,12 @@ export function ProfileView({
                         />
                         <span className="font-semibold text-white truncate">{post.quotedPost.displayName}</span>
                         {post.quotedPost.verified && <VerifiedIcon />}
-                        <span className="text-[11px] text-[#7A7A85] font-mono-num">@{post.quotedPost.username}</span>
-                        <span className="text-[#585860]">·</span>
-                        <span className="text-[10.5px] text-[#7A7A85]">{post.quotedPost.createdAt}</span>
+                        <span className="text-[11px] text-[#8DA2BC] font-mono-num">@{post.quotedPost.username}</span>
+                        <span className="text-[#697C93]">·</span>
+                        <span className="text-[10.5px] text-[#8DA2BC]">{post.quotedPost.createdAt}</span>
                       </div>
                       {post.quotedPost.content && (
-                        <p className="text-xs text-[#D4D4D8] leading-relaxed line-clamp-3">
+                        <p className="text-xs text-[#D7E3F0] leading-relaxed line-clamp-3">
                           {post.quotedPost.content}
                         </p>
                       )}
@@ -724,6 +782,57 @@ export function ProfileView({
                       )}
                     </div>
                   )}
+
+                  {/* Live Profile Post Engagement Bar: Reactions/Likes + Open Facebook-Style Comments + Shares! */}
+                  <div className="pt-2.5 border-t border-[#94B3D6]/[0.1] flex items-center justify-between gap-2 text-[#96A7BC]">
+                    <div className="flex items-center gap-3.5 sm:gap-5 flex-wrap">
+                      <FacebookReactionButton
+                        reactions={post.reactions}
+                        myReaction={post.myReaction}
+                        totalCount={post.score || post.likesCount || 0}
+                        onReact={rxId => handleProfilePostReact(post.id, rxId)}
+                        lang={lang}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => onOpenPostComments?.(post.id)}
+                        className="flex items-center gap-1.5 text-xs font-medium text-[#96A7BC] hover:text-white transition-colors cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4" strokeWidth={1.8} />
+                        <span className="font-mono-num">{compactNum(post.commentsCount || 0)}</span>
+                        <span className="text-[11.5px]">{lang === 'en' ? 'Comments' : 'تعليق'}</span>
+                      </button>
+
+                      <span className="flex items-center gap-1.5 text-xs text-[#8DA2BC]">
+                        <Repeat2 className="w-4 h-4" strokeWidth={1.75} />
+                        <span className="font-mono-num">{compactNum(post.sharesCount || 0)}</span>
+                      </span>
+                    </div>
+
+                    {onShare && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onShare({
+                            kind: 'post',
+                            targetId: post.id,
+                            title: post.displayName,
+                            subtitle: `@${post.username}`,
+                            snippet: post.content || 'منشور على منصة LM',
+                            imageUrl: post.mediaUrls[0] || null,
+                            avatarUrl: post.avatarUrl,
+                            avatarInitials: post.avatarInitials,
+                            path: `/post/${post.id}`,
+                          })
+                        }
+                        title={lang === 'en' ? 'Share' : 'مشاركة'}
+                        className="w-8 h-8 rounded-full hover:bg-white/[0.07] text-[#96A7BC] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </article>
                 );
               })
@@ -844,19 +953,25 @@ export function ProfileView({
                           )}
 
                           {post.mediaUrls.length > 0 && (
-                            <div className={`grid gap-1.5 ${post.mediaUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-                              {post.mediaUrls.map((url, idx) => (
-                                <img
-                                  key={idx}
-                                  src={url}
-                                  alt=""
-                                  className={`w-full rounded-2xl object-cover border border-white/[0.08] ${
-                                    post.mediaUrls.length === 1 ? 'max-h-[340px]' : 'h-[170px]'
-                                  }`}
-                                />
-                              ))}
+                            <div className="rounded-[16px] overflow-hidden border border-[#94B3D6]/[0.12]">
+                              <MediaCollageGrid
+                                urls={post.mediaUrls}
+                                onSelect={() => onOpenPostComments?.(post.id)}
+                              />
                             </div>
                           )}
+
+                          <div className="pt-2 border-t border-[#94B3D6]/[0.1] flex items-center gap-4 text-xs text-[#96A7BC]">
+                            <button
+                              type="button"
+                              onClick={() => onOpenPostComments?.(post.id)}
+                              className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span className="font-mono-num">{compactNum(post.commentsCount || 0)}</span>
+                              <span>{lang === 'en' ? 'Open post & comments' : 'عرض المنشور والتعليقات'}</span>
+                            </button>
+                          </div>
                         </article>
                       ))}
                     </div>

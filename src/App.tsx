@@ -73,6 +73,7 @@ export function App() {
   const [pendingChatConvId, setPendingChatConvId] = useState<string | null>(null);
   const [activeHashtag, setActiveHashtag] = useState<string | null>(null);
   const [focusedPostId, setFocusedPostId] = useState<string | null>(null);
+  const [postReturnTab, setPostReturnTab] = useState<'social' | 'profile' | null>(null);
   const [focusedVideoId, setFocusedVideoId] = useState<string | null>(null);
   const [sharePayload, setSharePayload] = useState<SharePayload | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -409,7 +410,13 @@ export function App() {
               lastWsEvent={lastWsEvent}
               activeHashtag={activeHashtag}
               focusedPostId={focusedPostId}
-              onClearFocusedPost={() => setFocusedPostId(null)}
+              onClearFocusedPost={() => {
+                setFocusedPostId(null);
+                if (postReturnTab === 'profile') {
+                  setPostReturnTab(null);
+                  setActiveTab('profile');
+                }
+              }}
               onSelectHashtag={setActiveHashtag}
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
@@ -470,6 +477,11 @@ export function App() {
                 loadUsers();
               }}
               onMessageUser={openDirectChatWithUser}
+              onOpenPostComments={postId => {
+                setPostReturnTab('profile');
+                setFocusedPostId(postId);
+                setActiveTab('social');
+              }}
               onOpenVideos={() => setActiveTab('videos')}
             />
           )}

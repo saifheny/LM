@@ -990,14 +990,59 @@ app.get('/api/users/:id/profile', (req, res) => {
 
   const profileQuotedMap = loadQuotedPostMap(postRows.map(r => String(r.quoted_post_id || '')));
 
+  // Load real live reactions, viewer's reaction, saves & poll votes for profile posts!
+  const profilePostIds = Array.from(new Set(postRows.map(r => String(r.id))));
+  const profileReactionsMap = new Map<string, Record<string, number>>();
+  const profileMyReactionMap = new Map<string, string>();
+  const profileSavedSet = new Set<string>();
+  const profilePollVoteMap = new Map<string, string>();
+
+  if (profilePostIds.length > 0) {
+    const ph = profilePostIds.map(() => '?').join(',');
+    const rxRows = db
+      .prepare(`SELECT post_id, user_id, reaction FROM post_reactions WHERE post_id IN (${ph})`)
+      .all(...profilePostIds) as Array<{ post_id: string; user_id: string; reaction: string }>;
+    for (const rx of rxRows) {
+      const bucket = profileReactionsMap.get(rx.post_id) || {};
+      bucket[rx.reaction] = (bucket[rx.reaction] || 0) + 1;
+      profileReactionsMap.set(rx.post_id, bucket);
+      if (viewerId && rx.user_id === viewerId) profileMyReactionMap.set(rx.post_id, rx.reaction);
+    }
+    if (viewerId) {
+      const sRows = db
+        .prepare(`SELECT post_id FROM post_saves WHERE user_id = ? AND post_id IN (${ph})`)
+        .all(viewerId, ...profilePostIds) as Array<{ post_id: string }>;
+      for (const sr of sRows) profileSavedSet.add(sr.post_id);
+
+      const pvRows = db
+        .prepare(`SELECT post_id, option_id FROM post_poll_votes WHERE user_id = ? AND post_id IN (${ph})`)
+        .all(viewerId, ...profilePostIds) as Array<{ post_id: string; option_id: string }>;
+      for (const pvr of pvRows) profilePollVoteMap.set(pvr.post_id, pvr.option_id);
+    }
+  }
+
   const posts = postRows.map(r => {
     let mediaUrls: string[] = [];
     try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
     if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    let poll = null;
+    if (r.poll_json) {
+      try {
+        const parsed = JSON.parse(String(r.poll_json));
+        poll = { ...parsed, votedOptionId: profilePollVoteMap.get(String(r.id)) || null };
+      } catch {
+        poll = null;
+      }
+    }
     const isRepost = Number(r.is_repost || 0) === 1;
     const quotedId = r.quoted_post_id ? String(r.quoted_post_id) : '';
+    const pid = String(r.id);
+    const rxBucket = profileReactionsMap.get(pid) || {};
+    const myRx = profileMyReactionMap.get(pid) || null;
+    const rxTotal = Object.values(rxBucket).reduce((a, b) => a + b, 0);
+    const baseScore = Number(r.score ?? r.likes_count ?? 0);
     return {
-      id: r.id,
+      id: pid,
       userId: r.user_id,
       displayName: r.display_name,
       username: r.username,
@@ -1012,16 +1057,17 @@ app.get('/api/users/:id/profile', (req, res) => {
       musicUrl: r.music_url ? String(r.music_url) : null,
       musicTitle: r.music_title ? String(r.music_title) : null,
       location: r.location || 'القاهرة',
-      poll: null,
-      score: Number(r.score ?? r.likes_count ?? 0),
-      myVote: 0,
-      reactions: {},
-      myReaction: null,
-      likesCount: Number(r.likes_count || 0),
+      poll,
+      score: Math.max(baseScore, rxTotal),
+      myVote: myRx ? 1 : 0,
+      reactions: rxBucket,
+      myReaction: myRx,
+      likesCount: Math.max(Number(r.likes_count || 0), rxTotal),
       commentsCount: Number(r.comments_count || 0),
       sharesCount: Number(r.shares_count || 0),
-      likedByMe: false,
-      repostedByMe: viewerRepostSet.has(String(r.id)),
+      likedByMe: Boolean(myRx),
+      savedByMe: profileSavedSet.has(pid),
+      repostedByMe: viewerRepostSet.has(pid),
       repostedBy: isRepost
         ? { userId: user.id, displayName: user.displayName, username: user.username }
         : null,

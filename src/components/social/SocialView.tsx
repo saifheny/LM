@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
+  ArrowLeft,
+  ArrowRight,
   MessageCircle,
   Repeat2,
   Image as ImageIcon,
@@ -191,6 +193,12 @@ export function SocialView({
   const [publishing, setPublishing] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  // Session-Only Newly Published Post Hoisting (Shows brand-new post #1 right in front of you until you leave/reload!)
+  const [sessionNewPostIds, setSessionNewPostIds] = useState<string[]>([]);
+
+  // Facebook-Style Dedicated Post Detail Page (Post on TOP + Full Comments BELOW!)
+  const [detailPostId, setDetailPostId] = useState<string | null>(focusedPostId || null);
+
   // Comments + In-Composer Voice Replies + AI Summon (Drafts persisted across close & browser refresh!)
   const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
   const [commentsByPost, setCommentsByPost] = useState<Record<string, PostCommentItem[]>>({});
@@ -334,8 +342,16 @@ export function SocialView({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setLightbox(null);
-        setLightboxZoomed(false);
+        if (lightbox) {
+          setLightbox(null);
+          setLightboxZoomed(false);
+          return;
+        }
+        if (detailPostId) {
+          setDetailPostId(null);
+          onClearFocusedPost?.();
+          return;
+        }
         setActiveStory(null);
         setStoryStudioOpen(false);
         setComposerExpanded(false);
@@ -344,7 +360,7 @@ export function SocialView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [lightbox, detailPostId, onClearFocusedPost]);
 
   function stopPreviewMusic() {
     if (previewAudioRef.current) {
@@ -650,7 +666,7 @@ export function SocialView({
           ? { question: pollQuestion.trim(), options: pollOpts.filter(o => o.trim()) }
           : null;
 
-      await apiPost('/api/posts', {
+      const created = await apiPost<{ ok: boolean; id?: string }>('/api/posts', {
         userId: user.id,
         content: draft.trim() || pollQuestion.trim(),
         mediaUrls: uploadedMediaUrls,
@@ -658,6 +674,9 @@ export function SocialView({
         musicUrl: selectedMusic?.url || null,
         musicTitle: selectedMusic?.title || null,
       });
+      if (created?.id) {
+        setSessionNewPostIds(prev => [created.id!, ...prev.filter(x => x !== created.id)]);
+      }
       setDraft('');
       setUploadedMediaUrls([]);
       setSelectedMusic(null);
@@ -816,11 +835,14 @@ export function SocialView({
     if (!quotingPost || publishingQuote) return;
     setPublishingQuote(true);
     try {
-      await apiPost('/api/posts', {
+      const created = await apiPost<{ ok: boolean; id?: string }>('/api/posts', {
         userId: user.id,
         content: quoteDraft.trim() || (lang === 'en' ? 'Shared this post' : 'مشاركة هذا المنشور'),
         quotedPostId: quotingPost.id,
       });
+      if (created?.id) {
+        setSessionNewPostIds(prev => [created.id!, ...prev.filter(x => x !== created.id)]);
+      }
       setQuotingPost(null);
       setQuoteDraft('');
       await loadFeed();
@@ -871,19 +893,39 @@ export function SocialView({
     setPosts(prev => prev.map(p => (p.id === postId ? { ...p, commentsCount: res.comments.length } : p)));
   }
 
-  async function toggleThread(postId: string) {
-    const nextOpen = !openThreads[postId];
-    setOpenThreads(prev => ({ ...prev, [postId]: nextOpen }));
-    if (nextOpen) {
-      const hasCached = Array.isArray(commentsByPost[postId]);
-      if (!hasCached) setLoadingCommentsByPost(prev => ({ ...prev, [postId]: true }));
-      try {
-        const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
-        setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
-      } finally {
-        setLoadingCommentsByPost(prev => ({ ...prev, [postId]: false }));
-      }
+  const loadCommentsForPost = useCallback(async (postId: string) => {
+    setLoadingCommentsByPost(prev => ({ ...prev, [postId]: true }));
+    try {
+      const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
+      setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
+    } finally {
+      setLoadingCommentsByPost(prev => ({ ...prev, [postId]: false }));
     }
+  }, []);
+
+  const openPostDetail = useCallback(
+    (postId: string) => {
+      setDetailPostId(postId);
+      void loadCommentsForPost(postId);
+    },
+    [loadCommentsForPost]
+  );
+
+  const closePostDetail = useCallback(() => {
+    setDetailPostId(null);
+    setRecordingPostId(null);
+    onClearFocusedPost?.();
+  }, [onClearFocusedPost]);
+
+  // Automatically open Facebook-style Post Detail when navigated from Profile or /post/:id link!
+  useEffect(() => {
+    if (focusedPostId) {
+      openPostDetail(focusedPostId);
+    }
+  }, [focusedPostId, openPostDetail]);
+
+  async function toggleThread(postId: string) {
+    openPostDetail(postId);
   }
 
   async function submitComment(postId: string, e: React.FormEvent) {
@@ -1368,16 +1410,23 @@ export function SocialView({
           </div>
         )}
 
-        {/* Continuous Elevated Card Feed */}
+        {/* Continuous Elevated Card Feed (Session-newly-published posts hoisted #1 right in front of you!) */}
         {(!activeHashtag || hashtagFilter !== 'videos') && (
         <div className="px-2.5 sm:px-3 py-2.5 space-y-2.5">
-          {(focusedPostId && posts.some(p => p.id === focusedPostId)
-            ? [
-                ...posts.filter(p => p.id === focusedPostId),
-                ...posts.filter(p => p.id !== focusedPostId),
-              ]
-            : posts
-          ).map(post => {
+          {(() => {
+            let list = posts;
+            if (sessionNewPostIds.length > 0) {
+              const pinnedSet = new Set(sessionNewPostIds);
+              const pinned = sessionNewPostIds
+                .map(id => posts.find(p => p.id === id))
+                .filter((p): p is SocialPost => Boolean(p));
+              list = [...pinned, ...posts.filter(p => !pinnedSet.has(p.id))];
+            }
+            if (focusedPostId && list.some(p => p.id === focusedPostId)) {
+              list = [...list.filter(p => p.id === focusedPostId), ...list.filter(p => p.id !== focusedPostId)];
+            }
+            return list;
+          })().map(post => {
             const isThreadOpen = Boolean(openThreads[post.id]);
             const postComments = commentsByPost[post.id] || [];
             const rootComments = postComments.filter(c => !c.parentId);
@@ -2358,6 +2407,624 @@ export function SocialView({
         )}
       </div>
 
+      {/* FACEBOOK-STYLE DEDICATED POST DETAIL PAGE (Post on TOP + Full Threaded Comments BELOW + Sticky Composer!) */}
+      {detailPostId && (() => {
+        const dPost = posts.find(p => p.id === detailPostId) || null;
+        const dComments = commentsByPost[detailPostId] || [];
+        const dRootComments = dComments.filter(c => !c.parentId);
+        const getDReplies = (parentId: string) => dComments.filter(c => c.parentId === parentId);
+        const dAiMode = Boolean(replyAiModeByPost[detailPostId]);
+        const dCommentText = replyDrafts[detailPostId] || '';
+        const dHasCommentText = dCommentText.trim().length > 0;
+        const dTotalPollVotes = dPost?.poll ? dPost.poll.options.reduce((acc, o) => acc + o.votes, 0) : 0;
+        const dMusicPlaying = dPost ? playingPostMusicId === dPost.id : false;
+        const dSensitiveHidden = Boolean(dPost?.isSensitive) && dPost ? !revealedPosts[dPost.id] : false;
+        const BackArrow = lang === 'en' ? ArrowLeft : ArrowRight;
+
+        return (
+          <div
+            onClick={e => e.stopPropagation()}
+            className="fixed inset-0 z-[55] bg-[#0E1621] text-[#EEF2F7] flex flex-col overflow-hidden"
+          >
+            {/* Sticky Facebook-Style Top Navigation Bar */}
+            <header
+              style={{ paddingTop: 'max(12px, calc(env(safe-area-inset-top) + 6px))' }}
+              className="shrink-0 bg-[#15202D]/95 backdrop-blur-xl border-b border-[#94B3D6]/[0.12] px-3.5 sm:px-5 pb-3"
+            >
+              <div className="max-w-[660px] mx-auto flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    type="button"
+                    onClick={closePostDetail}
+                    aria-label={t(lang, 'back')}
+                    className="w-9 h-9 rounded-full bg-[#1E2C3C] hover:bg-[#27394D] border border-[#94B3D6]/[0.16] text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                  >
+                    <BackArrow className="w-4 h-4" />
+                  </button>
+                  <div className="min-w-0">
+                    <div className="text-[14.5px] font-bold text-white truncate">
+                      {dPost
+                        ? lang === 'en'
+                          ? `${dPost.displayName}'s Post`
+                          : `منشور ${dPost.displayName}`
+                        : lang === 'en'
+                          ? 'Post'
+                          : 'المنشور'}
+                    </div>
+                    {dPost && (
+                      <div className="text-[11px] text-[#8DA2BC] font-mono-num truncate">
+                        @{dPost.username} · {dPost.createdAt}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {dPost && onShare && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onShare({
+                        kind: 'post',
+                        targetId: dPost.id,
+                        title: dPost.displayName,
+                        subtitle: `@${dPost.username}`,
+                        snippet: dPost.content || 'منشور على منصة LM',
+                        imageUrl: dPost.mediaUrls[0] || null,
+                        avatarUrl: dPost.avatarUrl,
+                        avatarInitials: dPost.avatarInitials,
+                        path: `/post/${dPost.id}`,
+                        onShared: nextCount => {
+                          setPosts(prev => prev.map(p => (p.id === dPost.id ? { ...p, sharesCount: nextCount } : p)));
+                        },
+                      })
+                    }
+                    title={lang === 'en' ? 'Share' : 'مشاركة'}
+                    className="w-9 h-9 rounded-full bg-[#1E2C3C] hover:bg-[#27394D] border border-[#94B3D6]/[0.16] text-[#D7E3F0] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </header>
+
+            {/* Scrollable Stage: FULL POST ON TOP + ALL COMMENTS DIRECTLY BELOW */}
+            <div className="flex-1 overflow-y-auto px-3 sm:px-4 pt-3.5 pb-32">
+              <div className="max-w-[660px] mx-auto space-y-4">
+                {!dPost ? (
+                  <div className="lm-feed-card rounded-[20px] p-5">
+                    <CommentListSkeleton rows={3} />
+                  </div>
+                ) : (
+                  <>
+                    {/* TOP SECTION: FULL POST CARD */}
+                    <article className="lm-feed-card rounded-[22px] p-4 sm:p-5 space-y-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            closePostDetail();
+                            onOpenProfile?.(dPost.userId);
+                          }}
+                          className="flex items-center gap-2.5 min-w-0 text-start cursor-pointer group"
+                        >
+                          <UserAvatar initials={dPost.avatarInitials} avatarUrl={dPost.avatarUrl} size={42} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 text-[14.5px] font-bold text-white group-hover:underline truncate">
+                              <span className="truncate">{dPost.displayName}</span>
+                              {dPost.verified && <VerifiedIcon />}
+                            </div>
+                            <div className="text-[11.5px] text-[#8DA2BC] font-mono-num">
+                              @{dPost.username} · {dPost.createdAt}
+                            </div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => toggleSavePost(dPost.id)}
+                          title={dPost.savedByMe ? 'إزالة من المحفوظات' : 'حفظ المنشور'}
+                          className={`w-8 h-8 rounded-full hover:bg-white/[0.08] flex items-center justify-center cursor-pointer transition-colors ${
+                            dPost.savedByMe ? 'text-[#FACC15]' : 'text-[#96A7BC] hover:text-white'
+                          }`}
+                        >
+                          <Bookmark className={`w-4 h-4 ${dPost.savedByMe ? 'fill-current' : ''}`} />
+                        </button>
+                      </div>
+
+                      {dPost.content && (
+                        <div className="text-[15.5px] leading-[1.7] text-[#F2F6FB] whitespace-pre-wrap break-words">
+                          <RichMessageText
+                            text={dPost.content}
+                            maxChars={4000}
+                            lang={lang}
+                            onMentionClick={u => {
+                              closePostDetail();
+                              onOpenProfileByUsername?.(u);
+                            }}
+                            onHashtagClick={tag => {
+                              closePostDetail();
+                              onSelectHashtag?.(tag);
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {dPost.musicUrl && dPost.mediaUrls.length === 0 && (
+                        <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl bg-[#101925] border border-[#94B3D6]/[0.14]">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Music className={`w-4 h-4 shrink-0 ${dMusicPlaying ? 'text-[#34D399]' : 'text-[#A8C5E8]'}`} />
+                            <span className="text-xs font-medium text-white truncate">
+                              {dPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'موسيقى مرفقة')}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => togglePostMusic(dPost.id, dPost.musicUrl!)}
+                            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer shrink-0"
+                          >
+                            {dMusicPlaying ? <Volume2 className="w-4 h-4 text-[#34D399]" /> : <VolumeX className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      )}
+
+                      {dPost.mediaUrls.length > 0 && (
+                        <div className="relative rounded-[16px] overflow-hidden border border-[#94B3D6]/[0.12] bg-[#0B121B]">
+                          <MediaCollageGrid
+                            urls={dPost.mediaUrls}
+                            onSelect={idx =>
+                              setLightbox({
+                                urls: dPost.mediaUrls,
+                                index: idx,
+                                caption: dPost.content,
+                                author: dPost.displayName,
+                              })
+                            }
+                          />
+                          {dSensitiveHidden && (
+                            <SensitiveMediaShield
+                              revealed={false}
+                              onReveal={() => setRevealedPosts(prev => ({ ...prev, [dPost.id]: true }))}
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {dPost.poll && (
+                        <div className="p-3 rounded-2xl bg-[#101925] border border-[#94B3D6]/[0.12] space-y-2">
+                          <div className="text-xs font-semibold text-white">{dPost.poll.question}</div>
+                          {dPost.poll.options.map(opt => {
+                            const pct = dTotalPollVotes > 0 ? Math.round((opt.votes / dTotalPollVotes) * 100) : 0;
+                            const chosen = dPost.poll?.votedOptionId === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => handlePollVote(dPost.id, opt.id)}
+                                className={`relative w-full h-9 rounded-lg border overflow-hidden flex items-center justify-between px-3 text-xs cursor-pointer transition-colors ${
+                                  chosen ? 'border-[#7C5CFF] text-white font-semibold' : 'border-white/[0.1] text-[#D7E3F0]'
+                                }`}
+                              >
+                                <span
+                                  style={{ width: `${pct}%` }}
+                                  className={`absolute inset-y-0 start-0 transition-all duration-300 ${
+                                    chosen ? 'bg-[#7C5CFF]/30' : 'bg-white/[0.06]'
+                                  }`}
+                                />
+                                <span className="relative z-10 truncate">{opt.text}</span>
+                                <span className="relative z-10 font-mono-num text-[11px] text-[#A9BCD3]">{pct}%</span>
+                              </button>
+                            );
+                          })}
+                          <div className="text-[11px] text-[#8DA2BC] font-mono-num">{formatCount(dTotalPollVotes)} صوت</div>
+                        </div>
+                      )}
+
+                      {dPost.quotedPost && (
+                        <div
+                          onClick={() => {
+                            closePostDetail();
+                            onOpenProfile?.(dPost.quotedPost!.userId);
+                          }}
+                          className="rounded-2xl bg-[#101925] border border-[#94B3D6]/[0.14] p-3 space-y-2 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2 text-xs">
+                            <UserAvatar
+                              initials={dPost.quotedPost.avatarInitials}
+                              avatarUrl={dPost.quotedPost.avatarUrl}
+                              size={22}
+                            />
+                            <span className="font-semibold text-white">{dPost.quotedPost.displayName}</span>
+                            <span className="text-[11px] text-[#8DA2BC] font-mono-num">@{dPost.quotedPost.username}</span>
+                          </div>
+                          {dPost.quotedPost.content && (
+                            <p className="text-[13px] text-[#D7E3F0] leading-relaxed">{dPost.quotedPost.content}</p>
+                          )}
+                          {dPost.quotedPost.mediaUrl && (
+                            <img
+                              src={dPost.quotedPost.mediaUrl}
+                              alt=""
+                              className="w-full max-h-[220px] rounded-xl object-cover"
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {/* Post Engagement Bar */}
+                      <div className="pt-3 border-t border-[#94B3D6]/[0.12] flex items-center justify-between gap-3 text-[#96A7BC]">
+                        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+                          <FacebookReactionButton
+                            reactions={dPost.reactions}
+                            myReaction={dPost.myReaction}
+                            totalCount={dPost.score}
+                            onReact={rxId => handlePostReact(dPost.id, rxId)}
+                            lang={lang}
+                          />
+
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                            <MessageCircle className="w-4 h-4 text-[#60A5FA]" strokeWidth={1.9} />
+                            <span className="font-mono-num">{formatCount(dPost.commentsCount)}</span>
+                            <span>{lang === 'en' ? 'Comments' : 'تعليق'}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRepost(dPost.id)}
+                            className={`flex items-center gap-1.5 text-xs cursor-pointer transition-colors ${
+                              dPost.repostedByMe ? 'text-[#34D399] font-semibold' : 'hover:text-white'
+                            }`}
+                          >
+                            <Repeat2 className="w-4 h-4" />
+                            <span className="font-mono-num">{formatCount(dPost.sharesCount)}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+
+                    {/* COMMENTS SECTION HEADER */}
+                    <div className="flex items-center justify-between px-1 pt-1">
+                      <div className="flex items-center gap-2 text-[13.5px] font-bold text-white">
+                        <span>{lang === 'en' ? 'Comments' : 'التعليقات'}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-[#1C2A3B] text-[11px] font-mono-num text-[#A8C5E8]">
+                          {dComments.length}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* ALL THREADED COMMENTS & NESTED REPLIES BELOW THE POST */}
+                    <div className="space-y-3">
+                      {loadingCommentsByPost[dPost.id] ? (
+                        <CommentListSkeleton rows={3} />
+                      ) : dRootComments.length === 0 ? (
+                        <div className="rounded-[20px] bg-[#15202D]/80 border border-[#94B3D6]/[0.1] p-6">
+                          <EmptyState2026
+                            compact
+                            icon={<MessageCircle className="w-4 h-4" />}
+                            title={lang === 'en' ? 'No comments yet' : 'لا توجد تعليقات بعد'}
+                            subtitle={lang === 'en' ? 'Be the first to share your thoughts below.' : 'كن أول من يضيف تعليقًا في الأسفل.'}
+                          />
+                        </div>
+                      ) : (
+                        dRootComments.map(c => {
+                          const replies = getDReplies(c.id);
+                          return (
+                            <div key={c.id} className="space-y-2.5">
+                              <div className="flex gap-2.5 items-start">
+                                {c.isAi ? (
+                                  <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={32} />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      closePostDetail();
+                                      onOpenProfile?.(c.userId);
+                                    }}
+                                    className="shrink-0 cursor-pointer hover:opacity-85"
+                                  >
+                                    <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={32} />
+                                  </button>
+                                )}
+
+                                <div className="flex-1 min-w-0">
+                                  <div className="rounded-2xl bg-[#17212B] border border-[#94B3D6]/[0.1] px-3.5 py-2.5">
+                                    <div className="flex items-center gap-1.5 text-xs flex-wrap mb-1">
+                                      <span className="font-bold text-white">{c.displayName}</span>
+                                      {c.verified && <VerifiedIcon />}
+                                      {c.isAi && <AiSummonBadge label="LM AI" compact />}
+                                      {!c.isAi && c.aiSummoned && <AiSummonBadge label="AI" compact />}
+                                      <span className="text-[11px] text-[#8DA2BC]">· {c.createdAt}</span>
+                                    </div>
+
+                                    <SensitiveCommentShield
+                                      revealed={!c.isSensitive || Boolean(revealedComments[c.id])}
+                                      onReveal={() => setRevealedComments(prev => ({ ...prev, [c.id]: true }))}
+                                    >
+                                      {c.audioUrl ? (
+                                        <div className="mt-1 max-w-[300px]">
+                                          <SmartVoicePill
+                                            url={c.audioUrl}
+                                            transcript={c.transcript}
+                                            recordId={c.id}
+                                            table="post_comments"
+                                            accent={c.aiSummoned ? 'ai' : 'default'}
+                                            compact
+                                          />
+                                        </div>
+                                      ) : c.isAi ? (
+                                        <div className="text-[14px] text-[#E6EEF7] leading-relaxed">
+                                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
+                                            {c.content}
+                                          </ReactMarkdown>
+                                        </div>
+                                      ) : (
+                                        <div className="text-[14px] text-[#E6EEF7] leading-relaxed">
+                                          <RichMessageText
+                                            text={c.content}
+                                            maxChars={500}
+                                            lang={lang}
+                                            onMentionClick={u => {
+                                              closePostDetail();
+                                              onOpenProfileByUsername?.(u);
+                                            }}
+                                            onHashtagClick={tag => {
+                                              closePostDetail();
+                                              onSelectHashtag?.(tag);
+                                            }}
+                                          />
+                                        </div>
+                                      )}
+                                    </SensitiveCommentShield>
+
+                                    {commentTranslations[c.id] && (
+                                      <div className="mt-2 ps-2.5 border-s-2 border-[#34D399]/60 py-0.5 text-[13px] text-[#D7E3F0] flex items-start justify-between gap-2">
+                                        <span>{commentTranslations[c.id].text}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setCommentTranslations(prev => {
+                                              const copy = { ...prev };
+                                              delete copy[c.id];
+                                              return copy;
+                                            })
+                                          }
+                                          className="text-[#8DA2BC] hover:text-white cursor-pointer shrink-0"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-1.5 px-2 flex items-center gap-3.5 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setReplyParentByPost(prev => ({
+                                          ...prev,
+                                          [dPost.id]: {
+                                            id: c.id,
+                                            name: c.displayName,
+                                            snippet: c.audioUrl ? (c.transcript || 'رسالة صوتية') : c.content.slice(0, 56),
+                                            isAi: Boolean(c.isAi),
+                                          },
+                                        }));
+                                        if (c.isAi) setReplyAiModeByPost(prev => ({ ...prev, [dPost.id]: true }));
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[#8DA2BC] hover:text-white cursor-pointer"
+                                    >
+                                      <CornerDownLeft className="w-3 h-3" />
+                                      <span>{t(lang, 'reply')}</span>
+                                    </button>
+
+                                    {!c.audioUrl && c.content.trim() && (
+                                      <div className="relative">
+                                        <button
+                                          type="button"
+                                          disabled={translatingCommentId === c.id}
+                                          onClick={() => setCommentLangMenuId(cur => (cur === c.id ? null : c.id))}
+                                          className="inline-flex items-center gap-1 text-[11.5px] text-[#8DA2BC] hover:text-[#34D399] cursor-pointer"
+                                        >
+                                          <Languages className="w-3 h-3" />
+                                          <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                                        </button>
+                                        {commentLangMenuId === c.id && (
+                                          <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#1C2A3B] border border-[#94B3D6]/20 shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                            {COMMENT_TRANSLATE_LANGS.map(lg => (
+                                              <button
+                                                key={lg.code}
+                                                type="button"
+                                                onClick={() => translateCommentText(c.id, c.content, lg.code)}
+                                                className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.18] text-[10.5px] text-white cursor-pointer"
+                                              >
+                                                {lg.label}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {c.userId === user.id && (
+                                      <QuickRemovePill onRemove={() => deleteComment(dPost.id, c.id)} />
+                                    )}
+
+                                    {!c.isAi && c.userId !== user.id && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setReportRequest({
+                                            targetType: 'post_comment',
+                                            targetId: c.id,
+                                            label: lang === 'en' ? 'this comment' : 'هذا التعليق',
+                                          })
+                                        }
+                                        className="inline-flex items-center gap-1 text-[11.5px] text-[#8DA2BC] hover:text-[#FB7185] cursor-pointer"
+                                      >
+                                        <Flag className="w-2.5 h-2.5" />
+                                        <span>{t(lang, 'report')}</span>
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {replies.length > 0 && (
+                                    <div className="mt-2.5 ms-2 ps-3 border-s-2 border-[#94B3D6]/[0.16] space-y-2">
+                                      {replies.map(rep => (
+                                        <div key={rep.id} className="flex gap-2 items-start">
+                                          <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={26} />
+                                          <div className="flex-1 min-w-0">
+                                            <div className="rounded-2xl bg-[#141E2B] border border-[#94B3D6]/[0.09] px-3 py-2">
+                                              <div className="flex items-center gap-1.5 text-[11.5px] flex-wrap mb-0.5">
+                                                <span className="font-bold text-white">{rep.displayName}</span>
+                                                {rep.verified && <VerifiedIcon />}
+                                                {rep.isAi && <AiSummonBadge label="LM AI" compact />}
+                                                <span className="text-[10.5px] text-[#8DA2BC]">· {rep.createdAt}</span>
+                                              </div>
+                                              {rep.audioUrl ? (
+                                                <SmartVoicePill
+                                                  url={rep.audioUrl}
+                                                  transcript={rep.transcript}
+                                                  recordId={rep.id}
+                                                  table="post_comments"
+                                                  compact
+                                                />
+                                              ) : (
+                                                <div className="text-[13.5px] text-[#DCE6F2] leading-relaxed">
+                                                  <RichMessageText text={rep.content} maxChars={320} lang={lang} />
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div className="mt-1 px-2 flex items-center gap-3">
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setReplyParentByPost(prev => ({
+                                                    ...prev,
+                                                    [dPost.id]: {
+                                                      id: c.id,
+                                                      name: rep.displayName,
+                                                      snippet: rep.content.slice(0, 56),
+                                                      isAi: Boolean(rep.isAi),
+                                                    },
+                                                  }));
+                                                }}
+                                                className="text-[11px] text-[#8DA2BC] hover:text-white cursor-pointer"
+                                              >
+                                                {t(lang, 'reply')}
+                                              </button>
+                                              {rep.userId === user.id && (
+                                                <QuickRemovePill onRemove={() => deleteComment(dPost.id, rep.id)} />
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+
+                      {aiTypingPostId === dPost.id && (
+                        <div className="flex items-center gap-2.5 py-1.5">
+                          <UserAvatar initials="AI" avatarUrl={null} size={28} />
+                          <div className="px-3.5 py-2 rounded-2xl bg-[#17212B] border border-[#7C5CFF]/30 text-xs text-[#E2EEFF] flex items-center gap-2">
+                            <Sparkles className="w-3.5 h-3.5 text-[#A78BFA] animate-pulse" />
+                            <span>LM AI يكتب الآن...</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Sticky Bottom Comment Composer */}
+            {dPost && (
+              <div
+                style={{ paddingBottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
+                className="shrink-0 bg-[#15202D]/95 backdrop-blur-xl border-t border-[#94B3D6]/[0.14] px-3 sm:px-4 pt-2.5"
+              >
+                <div className="max-w-[660px] mx-auto space-y-2">
+                  {replyParentByPost[dPost.id] && (
+                    <div className="w-fit max-w-[300px] rounded-2xl bg-[#1D2C3D] border border-[#94B3D6]/[0.18] px-3 py-1.5 flex items-center gap-2.5">
+                      <span className="w-[2.5px] self-stretch rounded-full bg-[#7C5CFF]" />
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold text-white truncate">
+                          الرد على {replyParentByPost[dPost.id]?.name}
+                        </div>
+                        {replyParentByPost[dPost.id]?.snippet && (
+                          <div className="text-[11px] text-[#96A7BC] truncate max-w-[200px]">
+                            {replyParentByPost[dPost.id]?.snippet}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setReplyParentByPost(prev => ({ ...prev, [dPost.id]: null }))}
+                        className="w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer shrink-0"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+
+                  {recordingPostId === dPost.id ? (
+                    <LiveVoiceRecorder
+                      onCancel={() => setRecordingPostId(null)}
+                      onSend={(file, sec, liveTxt) => submitVoiceComment(dPost.id, file, sec, liveTxt)}
+                    />
+                  ) : (
+                    <ObsidianComposerPill
+                      value={dCommentText}
+                      onChange={v => setReplyDraftForPost(dPost.id, v)}
+                      onSubmit={e => submitComment(dPost.id, e)}
+                      placeholder={dAiMode ? 'اسأل الذكاء الاصطناعي...' : 'اكتب تعليقًا...'}
+                      extraEnd={
+                        <button
+                          type="button"
+                          onClick={() => setReplyAiModeByPost(prev => ({ ...prev, [dPost.id]: !prev[dPost.id] }))}
+                          title="استدعاء الذكاء الاصطناعي"
+                          className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+                            dAiMode
+                              ? 'bg-[#7C5CFF]/25 text-white border border-[#7C5CFF]/45'
+                              : 'text-[#8DA2BC] hover:text-white'
+                          }`}
+                        >
+                          <NavAiIcon active={dAiMode} className="w-[17px] h-[17px]" />
+                        </button>
+                      }
+                      customAction={
+                        dHasCommentText ? (
+                          <ChromeArrowButton
+                            type="submit"
+                            disabled={submittingCommentPost === dPost.id}
+                            size={36}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setRecordingPostId(dPost.id)}
+                            title="رد صوتي"
+                            className="chrome-rim-btn w-[36px] h-[36px] shrink-0 cursor-pointer"
+                          >
+                            <span className="chrome-rim-btn-inner text-[#D7E3F0] hover:text-white transition-colors">
+                              <Mic className="w-[16px] h-[16px]" strokeWidth={1.9} />
+                            </span>
+                          </button>
+                        )
+                      }
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* FULL-PAGE EXPANDED COMPOSER (Keeps Typed Text + Bottom 1-4 Photos Shelf!) */}
       {composerExpanded && (
         <form
@@ -2514,7 +3181,7 @@ export function SocialView({
             setLightbox(null);
             setLightboxZoomed(false);
           }}
-          className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4"
+          className="fixed inset-0 z-[80] bg-black/95 backdrop-blur-md flex flex-col justify-between p-4"
         >
           <div onClick={e => e.stopPropagation()} className="flex items-center justify-between max-w-5xl w-full mx-auto">
             <div className="text-xs font-medium text-white/80">
