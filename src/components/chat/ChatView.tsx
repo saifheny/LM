@@ -7,7 +7,6 @@ import {
   Phone,
   PhoneCall,
   Mic,
-  SmilePlus,
   CornerUpLeft,
   Sparkles,
   X,
@@ -19,12 +18,17 @@ import {
   CheckCheck,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   Users,
   ShieldCheck,
   Link2,
   Eraser,
   AlertTriangle,
   Image as ImageIcon,
+  Copy,
+  Pencil,
+  Trash2,
+  Palette,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile, VoiceCallLogItem } from '../../types';
@@ -33,7 +37,6 @@ import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { TelegramReactionStrip, TelegramReactionPill } from '../shared/TelegramReactions';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { NavAiIcon, TelegramVideoNoteIcon } from '../shared/Icons2026Pro';
-import { ActionMenuOrb } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import type { CallLaunchRequest } from '../shared/WebRtcCallModal';
 import { SplitComposerOrb } from '../layout/AppShell';
@@ -73,6 +76,13 @@ const WORLD_LANGUAGES = [
   { code: 'fa', label: 'فارسی' },
   { code: 'id', label: 'Indonesia' },
 ];
+
+const CHAT_WALLPAPERS = [
+  { id: 'lm-wp-telegram', label: 'تيليجرام', labelEn: 'Telegram', swatch: '#142336', accent: '#60A5FA' },
+  { id: 'lm-wp-whatsapp', label: 'واتساب', labelEn: 'WhatsApp', swatch: '#0E1F24', accent: '#34D399' },
+  { id: 'lm-wp-aurora', label: 'أورورا', labelEn: 'Aurora', swatch: '#1D1738', accent: '#A78BFA' },
+  { id: 'lm-wp-emerald', label: 'زمرد', labelEn: 'Emerald', swatch: '#0F2723', accent: '#2DD4BF' },
+] as const;
 
 function isMostlyLatin(text: string): boolean {
   const letters = text.replace(/[^a-zA-Z\u0600-\u06FF]/g, '');
@@ -157,16 +167,50 @@ export function ChatView({
     [activeConvId]
   );
 
-  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
-  const [openPickerMsgId, setOpenPickerMsgId] = useState<string | null>(null);
+  // Authentic Telegram Wallpaper Preset (Persisted across refresh)
+  const [chatWallpaper, setChatWallpaperState] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('lm_chat_wallpaper');
+      if (saved && CHAT_WALLPAPERS.some(w => w.id === saved)) return saved;
+    } catch {
+      // ignore
+    }
+    return 'lm-wp-telegram';
+  });
+  const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
+
+  const setChatWallpaper = useCallback((wp: string) => {
+    setChatWallpaperState(wp);
+    try {
+      localStorage.setItem('lm_chat_wallpaper', wp);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Authentic Telegram Message Spotlight Context Overlay + Bottom Edit + Delete Confirmation + Swipe-to-Reply
+  const [contextMsg, setContextMsg] = useState<ChatMessageItem | null>(null);
+  const [contextSubmenu, setContextSubmenu] = useState<'main' | 'translate'>('main');
+  const [deleteConfirmMsg, setDeleteConfirmMsg] = useState<ChatMessageItem | null>(null);
+  const [editingMsg, setEditingMsg] = useState<ChatMessageItem | null>(null);
+  const draftBeforeEditRef = useRef<string>('');
+  const [chatToast, setChatToast] = useState<string>('');
+
+  // Swipe-to-Reply & Double-Tap Quick React Gesture Refs
+  const [swipeReplyState, setSwipeReplyState] = useState<{ msgId: string; offset: number } | null>(null);
+  const swipeTouchRef = useRef<{ msgId: string; startX: number; startY: number; active: boolean; offset: number } | null>(null);
+  const bubbleHoldTimerRef = useRef<number | null>(null);
+  const bubbleLongPressedRef = useRef<boolean>(false);
+  const bubbleTapTimerRef = useRef<number | null>(null);
+  const bubbleLastTapRef = useRef<{ msgId: string; ts: number }>({ msgId: '', ts: 0 });
+
   const [loadingMessages, setLoadingMessages] = useState(false);
   const messagesCacheRef = useRef<Record<string, ChatMessageItem[]>>({});
   const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
   const [expandedVideoNote, setExpandedVideoNote] = useState<string | null>(null);
   const [chatLightbox, setChatLightbox] = useState<{ urls: string[]; idx: number } | null>(null);
 
-  // In-Place Message Translation (replaces bubble content directly, clears on empty-space click!)
-  const [translateMenuMsgId, setTranslateMenuMsgId] = useState<string | null>(null);
+  // In-Place Message Translation (Stays visible until user taps "إظهار الأصل"!)
   const [translations, setTranslations] = useState<Record<string, { text: string; langLabel: string; loading?: boolean }>>({});
 
   // Telegram Single Action Button Mode Toggle: Voice <-> Circular Video Note
@@ -208,10 +252,6 @@ export function ChatView({
   const noteChunksRef = useRef<Blob[]>([]);
   const noteTimerRef = useRef<number | null>(null);
   const noteSendFlagRef = useRef<boolean>(false);
-
-  // Inline Edit Message state
-  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
-  const [editingMsgText, setEditingMsgText] = useState('');
 
   // WhatsApp-Style In-Chat Search (Replaces Top Header, Jump-to-Message + Flash Highlight!)
   const [msgSearchOpen, setMsgSearchOpen] = useState(false);
@@ -302,8 +342,30 @@ export function ChatView({
       setMsgSearchOpen(false);
       setMsgSearchQ('');
       setSearchMatchIdx(0);
+      setEditingMsg(null);
+      setContextMsg(null);
+      setDeleteConfirmMsg(null);
+      setReplyTarget(null);
+      setSharedForAi(null);
+      setWallpaperMenuOpen(false);
     }
   }, [activeConvId, loadMessages]);
+
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return;
+      if (deleteConfirmMsg) setDeleteConfirmMsg(null);
+      else if (contextMsg) setContextMsg(null);
+      else if (wallpaperMenuOpen) setWallpaperMenuOpen(false);
+      else if (editingMsg) {
+        setEditingMsg(null);
+        setDraft(draftBeforeEditRef.current || '');
+        draftBeforeEditRef.current = '';
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deleteConfirmMsg, contextMsg, wallpaperMenuOpen, editingMsg, setDraft]);
 
   useEffect(() => {
     if (!msgSearchOpen) {
@@ -346,8 +408,134 @@ export function ChatView({
     listScrollRef.current = top;
   }
 
+  function showChatToast(msg: string) {
+    setChatToast(msg);
+    window.setTimeout(() => setChatToast(cur => (cur === msg ? '' : cur)), 2000);
+  }
+
+  function openMessageContext(msg: ChatMessageItem, submenu: 'main' | 'translate' = 'main') {
+    setContextSubmenu(submenu);
+    setContextMsg(msg);
+    try {
+      navigator.vibrate?.(14);
+    } catch {
+      // ignore
+    }
+  }
+
+  function startTelegramEdit(msg: ChatMessageItem) {
+    if (msg.msgType !== 'text') return;
+    if (!editingMsg) {
+      draftBeforeEditRef.current = draft;
+    }
+    setReplyTarget(null);
+    setSharedForAi(null);
+    setInvokeAiMode(false);
+    setEditingMsg(msg);
+    setDraft(msg.content);
+    setContextMsg(null);
+  }
+
+  function cancelTelegramEdit() {
+    setEditingMsg(null);
+    setDraft(draftBeforeEditRef.current || '');
+    draftBeforeEditRef.current = '';
+  }
+
+  function handleBubbleTouchStart(e: React.TouchEvent, msg: ChatMessageItem) {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    bubbleLongPressedRef.current = false;
+    swipeTouchRef.current = {
+      msgId: msg.id,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      active: false,
+      offset: 0,
+    };
+    if (bubbleHoldTimerRef.current) window.clearTimeout(bubbleHoldTimerRef.current);
+    bubbleHoldTimerRef.current = window.setTimeout(() => {
+      if (swipeTouchRef.current && Math.abs(swipeTouchRef.current.offset) < 8) {
+        bubbleLongPressedRef.current = true;
+        openMessageContext(msg, 'main');
+      }
+    }, 340);
+  }
+
+  function handleBubbleTouchMove(e: React.TouchEvent) {
+    const st = swipeTouchRef.current;
+    if (!st || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - st.startX;
+    const dy = touch.clientY - st.startY;
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      if (bubbleHoldTimerRef.current) {
+        window.clearTimeout(bubbleHoldTimerRef.current);
+        bubbleHoldTimerRef.current = null;
+      }
+    }
+    if (!st.active && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      st.active = true;
+    }
+    if (st.active) {
+      // Smooth elastic Telegram horizontal swipe-to-reply (works smoothly in both RTL and LTR!)
+      const clamped = Math.max(-62, Math.min(62, dx * 0.65));
+      st.offset = clamped;
+      setSwipeReplyState({ msgId: st.msgId, offset: clamped });
+    }
+  }
+
+  function handleBubbleTouchEnd(msg: ChatMessageItem) {
+    if (bubbleHoldTimerRef.current) {
+      window.clearTimeout(bubbleHoldTimerRef.current);
+      bubbleHoldTimerRef.current = null;
+    }
+    const st = swipeTouchRef.current;
+    swipeTouchRef.current = null;
+    if (st && st.active && Math.abs(st.offset) >= 38) {
+      try {
+        navigator.vibrate?.(16);
+      } catch {
+        // ignore
+      }
+      handleSelectReply(msg);
+      bubbleLongPressedRef.current = true;
+    }
+    setSwipeReplyState(null);
+  }
+
+  function handleBubbleClick(e: React.MouseEvent, msg: ChatMessageItem) {
+    e.stopPropagation();
+    if (bubbleLongPressedRef.current) {
+      bubbleLongPressedRef.current = false;
+      return;
+    }
+    // Don't hijack clicks on links, buttons, or audio/video controls inside the bubble
+    if ((e.target as HTMLElement | null)?.closest('a, button, audio, video')) return;
+
+    const now = Date.now();
+    const last = bubbleLastTapRef.current;
+    if (last.msgId === msg.id && now - last.ts < 260) {
+      // Exact Telegram Double-Tap -> Instant Quick ❤️ Reaction!
+      if (bubbleTapTimerRef.current) {
+        window.clearTimeout(bubbleTapTimerRef.current);
+        bubbleTapTimerRef.current = null;
+      }
+      bubbleLastTapRef.current = { msgId: '', ts: 0 };
+      toggleReaction(msg.id, 'love');
+      return;
+    }
+
+    bubbleLastTapRef.current = { msgId: msg.id, ts: now };
+    if (bubbleTapTimerRef.current) window.clearTimeout(bubbleTapTimerRef.current);
+    bubbleTapTimerRef.current = window.setTimeout(() => {
+      bubbleTapTimerRef.current = null;
+      openMessageContext(msg, 'main');
+    }, 220);
+  }
+
   async function translateMessage(msg: ChatMessageItem, targetCode: string, targetLabel: string) {
-    setTranslateMenuMsgId(null);
+    setContextMsg(null);
     setTranslations(prev => ({ ...prev, [msg.id]: { text: '...', langLabel: targetLabel, loading: true } }));
     try {
       const res = await apiPost<{ ok: boolean; translated: string }>('/api/translate', {
@@ -503,22 +691,38 @@ export function ChatView({
     }
   }
 
-  async function saveEditedMessage(msgId: string) {
-    if (!editingMsgText.trim()) return;
-    await api(`/api/messages/${msgId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ userId: user.id, content: editingMsgText.trim() }),
-    });
-    setEditingMsgId(null);
-    setEditingMsgText('');
-    await loadMessages(activeConvId);
-    loadConversations();
+  async function saveEditedMessage(msgId: string, nextContent: string) {
+    const clean = nextContent.trim();
+    if (!clean) return;
+    setEditingMsg(null);
+    setDraft(draftBeforeEditRef.current || '');
+    draftBeforeEditRef.current = '';
+    setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, content: clean, isEdited: true } : m)));
+    try {
+      await api(`/api/messages/${msgId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ userId: user.id, content: clean }),
+      });
+      showChatToast(lang === 'en' ? 'Message edited' : 'تم تعديل الرسالة');
+      await loadMessages(activeConvId);
+      loadConversations();
+    } catch {
+      if (activeConvId) loadMessages(activeConvId);
+    }
   }
 
   async function deleteMessage(msgId: string) {
-    await api(`/api/messages/${msgId}?userId=${user.id}`, { method: 'DELETE' });
+    setDeleteConfirmMsg(null);
+    setContextMsg(null);
+    if (editingMsg?.id === msgId) cancelTelegramEdit();
     setMessages(prev => prev.filter(m => m.id !== msgId));
-    loadConversations();
+    try {
+      await api(`/api/messages/${msgId}?userId=${user.id}`, { method: 'DELETE' });
+      showChatToast(lang === 'en' ? 'Message deleted' : 'تم حذف الرسالة');
+      loadConversations();
+    } catch {
+      if (activeConvId) loadMessages(activeConvId);
+    }
   }
 
   async function startDirectDmWith(targetUser: UserProfile) {
@@ -573,6 +777,7 @@ export function ChatView({
   }
 
   function handleSelectReply(msg: ChatMessageItem) {
+    if (editingMsg) cancelTelegramEdit();
     setReplyTarget(msg);
     setSharedForAi(null);
     // Replying directly to LM AI automatically keeps AI mode ON so you converse seamlessly!
@@ -674,6 +879,11 @@ export function ChatView({
   async function handleSendText(e: React.FormEvent) {
     e.preventDefault();
     if (!draft.trim() || !activeConvId) return;
+    // Authentic Telegram Bottom-Composer Edit Mode: Save edited message instead of sending a duplicate!
+    if (editingMsg) {
+      await saveEditedMessage(editingMsg.id, draft);
+      return;
+    }
     const raw = draft.trim();
     const cleaned = raw.replace(/^(\/ai|-ai|\/|-)\s*/i, '').trim() || raw;
     const convTargetId = activeConvId;
@@ -832,8 +1042,7 @@ export function ChatView({
   }
 
   async function toggleReaction(msgId: string, reactionKey: string) {
-    setOpenPickerMsgId(null);
-    setHoveredMsgId(null);
+    setContextMsg(null);
     // 0ms Instant Optimistic Strictly-Single-Reaction-Per-User Update!
     setMessages(prev =>
       prev.map(m => {
@@ -1291,39 +1500,88 @@ export function ChatView({
                 </button>
               </div>
 
-              {/* Clean Header Controls: In-Chat Search + Voice Call ONLY (ZERO Video Call & ZERO Top AI Toggle!) */}
-              <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-full bg-[#17212B]/88 backdrop-blur-xl border border-[#94B3D6]/[0.16] shadow-[0_8px_24px_rgba(4,10,18,0.45)]">
+              {/* Clean Header Controls: Wallpaper Picker + In-Chat Search + Voice Call */}
+              <div className="pointer-events-auto relative flex items-center gap-1 p-1 rounded-full bg-[#17212B]/92 border border-[#94B3D6]/[0.16]">
+                <button
+                  type="button"
+                  onClick={() => setWallpaperMenuOpen(v => !v)}
+                  title={lang === 'en' ? 'Chat wallpaper' : 'خلفية الدردشة'}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                    wallpaperMenuOpen ? 'bg-white/[0.14] text-[#25F4EE]' : 'hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white'
+                  }`}
+                >
+                  <Palette className="w-[18px] h-[18px]" strokeWidth={1.85} />
+                </button>
                 <button
                   type="button"
                   onClick={() => {
+                    setWallpaperMenuOpen(false);
                     setMsgSearchOpen(true);
                     setMsgSearchQ('');
                     setSearchMatchIdx(0);
                   }}
                   title={lang === 'en' ? 'Search in chat' : 'بحث داخل المحادثة'}
-                  className="w-8 h-8 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-9 h-9 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                 >
-                  <Search className="w-4 h-4" strokeWidth={1.8} />
+                  <Search className="w-[18px] h-[18px]" strokeWidth={1.85} />
                 </button>
                 <button
                   type="button"
-                  onClick={startVoiceCall}
+                  onClick={() => {
+                    setWallpaperMenuOpen(false);
+                    startVoiceCall();
+                  }}
                   title={t(lang, 'voice_call')}
-                  className="w-8 h-8 rounded-full hover:bg-[#10B981]/20 text-[#D4D4D8] hover:text-[#6EE7B7] flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-9 h-9 rounded-full hover:bg-[#10B981]/20 text-[#D4D4D8] hover:text-[#6EE7B7] flex items-center justify-center cursor-pointer transition-colors"
                 >
-                  <Phone className="w-4 h-4" strokeWidth={1.8} />
+                  <Phone className="w-[18px] h-[18px]" strokeWidth={1.85} />
                 </button>
+
+                {/* Sleek 4-Theme Telegram / WhatsApp Dark Doodle Wallpaper Picker */}
+                {wallpaperMenuOpen && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    className="absolute top-full end-0 mt-2 z-40 w-[215px] rounded-2xl bg-[#19232E]/98 border border-white/[0.1] p-2 space-y-1 shadow-2xl"
+                  >
+                    <div className="px-2.5 py-1 text-[11px] font-semibold text-[#8DA2BC]">
+                      {lang === 'en' ? 'Chat Wallpaper' : 'خلفية المحادثة'}
+                    </div>
+                    {CHAT_WALLPAPERS.map(wp => {
+                      const active = chatWallpaper === wp.id;
+                      return (
+                        <button
+                          key={wp.id}
+                          type="button"
+                          onClick={() => {
+                            setChatWallpaper(wp.id);
+                            setWallpaperMenuOpen(false);
+                          }}
+                          className={`w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2.5 text-xs cursor-pointer transition-colors ${
+                            active ? 'bg-white/[0.1] text-white font-semibold' : 'text-[#D4D4D8] hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2.5">
+                            <span
+                              style={{ backgroundColor: wp.swatch, borderColor: wp.accent }}
+                              className="w-5 h-5 rounded-full border-2 shrink-0 block"
+                            />
+                            <span>{lang === 'en' ? wp.labelEn : wp.label}</span>
+                          </span>
+                          {active && <Check className="w-3.5 h-3.5 text-[#25F4EE]" strokeWidth={2.5} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </header>
           )
         )}
 
-        {/* Open Message Stream (Tap empty space closes search, translation, menus, & mobile bottom dock!) */}
+        {/* Open Message Stream on Authentic Telegram / WhatsApp Dark Doodle Wallpaper */}
         <div
           onClick={() => {
-            setOpenPickerMsgId(null);
-            setTranslateMenuMsgId(null);
-            setTranslations({});
+            setWallpaperMenuOpen(false);
             setShowQuickRecordHint(false);
             setComposerFocused(false);
             setMobileNavExpanded(false);
@@ -1332,7 +1590,7 @@ export function ChatView({
               setMsgSearchQ('');
             }
           }}
-          className="flex-1 overflow-y-auto px-3 sm:px-4 pt-20 pb-28 space-y-2 lm-chat-wallpaper"
+          className={`flex-1 overflow-y-auto px-3 sm:px-4 pt-20 pb-28 space-y-2 lm-chat-wallpaper ${chatWallpaper}`}
         >
           {activeConv?.pinnedMessage && (
             <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#17212B]/88 backdrop-blur-md border border-[#94B3D6]/[0.15] flex items-center gap-2 text-[11.5px] text-[#B8CAE0] mb-2 shadow-md">
@@ -1390,20 +1648,17 @@ export function ChatView({
             </div>
           )}
 
-          {messages.map((msg, msgIdx) => {
+          {messages.map(msg => {
             const isMine = msg.senderId === user.id;
             const isAi = msg.senderId === 'lm_ai' || msg.msgType === 'ai_reply';
             const reactionEntries = Object.entries(msg.reactions || {}).filter(([, arr]) => arr.length > 0);
-            const showHoverActions = hoveredMsgId === msg.id || openPickerMsgId === msg.id || translateMenuMsgId === msg.id;
             const translated = translations[msg.id];
             const showAutoTranslateChip =
               msg.msgType !== 'audio' && msg.msgType !== 'video_note' && isMostlyLatin(msg.content) && !translated;
-
-            // Prevent clipping behind floating top header for top messages!
-            const openPopoverDownward = msgIdx < 2;
-            const popoverPosClass = openPopoverDownward ? 'top-full mt-2' : 'bottom-full mb-2';
-
             const isHighlighted = highlightedMsgId === msg.id;
+            const isBeingEdited = editingMsg?.id === msg.id;
+            const swipeDx = swipeReplyState?.msgId === msg.id ? swipeReplyState.offset : 0;
+            const swipePct = Math.min(1, Math.abs(swipeDx) / 42);
 
             return (
               <div
@@ -1412,13 +1667,49 @@ export function ChatView({
                   msgNodeMapRef.current[msg.id] = el;
                 }}
                 data-msg-id={msg.id}
-                onMouseEnter={() => setHoveredMsgId(msg.id)}
-                onMouseLeave={() => setHoveredMsgId(null)}
-                className={`flex flex-col rounded-2xl transition-all duration-300 ${
+                onTouchStart={e => handleBubbleTouchStart(e, msg)}
+                onTouchMove={handleBubbleTouchMove}
+                onTouchEnd={() => handleBubbleTouchEnd(msg)}
+                onTouchCancel={() => {
+                  swipeTouchRef.current = null;
+                  setSwipeReplyState(null);
+                }}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openMessageContext(msg, 'main');
+                }}
+                className={`relative flex flex-col rounded-2xl transition-colors duration-200 select-none ${
                   isMine ? 'items-end' : 'items-start'
-                } ${isHighlighted ? 'bg-[#34D399]/16 ring-1 ring-[#34D399]/50 p-1.5 -mx-1.5' : ''}`}
+                } ${
+                  isHighlighted
+                    ? 'bg-[#25F4EE]/15 ring-1 ring-[#25F4EE]/55 p-1.5 -mx-1.5'
+                    : isBeingEdited
+                    ? 'bg-[#2AABEE]/14 ring-1 ring-[#2AABEE]/45 p-1.5 -mx-1.5'
+                    : ''
+                }`}
               >
+                {/* Authentic Telegram Swipe-to-Reply Circular Arrow Indicator */}
+                {swipePct > 0.08 && (
+                  <div
+                    style={{
+                      opacity: swipePct,
+                      transform: `translateY(-50%) scale(${0.65 + swipePct * 0.35})`,
+                    }}
+                    className={`pointer-events-none absolute top-1/2 ${
+                      swipeDx > 0 ? 'left-2' : 'right-2'
+                    } z-10 w-8 h-8 rounded-full bg-[#1F2C3B] border border-white/15 text-[#25F4EE] flex items-center justify-center`}
+                  >
+                    <CornerUpLeft className="w-4 h-4" strokeWidth={2.2} />
+                  </div>
+                )}
+
                 <div
+                  style={
+                    swipeDx !== 0
+                      ? { transform: `translateX(${swipeDx}px)`, transition: 'none' }
+                      : { transform: 'translateX(0px)', transition: 'transform 180ms cubic-bezier(0.22,1,0.36,1)' }
+                  }
                   className={`relative w-full flex items-end gap-2 ${
                     isMine ? 'flex-row-reverse justify-start' : 'flex-row justify-start'
                   }`}
@@ -1440,107 +1731,8 @@ export function ChatView({
                     )
                   )}
 
-                  {/* Full Natural Telegram/WhatsApp Horizontal Bubble Width (NEVER crushed by invisible side buttons!) */}
-                  <div className="relative max-w-[82%] sm:max-w-[70%] min-w-0">
-                    {/* Mobile Floating Action Bar Above/Below Tapped Bubble (Takes 0px horizontal layout space!) */}
-                    {showHoverActions && (
-                      <div
-                        onClick={e => e.stopPropagation()}
-                        className={`md:hidden absolute ${popoverPosClass} ${isMine ? 'end-0' : 'start-0'} z-20 flex items-center gap-0.5 px-1.5 py-1 rounded-full bg-[#16161E]/95 backdrop-blur-xl border border-white/[0.14] shadow-2xl`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTranslateMenuMsgId(null);
-                            setOpenPickerMsgId(openPickerMsgId === msg.id ? null : msg.id);
-                          }}
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
-                        >
-                          <SmilePlus className="w-3.5 h-3.5" />
-                        </button>
-                        {msg.msgType !== 'audio' && msg.msgType !== 'video_note' && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOpenPickerMsgId(null);
-                              setTranslateMenuMsgId(translateMenuMsgId === msg.id ? null : msg.id);
-                            }}
-                            className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
-                          >
-                            <Languages className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHoveredMsgId(null);
-                            handleSelectReply(msg);
-                          }}
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
-                        >
-                          <CornerUpLeft className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHoveredMsgId(null);
-                            setReplyTarget(msg);
-                            setSharedForAi(msg);
-                            setInvokeAiMode(true);
-                          }}
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" />
-                        </button>
-                        {isMine && (
-                          <ActionMenuOrb
-                            compact
-                            align={isMine ? 'start' : 'end'}
-                            direction={openPopoverDownward ? 'down' : 'up'}
-                            editLabel="تعديل الرسالة"
-                            removeLabel="إزالة الرسالة"
-                            onEdit={
-                              msg.msgType === 'text'
-                                ? () => {
-                                    setHoveredMsgId(null);
-                                    setEditingMsgId(msg.id);
-                                    setEditingMsgText(msg.content);
-                                  }
-                                : undefined
-                            }
-                            onRemove={() => deleteMessage(msg.id)}
-                          />
-                        )}
-                      </div>
-                    )}
-                    {/* 2026 Custom Vector Reaction Picker (Auto-Flips Downward for Top Messages!) */}
-                    {openPickerMsgId === msg.id && (
-                      <div className={`absolute ${popoverPosClass} z-30 ${isMine ? 'end-0' : 'start-0'}`}>
-                        <TelegramReactionStrip onSelect={rId => toggleReaction(msg.id, rId)} lang={lang} />
-                      </div>
-                    )}
-
-                    {/* 16 Major World Languages Translation Picker (Auto-Flips Downward for Top Messages!) */}
-                    {translateMenuMsgId === msg.id && (
-                      <div
-                        onClick={e => e.stopPropagation()}
-                        className={`absolute ${popoverPosClass} z-30 w-[268px] p-2 rounded-2xl bg-[#16161C]/96 backdrop-blur-xl border border-white/[0.14] shadow-2xl grid grid-cols-3 gap-1 ${
-                          isMine ? 'end-0' : 'start-0'
-                        }`}
-                      >
-                        {WORLD_LANGUAGES.map(l => (
-                          <button
-                            key={l.code}
-                            type="button"
-                            onClick={() => translateMessage(msg, l.code, l.label)}
-                            className="px-2 py-1.5 rounded-xl text-[11px] text-[#E4E4E7] hover:bg-white hover:text-black transition-colors cursor-pointer truncate text-center"
-                          >
-                            {l.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
+                  {/* Clean Telegram Message Bubble (Tap/Long-Press/Right-Click -> Telegram Menu · Double-Tap -> Quick ❤️ · Swipe -> Reply!) */}
+                  <div className="relative max-w-[84%] sm:max-w-[72%] min-w-0">
                     {/* Circular Video Note */}
                     {msg.msgType === 'video_note' && msg.mediaUrl ? (
                       <div
@@ -1568,19 +1760,16 @@ export function ChatView({
                         imgUrls.length > 0 &&
                         (!trimmedText || trimmedText === 'صورة' || trimmedText === 'Photo') &&
                         !translated &&
-                        editingMsgId !== msg.id &&
                         !msg.replyText &&
                         !msg.isSpoiler;
 
                       return (
                       <div
-                        onClick={e => {
-                          e.stopPropagation();
-                          setHoveredMsgId(cur => (cur === msg.id ? null : msg.id));
-                        }}
-                        className={`${isPurePhoto ? 'p-1.5 w-[265px] sm:w-[310px]' : 'px-3.5 py-2'} text-[14.5px] leading-[1.55] break-words ${
+                        onClick={e => handleBubbleClick(e, msg)}
+                        style={{ WebkitTouchCallout: 'none' }}
+                        className={`cursor-pointer ${isPurePhoto ? 'p-1.5 w-[265px] sm:w-[310px]' : 'px-3.5 py-2'} text-[14.5px] leading-[1.55] break-words ${
                           isAi
-                            ? 'rounded-[18px] bg-[#172434] border border-[#7C5CFF]/30 text-[#EEF2F7] shadow-md'
+                            ? 'rounded-[18px] rounded-es-[5px] bg-[#182534] border border-[#7C5CFF]/30 text-[#EEF2F7]'
                             : msg.aiSummoned
                             ? `rounded-[18px] ${isMine ? 'rounded-ee-[5px]' : 'rounded-es-[5px]'} border lm-ai-summon-ring text-white`
                             : isMine
@@ -1597,7 +1786,10 @@ export function ChatView({
                         {!isMine && !isAi && activeConv?.type !== 'dm' && (
                           <button
                             type="button"
-                            onClick={() => onOpenProfile?.(msg.senderId)}
+                            onClick={e => {
+                              e.stopPropagation();
+                              onOpenProfile?.(msg.senderId);
+                            }}
                             className={`mb-1 block text-[11.5px] font-semibold text-[#60A5FA] hover:underline cursor-pointer ${
                               isPurePhoto ? 'px-2 pt-1' : ''
                             }`}
@@ -1613,14 +1805,23 @@ export function ChatView({
                         )}
 
                         {msg.replyText && (
-                          <div
-                            className={`mb-1.5 ps-2.5 border-s-2 text-xs line-clamp-1 ${
-                              isMine ? 'border-white/70 text-white/85' : 'border-[#60A5FA]/70 text-[#A9BCD3]'
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (msg.replyToId) jumpToMessage(msg.replyToId);
+                            }}
+                            className={`w-full text-start mb-1.5 px-2.5 py-1 rounded-lg border-s-[2.5px] text-xs cursor-pointer transition-colors ${
+                              isMine
+                                ? 'bg-black/15 border-white/80 text-white/90 hover:bg-black/25'
+                                : 'bg-white/[0.05] border-[#38BDF8] text-[#B8CAE0] hover:bg-white/[0.09]'
                             }`}
                           >
-                            <span className="font-semibold text-white me-1">{msg.replySender}:</span>
-                            <span>{msg.replyText}</span>
-                          </div>
+                            <div className={`font-semibold text-[11px] truncate ${isMine ? 'text-white' : 'text-[#38BDF8]'}`}>
+                              {msg.replySender}
+                            </div>
+                            <div className="truncate opacity-85">{msg.replyText}</div>
+                          </button>
                         )}
 
                         {imgUrls.length > 0 && (
@@ -1631,7 +1832,7 @@ export function ChatView({
                               onSelect={idx => setChatLightbox({ urls: imgUrls, idx })}
                               overlayBadge={
                                 isPurePhoto ? (
-                                  <div className="pointer-events-none absolute bottom-2 end-2 px-2 py-0.5 rounded-full bg-[#091018]/65 backdrop-blur-md flex items-center gap-1 text-[10px] font-mono-num text-white/95">
+                                  <div className="pointer-events-none absolute bottom-2 end-2 px-2 py-0.5 rounded-full bg-[#091018]/70 flex items-center gap-1 text-[10px] font-mono-num text-white/95">
                                     <span>{msg.createdAt}</span>
                                     {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#BAE6FD]" strokeWidth={2.2} />}
                                   </div>
@@ -1641,7 +1842,6 @@ export function ChatView({
                           </div>
                         )}
 
-                        {/* IN-PLACE TRANSLATION: Replaces message text directly! Click empty space anywhere to restore original. */}
                         {isPurePhoto ? null : msg.msgType === 'audio' && msg.mediaUrl ? (
                           <SmartVoicePill
                             url={msg.mediaUrl}
@@ -1654,37 +1854,14 @@ export function ChatView({
                         ) : msg.isSpoiler && !revealedSpoilers[msg.id] ? (
                           <button
                             type="button"
-                            onClick={() => setRevealedSpoilers(prev => ({ ...prev, [msg.id]: true }))}
+                            onClick={e => {
+                              e.stopPropagation();
+                              setRevealedSpoilers(prev => ({ ...prev, [msg.id]: true }));
+                            }}
                             className="px-2.5 py-1 rounded bg-white/[0.12] text-xs text-white/90 cursor-pointer"
                           >
                             محتوى مخفي
                           </button>
-                        ) : editingMsgId === msg.id ? (
-                          <div className="space-y-2 min-w-[220px]">
-                            <textarea
-                              rows={2}
-                              value={editingMsgText}
-                              onChange={e => setEditingMsgText(e.target.value)}
-                              className="w-full rounded-xl bg-[#0E1621] border border-white/[0.2] p-2 text-xs text-white outline-none resize-none"
-                            />
-                            <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setEditingMsgId(null)}
-                                className="px-2.5 py-1 rounded-full bg-white/[0.12] text-[11px] text-white/85 hover:text-white cursor-pointer"
-                              >
-                                إلغاء
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => saveEditedMessage(msg.id)}
-                                className="px-2.5 py-1 rounded-full bg-white text-[#0E1621] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                              >
-                                <Check className="w-3 h-3" />
-                                <span>حفظ</span>
-                              </button>
-                            </div>
-                          </div>
                         ) : (
                           <div>
                             {isAi && !translated ? (
@@ -1703,9 +1880,29 @@ export function ChatView({
                               />
                             )}
                             {translated && (
-                              <div className={`mt-1 flex items-center gap-1 text-[10px] ${isMine ? 'text-white/75' : 'text-[#8DA2BC]'}`}>
-                                <Languages className="w-2.5 h-2.5" />
-                                <span>{translated.langLabel}</span>
+                              <div
+                                className={`mt-1.5 pt-1.5 border-t flex items-center justify-between gap-2 text-[10.5px] ${
+                                  isMine ? 'border-white/20 text-white/85' : 'border-white/10 text-[#8DA2BC]'
+                                }`}
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  <Languages className="w-3 h-3" />
+                                  <span>{translated.loading ? 'جارٍ الترجمة...' : `مترجم (${translated.langLabel})`}</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setTranslations(prev => {
+                                      const copy = { ...prev };
+                                      delete copy[msg.id];
+                                      return copy;
+                                    });
+                                  }}
+                                  className="underline font-semibold hover:text-white cursor-pointer"
+                                >
+                                  إظهار الأصل
+                                </button>
                               </div>
                             )}
                           </div>
@@ -1716,14 +1913,14 @@ export function ChatView({
                             type="button"
                             onClick={e => {
                               e.stopPropagation();
-                              setTranslateMenuMsgId(translateMenuMsgId === msg.id ? null : msg.id);
+                              translateMessage(msg, lang === 'en' ? 'en' : 'ar', lang === 'en' ? 'English' : 'العربية');
                             }}
-                            className={`mt-1.5 inline-flex items-center gap-1 text-[11px] cursor-pointer ${
-                              isMine ? 'text-white/80 hover:text-white' : 'text-[#8DA2BC] hover:text-white'
+                            className={`mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium cursor-pointer ${
+                              isMine ? 'text-white/85 hover:text-white' : 'text-[#38BDF8] hover:underline'
                             }`}
                           >
                             <Languages className="w-3 h-3" />
-                            <span>ترجمة</span>
+                            <span>ترجمة سريعة</span>
                           </button>
                         )}
 
@@ -1742,83 +1939,9 @@ export function ChatView({
                       );
                     })()}
                   </div>
-
-                  {/* Desktop-Only Side Hover Controls (Hidden on mobile so bubble keeps full 82% horizontal width!) */}
-                  <div
-                    onClick={e => e.stopPropagation()}
-                    className={`hidden md:flex items-center gap-0.5 shrink-0 transition-opacity focus-within:opacity-100 focus-within:pointer-events-auto ${
-                      showHoverActions ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTranslateMenuMsgId(null);
-                        setOpenPickerMsgId(openPickerMsgId === msg.id ? null : msg.id);
-                      }}
-                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
-                    >
-                      <SmilePlus className="w-3.5 h-3.5" />
-                    </button>
-
-                    {msg.msgType !== 'audio' && msg.msgType !== 'video_note' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenPickerMsgId(null);
-                          setTranslateMenuMsgId(translateMenuMsgId === msg.id ? null : msg.id);
-                        }}
-                        title="ترجمة"
-                        className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
-                      >
-                        <Languages className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleSelectReply(msg)}
-                      title={isAi ? 'الرد على LM AI' : 'رد'}
-                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
-                    >
-                      <CornerUpLeft className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setReplyTarget(msg);
-                        setSharedForAi(msg);
-                        setInvokeAiMode(true);
-                      }}
-                      title="اسأل AI عن هذه الرسالة"
-                      className="w-7 h-7 rounded-full hover:bg-white/[0.08] text-[#7A7A85] hover:text-white flex items-center justify-center cursor-pointer"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </button>
-
-                    {isMine && (
-                      <ActionMenuOrb
-                        compact
-                        align={isMine ? 'start' : 'end'}
-                        direction={openPopoverDownward ? 'down' : 'up'}
-                        editLabel="تعديل الرسالة"
-                        removeLabel="إزالة الرسالة"
-                        onEdit={
-                          msg.msgType === 'text'
-                            ? () => {
-                                setEditingMsgId(msg.id);
-                                setEditingMsgText(msg.content);
-                              }
-                            : undefined
-                        }
-                        onRemove={() => deleteMessage(msg.id)}
-                      />
-                    )}
-                  </div>
                 </div>
 
-                {/* Custom Vector Reaction Pills */}
+                {/* Telegram Reaction Pills Below Bubble */}
                 {reactionEntries.length > 0 && (
                   <div className={`mt-1 flex flex-wrap gap-1 ${isMine ? 'pe-1' : 'ps-9'}`}>
                     {reactionEntries.map(([rKey, usersList]) => (
@@ -1902,35 +2025,59 @@ export function ChatView({
             className="pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center transition-[bottom] duration-150"
           >
             <div className="pointer-events-auto w-full max-w-[780px] flex flex-col gap-2">
-              {/* Compact Side-Aligned Reply / AI Context Card (Never oversized or paper-thin!) */}
-              {(replyTarget || sharedForAi) && (
-                <div className="w-fit max-w-[300px] sm:max-w-[340px] self-start rounded-2xl bg-[#15151C]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-2 flex items-center gap-2.5 shadow-xl">
-                  <span className="w-[2.5px] self-stretch rounded-full shrink-0 bg-white/55" />
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold text-white flex items-center gap-1 truncate">
-                      {sharedForAi ? (
-                        <>
-                          <Sparkles className="w-3 h-3 text-[#D4D4D8] shrink-0" />
-                          <span>سياق AI • {sharedForAi.displayName}</span>
-                        </>
-                      ) : (
-                        <span>الرد على {replyTarget?.displayName}</span>
-                      )}
+              {/* Authentic Telegram Context Bar Above Bottom Composer: Edit Message / Reply / Ask LM AI */}
+              {(editingMsg || replyTarget || sharedForAi) && (
+                <div className="w-full max-w-[380px] self-start rounded-2xl bg-[#19232E]/96 border border-white/[0.08] px-3.5 py-2 flex items-center gap-2.5">
+                  <span
+                    className={`w-[3px] self-stretch rounded-full shrink-0 ${
+                      editingMsg ? 'bg-[#2AABEE]' : sharedForAi ? 'bg-[#A78BFA]' : 'bg-[#38BDF8]'
+                    }`}
+                  />
+                  {editingMsg ? (
+                    <Pencil className="w-4 h-4 text-[#2AABEE] shrink-0" />
+                  ) : sharedForAi ? (
+                    <Sparkles className="w-4 h-4 text-[#A78BFA] shrink-0" />
+                  ) : (
+                    <CornerUpLeft className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className={`text-[11.5px] font-bold truncate ${
+                        editingMsg ? 'text-[#2AABEE]' : sharedForAi ? 'text-[#C4B5FD]' : 'text-[#38BDF8]'
+                      }`}
+                    >
+                      {editingMsg
+                        ? lang === 'en'
+                          ? 'Edit Message'
+                          : 'تعديل الرسالة'
+                        : sharedForAi
+                          ? `اسأل LM AI · ${sharedForAi.displayName}`
+                          : `الرد على ${replyTarget?.displayName}`}
                     </div>
-                    <div className="text-[11.5px] text-[#A1A1AA] truncate max-w-[215px]">
-                      {(sharedForAi ? sharedForAi.content : replyTarget?.content || '').slice(0, 68)}
+                    <div className="text-xs text-[#B8CAE0] truncate">
+                      {(editingMsg
+                        ? editingMsg.content
+                        : sharedForAi
+                          ? sharedForAi.transcript || sharedForAi.content
+                          : replyTarget?.transcript || replyTarget?.content || ''
+                      ).slice(0, 72)}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
-                      setReplyTarget(null);
-                      setSharedForAi(null);
-                      setInvokeAiMode(false);
+                      if (editingMsg) {
+                        cancelTelegramEdit();
+                      } else {
+                        setReplyTarget(null);
+                        setSharedForAi(null);
+                        setInvokeAiMode(false);
+                      }
                     }}
-                    className="w-5 h-5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+                    aria-label="إلغاء"
+                    className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#8DA2BC] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
                   >
-                    <X className="w-3 h-3" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               )}
@@ -1987,7 +2134,11 @@ export function ChatView({
                       onFocus={() => setComposerFocused(true)}
                       onBlur={() => setTimeout(() => setComposerFocused(false), 140)}
                       placeholder={
-                        invokeAiMode
+                        editingMsg
+                          ? lang === 'en'
+                            ? 'Edit message...'
+                            : 'عدّل نص الرسالة...'
+                          : invokeAiMode
                           ? replyTarget
                             ? `اسأل AI عن رسالة ${replyTarget.displayName}...`
                             : 'اسأل الذكاء الاصطناعي...'
@@ -1996,21 +2147,32 @@ export function ChatView({
                           : 'Message...'
                       }
                       extraEnd={
-                        <button
-                          type="button"
-                          onClick={() => setInvokeAiMode(v => !v)}
-                          title={invokeAiMode ? 'إيقاف استدعاء AI' : 'تفعيل استدعاء الذكاء الاصطناعي'}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
-                            invokeAiMode
-                              ? 'bg-white/[0.15] text-white border border-white/25'
-                              : 'text-[#7A7A85] hover:text-white'
-                          }`}
-                        >
-                          <NavAiIcon active={invokeAiMode} className="w-[18px] h-[18px]" />
-                        </button>
+                        !editingMsg ? (
+                          <button
+                            type="button"
+                            onClick={() => setInvokeAiMode(v => !v)}
+                            title={invokeAiMode ? 'إيقاف استدعاء AI' : 'تفعيل استدعاء الذكاء الاصطناعي'}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+                              invokeAiMode
+                                ? 'bg-white/[0.15] text-white border border-white/25'
+                                : 'text-[#7A7A85] hover:text-white'
+                            }`}
+                          >
+                            <NavAiIcon active={invokeAiMode} className="w-[18px] h-[18px]" />
+                          </button>
+                        ) : undefined
                       }
                       customAction={
-                        hasText ? (
+                        editingMsg ? (
+                          <button
+                            type="submit"
+                            disabled={!hasText}
+                            title={lang === 'en' ? 'Save edit' : 'حفظ التعديل'}
+                            className="w-[38px] h-[38px] rounded-full bg-[#2AABEE] hover:bg-[#229ED9] disabled:opacity-40 text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                          >
+                            <Check className="w-5 h-5" strokeWidth={2.5} />
+                          </button>
+                        ) : hasText ? (
                           <ChromeArrowButton type="submit" size={38} />
                         ) : invokeAiMode ? (
                           <button
@@ -2053,7 +2215,258 @@ export function ChatView({
             </div>
           </div>
         )}
+        {/* Subtle Telegram Toast Feedback Pill */}
+        {chatToast && (
+          <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-40 px-4 py-1.5 rounded-full bg-[#19232E]/95 border border-white/[0.12] text-xs font-semibold text-white">
+            {chatToast}
+          </div>
+        )}
       </section>
+
+      {/* AUTHENTIC TELEGRAM SPOTLIGHT CONTEXT OVERLAY (Reactions Strip ABOVE + Spotlighted Bubble + Vertical Action Menu BELOW!) */}
+      {contextMsg && (() => {
+        const isMineCtx = contextMsg.senderId === user.id;
+        const canTranslateCtx = contextMsg.msgType !== 'audio' && contextMsg.msgType !== 'video_note' && Boolean(contextMsg.content?.trim());
+        const canCopyCtx = Boolean((contextMsg.transcript || contextMsg.content || '').trim());
+        const canEditCtx = isMineCtx && contextMsg.msgType === 'text';
+        const hasTranslationCtx = Boolean(translations[contextMsg.id]);
+
+        return (
+          <div
+            onClick={() => setContextMsg(null)}
+            className="fixed inset-0 z-[72] bg-black/62 backdrop-blur-[8px] flex flex-col items-center justify-center p-4 gap-3"
+          >
+            {/* 1. Floating Telegram Reaction Pill Strip ABOVE Message */}
+            <div onClick={e => e.stopPropagation()} className="max-w-full">
+              <TelegramReactionStrip
+                onSelect={rId => toggleReaction(contextMsg.id, rId)}
+                lang={lang}
+              />
+            </div>
+
+            {/* 2. Spotlighted Selected Message Bubble */}
+            <div
+              onClick={e => e.stopPropagation()}
+              className={`max-w-[85vw] sm:max-w-[380px] max-h-[28vh] overflow-y-auto px-4 py-2.5 text-[14.5px] leading-relaxed break-words shadow-2xl ${
+                isMineCtx
+                  ? 'rounded-[18px] rounded-ee-[5px] lm-msg-out'
+                  : 'rounded-[18px] rounded-es-[5px] lm-msg-in'
+              }`}
+            >
+              {!isMineCtx && (
+                <div className="text-[11.5px] font-semibold text-[#60A5FA] mb-0.5">{contextMsg.displayName}</div>
+              )}
+              <div className="whitespace-pre-wrap">
+                {contextMsg.msgType === 'audio'
+                  ? `🎤 ${contextMsg.transcript || 'رسالة صوتية'}`
+                  : contextMsg.msgType === 'video_note'
+                    ? '🎥 رسالة فيديو دائرية'
+                    : contextMsg.msgType === 'image' && !contextMsg.content.trim()
+                      ? '🖼️ صورة'
+                      : translations[contextMsg.id]?.text || contextMsg.content}
+              </div>
+              <div className={`mt-1 text-[10.5px] font-mono-num text-end ${isMineCtx ? 'text-white/80' : 'text-[#8DA2BC]'}`}>
+                {contextMsg.isEdited && 'معدّلة · '}
+                {contextMsg.createdAt}
+              </div>
+            </div>
+
+            {/* 3. Authentic Telegram Vertical Action Menu BELOW Message */}
+            <div
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-[268px] rounded-2xl bg-[#1C2632]/98 border border-white/[0.08] overflow-hidden shadow-2xl"
+            >
+              {contextSubmenu === 'main' ? (
+                <div className="divide-y divide-white/[0.06] text-[14px] font-medium text-[#F1F1F2]">
+                  {/* Reply */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = contextMsg;
+                      setContextMsg(null);
+                      handleSelectReply(target);
+                    }}
+                    className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.07] active:bg-white/[0.11] cursor-pointer transition-colors"
+                  >
+                    <span>{lang === 'en' ? 'Reply' : 'رد'}</span>
+                    <CornerUpLeft className="w-[18px] h-[18px] text-[#9EB5CF]" strokeWidth={1.9} />
+                  </button>
+
+                  {/* Copy */}
+                  {canCopyCtx && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const textToCopy = translations[contextMsg.id]?.text || contextMsg.transcript || contextMsg.content;
+                        navigator.clipboard?.writeText(textToCopy);
+                        setContextMsg(null);
+                        showChatToast(lang === 'en' ? 'Message copied' : 'تم نسخ الرسالة');
+                      }}
+                      className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.07] active:bg-white/[0.11] cursor-pointer transition-colors"
+                    >
+                      <span>{lang === 'en' ? 'Copy' : 'نسخ'}</span>
+                      <Copy className="w-[18px] h-[18px] text-[#9EB5CF]" strokeWidth={1.9} />
+                    </button>
+                  )}
+
+                  {/* Translate */}
+                  {canTranslateCtx && (
+                    <button
+                      type="button"
+                      onClick={() => setContextSubmenu('translate')}
+                      className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.07] active:bg-white/[0.11] cursor-pointer transition-colors"
+                    >
+                      <span>{hasTranslationCtx ? (lang === 'en' ? 'Translation...' : 'الترجمة...') : lang === 'en' ? 'Translate' : 'ترجمة'}</span>
+                      <Languages className="w-[18px] h-[18px] text-[#38BDF8]" strokeWidth={1.9} />
+                    </button>
+                  )}
+
+                  {/* Ask LM AI */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = contextMsg;
+                      setContextMsg(null);
+                      if (editingMsg) cancelTelegramEdit();
+                      setReplyTarget(target);
+                      setSharedForAi(target);
+                      setInvokeAiMode(true);
+                    }}
+                    className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.07] active:bg-white/[0.11] cursor-pointer transition-colors"
+                  >
+                    <span className="text-[#C4B5FD]">{lang === 'en' ? 'Ask LM AI' : 'اسأل LM AI'}</span>
+                    <Sparkles className="w-[18px] h-[18px] text-[#A78BFA]" strokeWidth={1.9} />
+                  </button>
+
+                  {/* Edit (Telegram Bottom Composer Edit Mode — own text messages!) */}
+                  {canEditCtx && (
+                    <button
+                      type="button"
+                      onClick={() => startTelegramEdit(contextMsg)}
+                      className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.07] active:bg-white/[0.11] cursor-pointer transition-colors"
+                    >
+                      <span>{lang === 'en' ? 'Edit' : 'تعديل'}</span>
+                      <Pencil className="w-[18px] h-[18px] text-[#2AABEE]" strokeWidth={1.9} />
+                    </button>
+                  )}
+
+                  {/* Delete (Opens Telegram Confirmation Dialog!) */}
+                  {isMineCtx && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = contextMsg;
+                        setContextMsg(null);
+                        setDeleteConfirmMsg(target);
+                      }}
+                      className="w-full h-12 px-4 flex items-center justify-between text-[#FF595A] hover:bg-[#FF595A]/12 active:bg-[#FF595A]/18 cursor-pointer transition-colors"
+                    >
+                      <span>{lang === 'en' ? 'Delete' : 'حذف'}</span>
+                      <Trash2 className="w-[18px] h-[18px] text-[#FF595A]" strokeWidth={1.9} />
+                    </button>
+                  )}
+                </div>
+              ) : (
+                /* Telegram Nested Translate Language Picker inside the SAME Menu Card */
+                <div className="flex flex-col max-h-[300px]">
+                  <div className="h-11 px-3 border-b border-white/[0.08] flex items-center justify-between shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setContextSubmenu('main')}
+                      className="flex items-center gap-1 text-xs font-semibold text-[#38BDF8] hover:text-white cursor-pointer"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                      <span>{lang === 'en' ? 'Back' : 'رجوع'}</span>
+                    </button>
+                    <span className="text-xs font-bold text-white">{lang === 'en' ? 'Translate to' : 'ترجمة إلى'}</span>
+                    <span className="w-10" />
+                  </div>
+
+                  {hasTranslationCtx && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const mid = contextMsg.id;
+                        setTranslations(prev => {
+                          const copy = { ...prev };
+                          delete copy[mid];
+                          return copy;
+                        });
+                        setContextMsg(null);
+                      }}
+                      className="w-full h-10 px-4 border-b border-white/[0.08] text-xs font-semibold text-[#FF595A] hover:bg-white/[0.06] text-start cursor-pointer"
+                    >
+                      {lang === 'en' ? 'Show original text' : 'إظهار النص الأصلي'}
+                    </button>
+                  )}
+
+                  <div className="overflow-y-auto divide-y divide-white/[0.05]">
+                    {WORLD_LANGUAGES.map(l => (
+                      <button
+                        key={l.code}
+                        type="button"
+                        onClick={() => translateMessage(contextMsg, l.code, l.label)}
+                        className="w-full h-10 px-4 text-start text-[13.5px] text-[#E4E4E7] hover:bg-white/[0.08] hover:text-white flex items-center justify-between cursor-pointer transition-colors"
+                      >
+                        <span>{l.label}</span>
+                        {translations[contextMsg.id]?.langLabel === l.label && (
+                          <Check className="w-4 h-4 text-[#25F4EE]" strokeWidth={2.4} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* AUTHENTIC TELEGRAM DELETE CONFIRMATION DIALOG */}
+      {deleteConfirmMsg && (
+        <div
+          onClick={() => setDeleteConfirmMsg(null)}
+          className="fixed inset-0 z-[75] bg-black/65 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-[320px] rounded-2xl bg-[#1C2632] border border-white/[0.09] p-5 space-y-4 shadow-2xl"
+          >
+            <div className="space-y-1.5">
+              <h3 className="text-[16px] font-bold text-white">
+                {lang === 'en' ? 'Delete message?' : 'حذف الرسالة؟'}
+              </h3>
+              <p className="text-[13px] text-[#9EB5CF] leading-relaxed">
+                {lang === 'en'
+                  ? 'Are you sure you want to permanently delete this message?'
+                  : 'هل أنت متأكد أنك تريد حذف هذه الرسالة نهائيًا من المحادثة؟'}
+              </p>
+              {deleteConfirmMsg.content?.trim() && (
+                <div className="mt-2 px-3 py-2 rounded-xl bg-black/25 text-xs text-[#D4D4D8] line-clamp-2">
+                  {deleteConfirmMsg.content}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmMsg(null)}
+                className="h-9 px-4 rounded-xl hover:bg-white/[0.08] text-[13px] font-semibold text-[#9EB5CF] hover:text-white cursor-pointer transition-colors"
+              >
+                {lang === 'en' ? 'Cancel' : 'إلغاء'}
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteMessage(deleteConfirmMsg.id)}
+                className="h-9 px-4 rounded-xl bg-[#FF595A]/15 hover:bg-[#FF595A]/25 text-[13px] font-bold text-[#FF595A] cursor-pointer transition-colors"
+              >
+                {lang === 'en' ? 'Delete' : 'حذف'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2026 Upgraded New Chat Modal: 1-on-1 DM Search + Group (up to 1,000) + Community (up to 100,000) */}
       {newChatOpen && (
