@@ -14,13 +14,13 @@ jobs:
         id: check
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID || 'saif13910/lm' }}
         run: |
           if [ -n "$HF_TOKEN" ] && [ -n "$HF_SPACE_ID" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping HF Spaces sync: add HF_TOKEN and HF_SPACE_ID in GitHub Repository Secrets to auto-deploy."
+            echo "Skipping HF Spaces sync: add HF_TOKEN in GitHub Repository Secrets to auto-deploy to $HF_SPACE_ID."
           fi
 
       - name: Checkout repository
@@ -37,7 +37,7 @@ jobs:
         if: steps.check.outputs.ready == 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID || 'saif13910/lm' }}
         run: |
           pip install --quiet --upgrade huggingface_hub
           python - <<'PY'
