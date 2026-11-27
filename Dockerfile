@@ -23,6 +23,7 @@ USER 1000
 
 ENV NODE_ENV=production
 ENV PORT=7860
+ENV NODE_OPTIONS="--max-old-space-size=192"
 
 EXPOSE 7860
 
