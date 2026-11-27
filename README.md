@@ -31,8 +31,14 @@ npm start
 
 Open `http://localhost:4000`.
 
-## Deploy Free on Hugging Face Spaces (Docker SDK)
+## Deploy Free ($0, No Credit Card) on Render
 
-1. Create a new **Space** on Hugging Face with **SDK: Docker (Blank)**.
-2. Connect this repository (or sync via GitHub Actions using `HF_TOKEN` & `HF_SPACE_ID` secrets).
-3. *(Optional)* Add `GEMINI_API_KEY` and `SESSION_SECRET` under **Space Settings → Variables and secrets** to enable LM AI.
+1. Sign in with GitHub at https://dashboard.render.com (no credit card required for free Web Services).
+2. Click **New +** → **Web Service** → select **`saifheny/LM`**.
+3. Keep **Language/Runtime: Docker** and choose **Instance Type: Free ($0/month)**.
+4. Click **Deploy Web Service** — Render builds `Dockerfile` automatically and gives you a permanent HTTPS URL (`https://lm-super-app.onrender.com`) with WebSockets & auto-deploy on every GitHub push.
+5. *(Optional)* Add `GEMINI_API_KEY` under **Environment** to enable LM AI.
+
+## Alternative: Hugging Face Spaces (Requires HF PRO for Docker SDK)
+
+Static Spaces are free on Hugging Face, while Docker Spaces require an active Hugging Face PRO subscription. If you have PRO, connect this repo or set `HF_TOKEN` in GitHub Secrets.
