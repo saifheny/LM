@@ -2545,18 +2545,24 @@ app.get('/api/videos', (req, res) => {
 app.post('/api/videos', (req, res) => {
   const { userId, title, description, tags, videoUrl, posterUrl } = req.body as {
     userId: string;
-    title: string;
-    description: string;
+    title?: string;
+    description?: string;
     tags?: string;
     videoUrl?: string;
     posterUrl?: string | null;
   };
-  if (!userId || !title?.trim()) return res.status(400).json({ ok: false, error: 'عنوان الفيديو مطلوب.' });
+  const cleanTitle = (title || '').trim();
+  const cleanDesc = (description || '').trim();
+  if (!userId || (!cleanTitle && !videoUrl)) {
+    return res.status(400).json({ ok: false, error: 'أضف فيديو أو عنوانًا للنشر.' });
+  }
   const id = `v_${uuid().slice(0, 8)}`;
+  const extractedTags = (cleanTitle.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ');
+  const finalTags = (tags || '').trim() || extractedTags || '#LM';
   db.prepare(`
     INSERT INTO short_videos (id, user_id, title, description, tags, video_url, poster_url)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, title.trim(), (description || '').trim(), tags || '#LM', videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null);
+  `).run(id, userId, cleanTitle, cleanDesc, finalTags, videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null);
   res.json({ ok: true, id, posterUrl: posterUrl || null });
 });
 
@@ -2832,18 +2838,92 @@ app.post('/api/videos/:id/comments', async (req, res) => {
 
   let aiReply = null;
   if (shouldCallAi) {
-    const vidRow = db.prepare('SELECT title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
-      | { title?: string; description?: string; tags?: string }
+    const vidRow = db.prepare(`
+      SELECT v.id, v.title, v.description, v.tags, v.audio_title, v.duration_sec,
+             v.likes_count, v.comments_count, v.views_count,
+             u.display_name AS creator_name, u.username AS creator_username
+      FROM short_videos v
+      LEFT JOIN users u ON v.user_id = u.id
+      WHERE v.id = ?
+    `).get(req.params.id) as
+      | {
+          id?: string;
+          title?: string;
+          description?: string;
+          tags?: string;
+          audio_title?: string;
+          duration_sec?: number;
+          likes_count?: number;
+          comments_count?: number;
+          views_count?: number;
+          creator_name?: string;
+          creator_username?: string;
+        }
       | undefined;
+
+    const recentVideoComments = db.prepare(`
+      SELECT c.user_id, c.content, c.transcript, c.likes_count, u.display_name
+      FROM video_comments c
+      LEFT JOIN users u ON c.user_id = u.id
+      WHERE c.video_id = ? AND c.id != ?
+      ORDER BY c.rowid DESC
+      LIMIT 20
+    `).all(req.params.id, id) as Array<{
+      user_id: string;
+      content?: string;
+      transcript?: string | null;
+      likes_count?: number;
+      display_name?: string;
+    }>;
+
     const rawQ = (content || '').trim() || cleanTranscript || '';
     const cleanQ = rawQ.replace(/@(lm\s*ai|ai)/gi, '').trim() || 'اشرح محتوى هذا الفيديو باختصار';
 
-    const ctxParts: string[] = [];
-    if (vidRow?.title) ctxParts.push(`فيديو نبض: ${vidRow.title} ${vidRow.description || ''}`.trim());
+    const ctxParts: string[] = [
+      'تنبيه نطاق حصري: أنت تجيب داخل قسم تعليقات هذا الفيديو المحدد فقط. اعتمد حصريًا على تفاصيل هذا الفيديو وتعليقاته أدناه ولا تخلطه بأي فيديو آخر.',
+    ];
+    if (vidRow) {
+      const caption = (vidRow.title || '').trim();
+      const extraDesc = (vidRow.description || '').trim();
+      const fullCaption = extraDesc && extraDesc !== caption ? `${caption}\n${extraDesc}` : caption;
+      if (vidRow.creator_name || vidRow.creator_username) {
+        ctxParts.push(`صانع الفيديو: ${vidRow.creator_name || 'مستخدم'} (@${vidRow.creator_username || 'user'})`);
+      }
+      if (fullCaption) {
+        ctxParts.push(`عنوان ووصف الفيديو: ${fullCaption}`);
+      }
+      if (vidRow.tags?.trim()) {
+        ctxParts.push(`الوسوم: ${vidRow.tags.trim()}`);
+      }
+      if (vidRow.audio_title?.trim()) {
+        ctxParts.push(`الصوت المستخدم: ${vidRow.audio_title.trim()}`);
+      }
+      ctxParts.push(
+        `إحصائيات هذا الفيديو: ${Number(vidRow.likes_count || 0)} إعجاب، ${Number(vidRow.comments_count || 0)} تعليق، ${Number(vidRow.views_count || 0)} مشاهدة.`
+      );
+    }
+
+    if (recentVideoComments.length > 0) {
+      const formattedComments = recentVideoComments
+        .reverse()
+        .map(c => {
+          const who = c.user_id === 'lm_ai' ? 'LM AI' : (c.display_name || 'مستخدم');
+          const body = (c.content || c.transcript || '').trim().slice(0, 220);
+          return body ? `- ${who}: ${body}` : null;
+        })
+        .filter(Boolean)
+        .join('\n');
+      if (formattedComments) {
+        ctxParts.push(`التعليقات الموجودة حاليًا على هذا الفيديو:\n${formattedComments}`);
+      }
+    } else {
+      ctxParts.push('لا توجد تعليقات سابقة على هذا الفيديو حتى الآن.');
+    }
+
     if (parentRow) {
       const pName = parentRow.user_id === 'lm_ai' ? 'LM AI (ردك السابق)' : (parentRow.display_name || 'مستخدم');
       const pBody = parentRow.content || parentRow.transcript || '';
-      if (pBody) ctxParts.push(`التعليق الذي يرد عليه المستخدم (${pName}): ${pBody}`);
+      if (pBody) ctxParts.push(`التعليق المحدد الذي يرد عليه المستخدم الآن (${pName}): ${pBody}`);
     }
 
     const aiOut = await runLmAi({
@@ -3619,10 +3699,21 @@ app.get('/api/live/rooms/:id/state', (req, res) => {
 });
 
 app.post('/api/live/rooms/:id/comment', (req, res) => {
-  const { userId, text } = req.body as { userId: string; text: string };
+  const { userId, text, replyToId, replyToName, replyToText } = req.body as {
+    userId: string;
+    text: string;
+    replyToId?: string;
+    replyToName?: string;
+    replyToText?: string;
+  };
   const user = getUserOrNull(userId);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
-  const result = liveEngine.addNormalComment(req.params.id, user, text);
+  const result = liveEngine.addNormalComment(
+    req.params.id,
+    user,
+    text,
+    replyToName ? { id: replyToId, name: replyToName, text: replyToText } : undefined
+  );
   if (!result.ok) return res.status(400).json(result);
   const room = db.prepare('SELECT host_id, title, category FROM live_rooms WHERE id = ?').get(req.params.id) as
     | { host_id: string; title: string; category: string }

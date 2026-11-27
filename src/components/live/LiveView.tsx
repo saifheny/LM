@@ -9,7 +9,9 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  CornerDownLeft,
   Eye,
+  EyeOff,
   Flag,
   Heart,
   Monitor,
@@ -43,14 +45,6 @@ interface LiveViewProps {
   lastWsEvent: { event: string; payload: unknown; ts: number } | null;
   onOpenProfile?: (userId: string) => void;
   onShare?: (payload: SharePayload) => void;
-}
-
-interface FlyingLikeOrb {
-  id: string;
-  startX: number;
-  startY: number;
-  targetX: number;
-  targetY: number;
 }
 
 const LIVE_CATEGORIES = ['عام', 'دردشة', 'تقنية', 'موسيقى', 'ألعاب', 'رياضة'];
@@ -105,10 +99,22 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   const [liveInputFocused, setLiveInputFocused] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
 
-  // TikTok Live Tap-to-Like Energy Gauge State (Gradual 50-tap fill, ZERO x2/x6 multiplier badges!)
+  // TikTok Clear-Display Mode (2-finger horizontal swipe hides ALL HUD & comments!)
+  const [cleanView, setCleanView] = useState(false);
+  const twoFingerSwipeRef = useRef<{ startX: number; startY: number; triggered: boolean } | null>(null);
+
+  // TikTok-Style Highlighted Reply to a Specific Live Comment
+  const [replyToLiveComment, setReplyToLiveComment] = useState<{
+    id: string;
+    displayName: string;
+    text: string;
+  } | null>(null);
+  const activeRoomIdRef = useRef(activeRoomId);
+  activeRoomIdRef.current = activeRoomId;
+
+  // Lightweight Tap-to-Like Energy Gauge State (CSS transitions only — zero GPU stutter!)
   const [tapProgress, setTapProgress] = useState(0);
   const [gaugePulse, setGaugePulse] = useState(false);
-  const [flyingOrbs, setFlyingOrbs] = useState<FlyingLikeOrb[]>([]);
   const [optimisticLikes, setOptimisticLikes] = useState<Record<string, number>>({});
   const pendingLikeBatchRef = useRef<{ roomId: string; count: number; timer: number | null }>({
     roomId: '',
@@ -177,7 +183,8 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     const list = res.rooms || [];
     setRooms(list);
     if (list.length > 0) {
-      const idx = list.findIndex(r => r.id === activeRoomId);
+      const currentId = activeRoomIdRef.current;
+      const idx = list.findIndex(r => r.id === currentId);
       if (idx >= 0) {
         setActiveIndex(idx);
       } else {
@@ -185,14 +192,13 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         setActiveRoomId(list[0].id);
       }
     }
-  }, [user.id, activeRoomId, setActiveRoomId]);
+  }, [user.id, setActiveRoomId]);
 
   const loadState = useCallback(async (id: string) => {
     const res = await apiGet<{ ok: boolean; state: LiveRoomState }>(`/api/live/rooms/${id}/state`);
     roomStateCacheRef.current[id] = res.state;
     setRoomState(prev => {
-      // Avoid overwriting if user already swiped away to another room while this request was in flight
-      if (prev && prev.roomId !== id && activeRoomId !== id) return prev;
+      if (prev && prev.roomId !== id && activeRoomIdRef.current !== id) return prev;
       return res.state;
     });
     setOptimisticLikes(prev => {
@@ -201,7 +207,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       delete next[id];
       return next;
     });
-  }, [activeRoomId]);
+  }, []);
 
   useEffect(() => {
     loadRooms();
@@ -210,6 +216,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   useEffect(() => {
     if (activeRoomId) {
       setPinMode(false);
+      setReplyToLiveComment(null);
       userScrolledUpRef.current = false;
       setScrolledUpComments(false);
       // Instant zero-lag switch: show cached room state at 0ms OR clear stale previous room comments immediately!
@@ -695,9 +702,45 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   }
 
   /**
-   * TikTok Live Tap-to-Like Engine:
-   * Every tap spawns a burst, sends a glowing heart orb flying up into the top Arrow Energy Gauge,
-   * fills the gauge gradually (~50 taps per cycle, ZERO x2/x6 multipliers!), and boosts live ranking!
+   * 2-Finger Horizontal Swipe for TikTok Clear-Display Mode:
+   * Slide 2 fingers horizontally to hide/restore ALL Live HUD, comments, and input bar!
+   */
+  function handleStageTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    if (e.touches.length === 2) {
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      twoFingerSwipeRef.current = { startX: midX, startY: midY, triggered: false };
+    } else {
+      twoFingerSwipeRef.current = null;
+    }
+  }
+
+  function handleStageTouchMove(e: React.TouchEvent<HTMLDivElement>) {
+    const g = twoFingerSwipeRef.current;
+    if (!g || g.triggered || e.touches.length !== 2) return;
+    const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const dx = midX - g.startX;
+    const dy = midY - g.startY;
+    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+      g.triggered = true;
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate?.(14);
+      }
+      setCleanView(prev => {
+        const next = !prev;
+        showNotice(next ? 'الوضع الصافي مفعّل — اسحب بإصبعين للعودة' : 'تم إظهار التعليقات والأدوات');
+        return next;
+      });
+    }
+  }
+
+  function handleStageTouchEnd() {
+    twoFingerSwipeRef.current = null;
+  }
+
+  /**
+   * Smooth 60fps Tap-to-Like Engine (Zero heavy Framer Motion orbs!)
    */
   function triggerStageTapBurst(clientX?: number, clientY?: number) {
     const stageRect = stageRef.current?.getBoundingClientRect();
@@ -713,33 +756,19 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     comboRef.current.lastMs = now;
 
     const item = createTapBurst(x, y, comboRef.current.count);
-    setBursts(prev => [...prev.slice(-14), item]);
+    setBursts(prev => [...prev.slice(-7), item]);
     setTimeout(() => {
       setBursts(prev => prev.filter(b => b.id !== item.id));
-    }, 900);
+    }, 820);
 
-    // Spawn flying heart orb curving up into the top Arrow Energy Gauge!
-    const gaugeRect = gaugeRef.current?.getBoundingClientRect();
-    if (stageRect && gaugeRect) {
-      const targetX = gaugeRect.left - stageRect.left + gaugeRect.width * 0.5;
-      const targetY = gaugeRect.top - stageRect.top + gaugeRect.height * 0.5;
-      const orbId = `orb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      setFlyingOrbs(prev => [...prev.slice(-10), { id: orbId, startX: x, startY: y, targetX, targetY }]);
-      setTimeout(() => {
-        setFlyingOrbs(prev => prev.filter(o => o.id !== orbId));
-      }, 680);
-    }
-
-    // Gradual TikTok Arrow Energy Gauge (50 taps = full cycle, NO x2/x3 multipliers!)
     setTapProgress(prev => {
       const next = prev + 100 / 50;
       if (next >= 100) return 6;
       return next;
     });
     setGaugePulse(true);
-    setTimeout(() => setGaugePulse(false), 240);
+    setTimeout(() => setGaugePulse(false), 180);
 
-    // Real backend like counter + Live popularity boost!
     if (activeRoom?.id) {
       setOptimisticLikes(prev => ({ ...prev, [activeRoom.id]: (prev[activeRoom.id] || 0) + 1 }));
       queueLiveLike(activeRoom.id);
@@ -750,7 +779,9 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     e.preventDefault();
     if (!commentText.trim() || !activeRoom?.id) return;
     const text = commentText.trim();
+    const activeReply = replyToLiveComment;
     setCommentText('');
+    setReplyToLiveComment(null);
     setComposerFocused(false);
     // When sending our own comment, smoothly snap back to latest so we see it right away
     userScrolledUpRef.current = false;
@@ -760,7 +791,13 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         await apiPost(`/api/live/rooms/${activeRoom.id}/highlight`, { userId: user.id, text });
         setPinMode(false);
       } else {
-        await apiPost(`/api/live/rooms/${activeRoom.id}/comment`, { userId: user.id, text });
+        await apiPost(`/api/live/rooms/${activeRoom.id}/comment`, {
+          userId: user.id,
+          text,
+          replyToId: activeReply?.id,
+          replyToName: activeReply?.displayName,
+          replyToText: activeReply?.text,
+        });
       }
     } catch (err) {
       showNotice(err instanceof Error ? err.message : 'تعذر الإرسال');
@@ -783,13 +820,16 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       onWheel={handleSingleLiveWheel}
       className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center"
     >
-      {/* Full-Screen Vertical Swipe TikTok Live Feed (ZERO Gifts, ZERO Redundant Heart Button, ZERO Swipe Hint Badge!) */}
+      {/* Full-Screen Vertical Swipe TikTok Live Feed + 2-Finger Swipe Clear-Display Mode */}
       <div
         ref={stageRef}
+        onTouchStart={handleStageTouchStart}
+        onTouchMove={handleStageTouchMove}
+        onTouchEnd={handleStageTouchEnd}
         onClick={(e) => {
           setComposerFocused(false);
           setMobileNavExpanded(false);
-          triggerStageTapBurst(e.clientX, e.clientY);
+          if (!cleanView) triggerStageTapBurst(e.clientX, e.clientY);
         }}
         className="relative w-full h-full max-w-[520px] mx-auto bg-black overflow-hidden cursor-pointer"
       >
@@ -918,100 +958,90 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         </Swiper>
 
         {/* Multi-Design TikTok Rapid Tap Bursts */}
-        <TapBurstOverlay items={bursts} />
+        {!cleanView && <TapBurstOverlay items={bursts} />}
 
-        {/* Flying Glowing Hearts Arcing Up into the Top Arrow Energy Gauge! */}
-        <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
-          {flyingOrbs.map(orb => (
-            <motion.div
-              key={orb.id}
-              initial={{ x: orb.startX - 10, y: orb.startY - 10, scale: 1.15, opacity: 1 }}
-              animate={{
-                x: orb.targetX - 8,
-                y: orb.targetY - 8,
-                scale: 0.45,
-                opacity: 0.25,
-              }}
-              transition={{ duration: 0.62, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute top-0 left-0 w-5 h-5 flex items-center justify-center"
-            >
-              <Heart className="w-4 h-4 text-[#FF2D55] fill-current drop-shadow-[0_0_8px_rgba(255,45,85,0.9)]" />
-            </motion.div>
-          ))}
-        </div>
+        {/* Subtle Legibility Gradients (Hidden in Clear-Display Mode!) */}
+        <div
+          className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-32 bg-gradient-to-b from-black/75 to-transparent transition-opacity duration-200 ${
+            cleanView ? 'opacity-0' : 'opacity-100'
+          }`}
+        />
+        <div
+          className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 h-72 bg-gradient-to-t from-black/90 via-black/45 to-transparent transition-opacity duration-200 ${
+            cleanView ? 'opacity-0' : 'opacity-100'
+          }`}
+        />
 
-        {/* Subtle Legibility Gradients */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-32 bg-gradient-to-b from-black/78 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-72 bg-gradient-to-t from-black/92 via-black/50 to-transparent" />
-
-        {/* Top Floating Host Pill + TikTok Tap-to-Like Rising Arrow Energy Gauge Below It (Safe-Area Protected!) */}
+        {/* Top Floating Host Pill + Energy Gauge + Uniform Matte HUD Controls (Hides Smoothly in Clear-Display Mode!) */}
         <div
           onClick={e => e.stopPropagation()}
           style={{ top: 'max(12px, calc(env(safe-area-inset-top) + 8px))' }}
-          className="absolute inset-x-3 sm:inset-x-4 z-20 flex items-start justify-between gap-1.5 sm:gap-2"
+          className={`absolute inset-x-3 sm:inset-x-4 z-20 flex items-start justify-between gap-2 transition-all duration-200 ${
+            cleanView ? 'opacity-0 -translate-y-4 pointer-events-none' : 'opacity-100 translate-y-0'
+          }`}
         >
           {activeRoom && (
             <div className="flex flex-col items-start gap-1.5 min-w-0">
               <button
                 type="button"
                 onClick={() => onOpenProfile?.(activeRoom.hostId)}
-                className="flex items-center gap-1.5 sm:gap-2 ps-1 pe-2.5 sm:pe-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] hover:border-white/30 cursor-pointer text-start transition-colors min-w-0 max-w-full"
+                className="flex items-center gap-2 ps-1.5 pe-3 py-1 rounded-full bg-black/55 hover:bg-black/70 cursor-pointer text-start transition-colors min-w-0 max-w-full"
               >
                 <div
                   className={
                     activeRoom.hasActiveStory
-                      ? 'p-[1.5px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] shrink-0'
+                      ? 'p-[1.5px] rounded-full bg-gradient-to-tr from-[#FE2C55] to-[#25F4EE] shrink-0'
                       : 'shrink-0'
                   }
                 >
                   <div className={activeRoom.hasActiveStory ? 'p-[1px] rounded-full bg-black' : ''}>
-                    <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={30} online />
+                    <UserAvatar initials={activeRoom.hostInitials} avatarUrl={activeRoom.hostAvatarUrl} size={32} online />
                   </div>
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11.5px] sm:text-xs font-semibold text-white truncate max-w-[88px] sm:max-w-[115px]">{activeRoom.hostName}</div>
-                  <div className="text-[10px] text-white/70 truncate max-w-[88px] sm:max-w-[115px]">{activeRoom.title}</div>
+                  <div className="text-xs font-semibold text-white truncate max-w-[96px] sm:max-w-[122px]">{activeRoom.hostName}</div>
+                  <div className="text-[10.5px] text-white/75 truncate max-w-[96px] sm:max-w-[122px]">{activeRoom.title}</div>
                 </div>
-                <span className="ms-0.5 sm:ms-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[9.5px] sm:text-[10px] font-bold shrink-0">
+                <span className="ms-1 px-2 py-0.5 rounded-full bg-[#FE2C55] text-white text-[10px] font-bold shrink-0">
                   LIVE
                 </span>
               </button>
 
-              {/* TikTok Live Tap-to-Like Rising Arrow Energy Gauge (Fills smoothly with every screen tap!) */}
-              <motion.div
+              {/* Lightweight CSS Energy Gauge (No Framer Motion lag!) */}
+              <div
                 ref={gaugeRef}
-                animate={gaugePulse ? { scale: [1, 1.07, 1] } : { scale: 1 }}
-                transition={{ duration: 0.22 }}
-                className="relative overflow-hidden px-2.5 py-1 rounded-full bg-black/58 backdrop-blur-md border border-white/[0.14] flex items-center gap-2 min-w-[138px]"
+                className={`relative overflow-hidden px-3 py-1 rounded-full bg-black/55 flex items-center gap-2 min-w-[136px] transition-transform duration-150 ${
+                  gaugePulse ? 'scale-105' : 'scale-100'
+                }`}
               >
-                {/* Live Rising Fill Bar Behind */}
                 <div
                   style={{ width: `${Math.min(100, Math.max(8, tapProgress))}%` }}
-                  className="pointer-events-none absolute inset-y-0 start-0 bg-gradient-to-l from-[#FF2D55]/55 via-[#FB7185]/40 to-[#F59E0B]/45 transition-all duration-200"
+                  className="pointer-events-none absolute inset-y-0 start-0 bg-[#FE2C55]/45 transition-[width] duration-150"
                 />
-                <span className="relative z-10 w-4 h-4 rounded-full bg-gradient-to-tr from-[#FF2D55] to-[#F59E0B] text-white flex items-center justify-center shrink-0 shadow">
-                  <ArrowUp className="w-2.5 h-2.5" strokeWidth={3} />
+                <span className="relative z-10 w-4 h-4 rounded-full bg-[#FE2C55] text-white flex items-center justify-center shrink-0">
+                  <ArrowUp className="w-3 h-3" strokeWidth={2.6} />
                 </span>
-                <span className="relative z-10 text-[11px] font-mono-num font-bold text-white flex items-center gap-1">
-                  <Heart className="w-3 h-3 text-[#FF2D55] fill-current" />
+                <span className="relative z-10 text-xs font-mono-num font-bold text-white flex items-center gap-1">
+                  <Heart className="w-3.5 h-3.5 text-[#FE2C55] fill-current" />
                   <span>{formatCompact(displayedLikes)}</span>
                 </span>
-              </motion.div>
+              </div>
             </div>
           )}
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <div className="px-2.5 py-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] flex items-center gap-1.5 text-xs font-mono-num text-white">
-              <Eye className="w-3.5 h-3.5 text-white/80" />
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="h-10 px-3 rounded-full bg-black/55 flex items-center gap-1.5 text-xs font-semibold font-mono-num text-white">
+              <Eye className="w-4 h-4 text-white/85" />
               <span>{displayedViewers.toLocaleString('en-US')}</span>
             </div>
 
             <button
               type="button"
               onClick={() => setMuted(m => !m)}
-              className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.12] text-white flex items-center justify-center cursor-pointer"
+              aria-label={muted ? 'تشغيل الصوت' : 'كتم الصوت'}
+              className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
             >
-              {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              {muted ? <VolumeX className="w-5 h-5" strokeWidth={2} /> : <Volume2 className="w-5 h-5" strokeWidth={2} />}
             </button>
 
             {hostingRoomId ? (
@@ -1019,9 +1049,9 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 type="button"
                 onClick={() => stopHostingBroadcast(true)}
                 title={t(lang, 'end_live')}
-                className="h-8 px-3 rounded-full bg-[#EF4444] hover:bg-[#DC2626] text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-lg"
+                className="h-10 px-3.5 rounded-full bg-[#EF4444] hover:bg-[#DC2626] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
               >
-                <Square className="w-3 h-3 fill-current" />
+                <Square className="w-3.5 h-3.5 fill-current" />
                 <span>{t(lang, 'end_live')}</span>
               </button>
             ) : (
@@ -1029,22 +1059,22 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 type="button"
                 onClick={() => setGoLiveOpen(true)}
                 title={t(lang, 'go_live')}
-                className="h-8 px-3 rounded-full bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-lg hover:opacity-95 transition-opacity"
+                className="h-10 px-3.5 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
               >
-                <Radio className="w-3.5 h-3.5" />
+                <Radio className="w-4 h-4" />
                 <span>{t(lang, 'go_live')}</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Active Pinned Comment (Strictly matched to active room — ZERO stale flash on swipe!) */}
-        {roomState && roomState.roomId === activeRoom?.id && roomState.activeHighlight && (
+        {/* Active Pinned Comment (Hides in Clear-Display Mode) */}
+        {!cleanView && roomState && roomState.roomId === activeRoom?.id && roomState.activeHighlight && (
           <div
             onClick={e => e.stopPropagation()}
-            className="absolute bottom-[295px] start-4 end-16 z-20 px-3 py-2 rounded-2xl bg-black/72 backdrop-blur-md border border-white/20 flex items-center gap-2"
+            className="absolute bottom-[300px] start-4 end-16 z-20 px-3 py-2 rounded-xl bg-black/70 border-s-2 border-[#FBBF24] flex items-center gap-2"
           >
-            <Pin className="w-3.5 h-3.5 text-[#FBBF24] shrink-0" />
+            <Pin className="w-4 h-4 text-[#FBBF24] shrink-0" />
             <div className="min-w-0 flex-1 text-xs">
               <button
                 type="button"
@@ -1058,33 +1088,85 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         )}
 
-        {/* Full-History Scrollable Live Comments (Swipe-isolated via swiper-no-swiping — Safe-Area Lifted!) */}
+        {/* Full-History Scrollable Live Comments with TikTok Highlighted Replies (Hides Smoothly in Clear-Display Mode!) */}
         <div
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          style={{ bottom: 'calc(76px + env(safe-area-inset-bottom))' }}
-          className="swiper-no-swiping absolute start-3.5 sm:start-4 z-20 w-[76%] max-w-[350px]"
+          style={{ bottom: 'calc(80px + env(safe-area-inset-bottom))' }}
+          className={`swiper-no-swiping absolute start-3.5 sm:start-4 z-20 w-[76%] max-w-[350px] transition-all duration-200 ${
+            cleanView ? 'opacity-0 translate-y-4 pointer-events-none' : 'opacity-100 translate-y-0'
+          }`}
         >
           <div
             ref={commentsScrollRef}
             onScroll={handleCommentsScroll}
-            className="live-comments-scroll max-h-[205px] overflow-y-auto overscroll-contain touch-pan-y no-scrollbar space-y-1.5 py-2"
+            className="live-comments-scroll max-h-[210px] overflow-y-auto overscroll-contain touch-pan-y no-scrollbar space-y-2 py-2"
           >
-            {(roomState && roomState.roomId === activeRoom?.id ? roomState.recentMessages : []).map(msg => (
-              <div
-                key={msg.id}
-                className="flex items-start gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
-              >
-                <button
-                  type="button"
-                  onClick={() => onOpenProfile?.(msg.userId)}
-                  className="font-semibold text-white/85 hover:text-white hover:underline shrink-0 cursor-pointer"
+            {(roomState && roomState.roomId === activeRoom?.id ? roomState.recentMessages : []).map(msg => {
+              const isReply = Boolean(msg.replyToName);
+              return (
+                <div
+                  key={msg.id}
+                  onClick={() => {
+                    setReplyToLiveComment({
+                      id: msg.id,
+                      displayName: msg.displayName,
+                      text: msg.text,
+                    });
+                    setLiveInputFocused(true);
+                  }}
+                  className={`group cursor-pointer transition-colors ${
+                    isReply
+                      ? 'bg-[#25F4EE]/[0.14] border-s-2 border-[#25F4EE] rounded-e-xl px-2.5 py-1.5'
+                      : 'px-1 py-0.5 rounded-lg hover:bg-black/30'
+                  }`}
                 >
-                  {msg.displayName}
-                </button>
-                <span className="text-white break-words">{msg.text}</span>
-              </div>
-            ))}
+                  {isReply && (
+                    <div className="flex items-center gap-1 text-[11px] font-semibold text-[#25F4EE] mb-0.5 truncate">
+                      <CornerDownLeft className="w-3 h-3 shrink-0" />
+                      <span className="truncate">
+                        ردًا على @{msg.replyToName}
+                        {msg.replyToText ? `: ${msg.replyToText.slice(0, 34)}` : ''}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-start justify-between gap-2 text-[13px] leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={ev => {
+                          ev.stopPropagation();
+                          onOpenProfile?.(msg.userId);
+                        }}
+                        className={`font-semibold hover:underline me-1.5 cursor-pointer ${
+                          isReply ? 'text-[#25F4EE]' : 'text-white/90 hover:text-white'
+                        }`}
+                      >
+                        {msg.displayName}
+                      </button>
+                      <span className="text-white break-words">{msg.text}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={ev => {
+                        ev.stopPropagation();
+                        setReplyToLiveComment({
+                          id: msg.id,
+                          displayName: msg.displayName,
+                          text: msg.text,
+                        });
+                        setLiveInputFocused(true);
+                      }}
+                      title="الرد على هذا التعليق"
+                      className="shrink-0 text-[10.5px] font-medium text-white/55 hover:text-[#25F4EE] opacity-80 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-0.5 cursor-pointer pt-0.5 transition-opacity"
+                    >
+                      <CornerDownLeft className="w-3 h-3" />
+                      <span>رد</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
             <div ref={commentsEndRef} />
           </div>
 
@@ -1092,30 +1174,44 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             <button
               type="button"
               onClick={jumpToLatestComments}
-              className="mt-1 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/20 text-[10.5px] font-medium text-white inline-flex items-center gap-1 cursor-pointer hover:bg-white hover:text-black transition-colors"
+              className="mt-1 px-3 py-1 rounded-full bg-black/75 text-[11px] font-semibold text-white inline-flex items-center gap-1 cursor-pointer hover:bg-white hover:text-black transition-colors"
             >
-              <ArrowDown className="w-3 h-3" />
+              <ArrowDown className="w-3.5 h-3.5" />
               <span>أحدث التعليقات</span>
             </button>
           )}
         </div>
 
-        {/* Floating Side Action Buttons (Safe-Area Lifted — ZERO Heart Button, Host-Only Pin, Share & Report!) */}
+        {/* Uniform Side Action Buttons (All 40x40 with 20x20 Crisp Icons — ZERO Glow, Hides in Clear-Display Mode!) */}
         <div
           onClick={e => e.stopPropagation()}
-          style={{ bottom: 'calc(78px + env(safe-area-inset-bottom))' }}
-          className="absolute end-3.5 z-20 flex flex-col items-center gap-3"
+          style={{ bottom: 'calc(82px + env(safe-area-inset-bottom))' }}
+          className={`absolute end-3.5 z-20 flex flex-col items-center gap-3 transition-all duration-200 ${
+            cleanView ? 'opacity-0 translate-x-4 pointer-events-none' : 'opacity-100 translate-x-0'
+          }`}
         >
+          <button
+            type="button"
+            onClick={() => {
+              setCleanView(true);
+              showNotice('الوضع الصافي مفعّل — اسحب بإصبعين للعودة');
+            }}
+            title="إخفاء الواجهة (الوضع الصافي)"
+            className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
+          >
+            <EyeOff className="w-5 h-5" strokeWidth={2} />
+          </button>
+
           {isOwnerOfActiveRoom && (
             <button
               type="button"
               onClick={() => setPinMode(v => !v)}
               title="تثبيت تعليق (لصاحب البث فقط)"
-              className={`w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition-colors ${
-                pinMode ? 'bg-white text-black border-white' : 'bg-black/55 border-white/[0.14] text-white'
+              className={`w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                pinMode ? 'bg-[#FE2C55] text-white' : 'bg-black/55 hover:bg-black/75 text-white'
               }`}
             >
-              <Pin className="w-4 h-4" />
+              <Pin className="w-5 h-5" strokeWidth={2} />
             </button>
           )}
 
@@ -1138,9 +1234,9 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
               }
             }}
             title="مشاركة البث"
-            className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white flex items-center justify-center cursor-pointer"
+            className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
           >
-            <Share2 className="w-4 h-4" />
+            <Share2 className="w-5 h-5" strokeWidth={2} />
           </button>
 
           {activeRoom && activeRoom.hostId !== user.id && (
@@ -1154,53 +1250,93 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 })
               }
               title={t(lang, 'report')}
-              className="w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/[0.14] text-white/85 hover:text-[#FB7185] flex items-center justify-center cursor-pointer transition-colors"
+              className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white/90 hover:text-[#FE2C55] flex items-center justify-center cursor-pointer transition-colors"
             >
-              <Flag className="w-4 h-4" />
+              <Flag className="w-5 h-5" strokeWidth={2} />
             </button>
           )}
         </div>
 
+        {/* Subtle Restore Pill in Clear-Display Mode (Or Swipe with 2 Fingers Anytime!) */}
+        {cleanView && (
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              setCleanView(false);
+            }}
+            style={{ bottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
+            className="absolute end-3.5 z-30 h-9 px-3.5 rounded-full bg-black/55 hover:bg-black/75 text-xs font-semibold text-white/90 flex items-center gap-1.5 cursor-pointer transition-colors"
+          >
+            <Eye className="w-4 h-4" />
+            <span>إظهار الواجهة</span>
+          </button>
+        )}
+
         {statusMsg && (
-          <div className="absolute bottom-24 inset-x-8 z-30 py-1.5 px-3 rounded-full bg-black/85 border border-white/15 text-center text-xs text-white">
+          <div className="pointer-events-none absolute top-28 inset-x-8 z-30 py-1.5 px-3 rounded-full bg-black/80 text-center text-xs font-medium text-white">
             {statusMsg}
           </div>
         )}
 
-        {/* Transparent TikTok Bottom Comment Bar & Direct Bottom Dock Trigger (Lifts ONLY composer above keyboard!) */}
-        {!mobileNavExpanded && (
+        {/* Borderless Floating Bottom Comment Composer + Reply Pill (Lifts ONLY Input Above Mobile Keyboard & Hides in Clear Mode!) */}
+        {!mobileNavExpanded && !cleanView && (
           <div
             onClick={e => e.stopPropagation()}
             style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
-            className="absolute inset-x-3.5 z-20 flex items-end gap-2 transition-[bottom] duration-150"
+            className="absolute inset-x-3.5 z-20 flex flex-col gap-2 transition-[bottom] duration-150"
           >
-            <SplitComposerOrb
-              directDockMode
-              transparent={!liveInputFocused && !commentText.trim()}
-            />
-            <div className="flex-1 min-w-0">
-              <ObsidianComposerPill
-                transparent
-                value={commentText}
-                onChange={setCommentText}
-                onSubmit={handleSendComment}
-                onFocus={() => {
-                  setLiveInputFocused(true);
-                  setComposerFocused(true);
-                }}
-                onBlur={() => {
-                  setLiveInputFocused(false);
-                  setTimeout(() => setComposerFocused(false), 140);
-                }}
-                placeholder={
-                  pinMode && isOwnerOfActiveRoom
-                    ? lang === 'en'
-                      ? 'Pinned comment...'
-                      : 'تعليق مثبت...'
-                    : t(lang, 'add_comment')
-                }
-                disabled={!commentText.trim()}
+            {replyToLiveComment && (
+              <div className="w-fit max-w-[85%] self-start rounded-xl bg-[#161823]/92 border-s-2 border-[#25F4EE] px-3 py-1.5 flex items-center gap-2.5">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold text-[#25F4EE] truncate">
+                    الرد على @{replyToLiveComment.displayName}
+                  </div>
+                  <div className="text-[11px] text-white/75 truncate max-w-[200px]">
+                    {replyToLiveComment.text}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReplyToLiveComment(null)}
+                  className="w-6 h-6 rounded-full hover:bg-white/10 text-white/70 hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-end gap-2">
+              <SplitComposerOrb
+                directDockMode
+                transparent={!liveInputFocused && !commentText.trim()}
               />
+              <div className="flex-1 min-w-0">
+                <ObsidianComposerPill
+                  transparent
+                  value={commentText}
+                  onChange={setCommentText}
+                  onSubmit={handleSendComment}
+                  onFocus={() => {
+                    setLiveInputFocused(true);
+                    setComposerFocused(true);
+                  }}
+                  onBlur={() => {
+                    setLiveInputFocused(false);
+                    setTimeout(() => setComposerFocused(false), 140);
+                  }}
+                  placeholder={
+                    replyToLiveComment
+                      ? `اكتب ردك على ${replyToLiveComment.displayName}...`
+                      : pinMode && isOwnerOfActiveRoom
+                        ? lang === 'en'
+                          ? 'Pinned comment...'
+                          : 'تعليق مثبت...'
+                        : t(lang, 'add_comment')
+                  }
+                  disabled={!commentText.trim()}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1358,12 +1494,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 </button>
               </div>
 
-              {/* BOTTOM FLOATING START BROADCAST BUTTON */}
+              {/* BOTTOM FLOATING START BROADCAST BUTTON (Flat Matte #FE2C55 — ZERO Glow!) */}
               <div className="flex flex-col items-center gap-2 pt-2">
                 <button
                   type="submit"
                   disabled={startingLive || !goLiveTitle.trim()}
-                  className="w-full max-w-[280px] h-12 rounded-full bg-gradient-to-r from-[#FF2D55] to-[#F97316] hover:opacity-95 text-white text-sm font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-[0_12px_36px_rgba(255,45,85,0.45)] disabled:opacity-45 disabled:cursor-not-allowed transition-all active:scale-[0.98]"
+                  className="w-full max-w-[280px] h-12 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-white text-sm font-bold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
                 >
                   <Radio className="w-4 h-4" />
                   <span>

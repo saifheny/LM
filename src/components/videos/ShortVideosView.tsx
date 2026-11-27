@@ -27,6 +27,11 @@ import {
   Sparkles,
   X,
   Languages,
+  RefreshCw,
+  Film,
+  ChevronRight,
+  Camera,
+  Hash,
 } from 'lucide-react';
 
 import { ConversationItem, Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
@@ -273,17 +278,114 @@ export function ShortVideosView({
   const [sentToIds, setSentToIds] = useState<Record<string, boolean>>({});
   const [shareToast, setShareToast] = useState('');
 
-  // Upload Pulse Modal + Automatic Thumbnail Generation
+  // Full-Screen 2-Step TikTok Creator Studio (Step 1: Camera + Gallery Picker -> Step 2: Unified Caption Publish Screen)
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [studioStep, setStudioStep] = useState<'capture' | 'publish'>('capture');
+  const [studioDurationSec, setStudioDurationSec] = useState<15 | 60 | 180>(60);
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [isRecordingClip, setIsRecordingClip] = useState(false);
+  const [recordElapsedSec, setRecordElapsedSec] = useState(0);
+  const studioVideoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const studioStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<number | null>(null);
+
   const [newTitle, setNewTitle] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [newTags, setNewTags] = useState('#LM');
+  const [newTags, setNewTags] = useState('');
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [uploadedPosterUrl, setUploadedPosterUrl] = useState<string | null>(null);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [generatingThumb, setGeneratingThumb] = useState(false);
+  const [publishingVideo, setPublishingVideo] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const posterFileRef = useRef<HTMLInputElement | null>(null);
+
+  const stopStudioCamera = useCallback(() => {
+    if (recordTimerRef.current) {
+      window.clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+    mediaRecorderRef.current = null;
+    setIsRecordingClip(false);
+    setRecordElapsedSec(0);
+    if (studioStreamRef.current) {
+      studioStreamRef.current.getTracks().forEach(tr => tr.stop());
+      studioStreamRef.current = null;
+    }
+    if (studioVideoPreviewRef.current) {
+      studioVideoPreviewRef.current.srcObject = null;
+    }
+    setCameraReady(false);
+  }, []);
+
+  const closeCreatorStudio = useCallback(() => {
+    stopStudioCamera();
+    if (localPreviewUrl) {
+      URL.revokeObjectURL(localPreviewUrl);
+      setLocalPreviewUrl(null);
+    }
+    setUploadOpen(false);
+    setStudioStep('capture');
+    setNewTitle('');
+    setNewTags('');
+    setUploadedVideoUrl(null);
+    setUploadedPosterUrl(null);
+    setCameraError('');
+  }, [stopStudioCamera, localPreviewUrl]);
+
+  useEffect(() => {
+    if (!uploadOpen || studioStep !== 'capture') {
+      stopStudioCamera();
+      return;
+    }
+    let cancelled = false;
+    setCameraError('');
+    setCameraReady(false);
+
+    async function bootCamera() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError(lang === 'en' ? 'Camera unavailable on this device. Choose a video from Gallery.' : 'الكاميرا غير متاحة على هذا الجهاز — يمكنك اختيار فيديو من المعرض.');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: cameraFacing }, width: { ideal: 1080 }, height: { ideal: 1920 } },
+          audio: true,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach(tr => tr.stop());
+          return;
+        }
+        studioStreamRef.current = stream;
+        if (studioVideoPreviewRef.current) {
+          studioVideoPreviewRef.current.srcObject = stream;
+          studioVideoPreviewRef.current.play().catch(() => {});
+        }
+        setCameraReady(true);
+      } catch {
+        if (!cancelled) {
+          setCameraError(lang === 'en' ? 'Camera permission skipped — tap Gallery below to pick any video.' : 'يمكنك السماح بالكاميرا للتصوير أو اختيار فيديو مباشرة من المعرض بالأسفل.');
+        }
+      }
+    }
+
+    bootCamera();
+    return () => {
+      cancelled = true;
+      stopStudioCamera();
+    };
+  }, [uploadOpen, studioStep, cameraFacing, lang, stopStudioCamera]);
 
   // Edit Own Pulse Comment Inline
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -774,9 +876,11 @@ export function ShortVideosView({
     scrubTo(ratio * duration);
   }
 
-  async function handleVideoUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
+  async function processSelectedVideoFile(f: File) {
+    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    const previewObj = URL.createObjectURL(f);
+    setLocalPreviewUrl(previewObj);
+    setStudioStep('publish');
     setUploadingVideo(true);
     setGeneratingThumb(true);
     try {
@@ -791,7 +895,76 @@ export function ShortVideosView({
     } finally {
       setUploadingVideo(false);
       setGeneratingThumb(false);
-      e.target.value = '';
+    }
+  }
+
+  async function handleVideoUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    await processSelectedVideoFile(f);
+  }
+
+  function toggleStudioRecording() {
+    if (isRecordingClip) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (recordTimerRef.current) {
+        window.clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      setIsRecordingClip(false);
+      return;
+    }
+
+    const stream = studioStreamRef.current;
+    if (!stream || typeof MediaRecorder === 'undefined') {
+      fileRef.current?.click();
+      return;
+    }
+
+    try {
+      recordedChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+        ? 'video/webm;codecs=vp9,opus'
+        : MediaRecorder.isTypeSupported('video/webm')
+        ? 'video/webm'
+        : '';
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = ev => {
+        if (ev.data && ev.data.size > 0) recordedChunksRef.current.push(ev.data);
+      };
+
+      recorder.onstop = () => {
+        const chunks = recordedChunksRef.current;
+        if (chunks.length === 0) return;
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+        const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+        const file = new File([blob], `lm_pulse_${Date.now()}.${ext}`, { type: blob.type });
+        void processSelectedVideoFile(file);
+      };
+
+      recorder.start(250);
+      setIsRecordingClip(true);
+      setRecordElapsedSec(0);
+      const startedAt = Date.now();
+      recordTimerRef.current = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+        setRecordElapsedSec(elapsed);
+        if (elapsed >= studioDurationSec && recorder.state !== 'inactive') {
+          recorder.stop();
+          if (recordTimerRef.current) {
+            window.clearInterval(recordTimerRef.current);
+            recordTimerRef.current = null;
+          }
+          setIsRecordingClip(false);
+        }
+      }, 250);
+    } catch {
+      fileRef.current?.click();
     }
   }
 
@@ -812,23 +985,26 @@ export function ShortVideosView({
 
   async function publishPulse(e: React.FormEvent) {
     e.preventDefault();
-    if (!newTitle.trim() || uploadingVideo) return;
-    await apiPost('/api/videos', {
-      userId: user.id,
-      title: newTitle.trim(),
-      description: newDesc.trim(),
-      tags: newTags.trim() || '#LM',
-      videoUrl: uploadedVideoUrl || '/uploads/seed/reel1.mp4',
-      posterUrl: uploadedPosterUrl,
-    });
-    setUploadOpen(false);
-    setNewTitle('');
-    setNewDesc('');
-    setNewTags('#LM');
-    setUploadedVideoUrl(null);
-    setUploadedPosterUrl(null);
-    loadVideos();
-    showToast('تم نشر فيديو نبض بنجاح');
+    if ((!newTitle.trim() && !uploadedVideoUrl) || uploadingVideo || publishingVideo) return;
+    setPublishingVideo(true);
+    try {
+      const extractedTags = (newTitle.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ');
+      await apiPost('/api/videos', {
+        userId: user.id,
+        title: newTitle.trim(),
+        description: '',
+        tags: newTags.trim() || extractedTags || '#LM',
+        videoUrl: uploadedVideoUrl || '/uploads/seed/reel1.mp4',
+        posterUrl: uploadedPosterUrl,
+      });
+      closeCreatorStudio();
+      await loadVideos();
+      setActiveIndex(0);
+      swiperRef.current?.slideTo(0, 0);
+      showToast('تم نشر الفيديو بنجاح');
+    } finally {
+      setPublishingVideo(false);
+    }
   }
 
   function openEditVideoModal(v: ShortVideoItem) {
@@ -886,12 +1062,13 @@ export function ShortVideosView({
           <button
             type="button"
             onClick={() => setMuted(m => !m)}
-            className="pointer-events-auto w-8 h-8 rounded-full bg-black/45 backdrop-blur-md border border-white/[0.12] text-white flex items-center justify-center cursor-pointer"
+            aria-label={muted ? 'تشغيل الصوت' : 'كتم الصوت'}
+            className="pointer-events-auto w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
           >
-            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
           </button>
 
-          <div className="pointer-events-auto flex items-center gap-5 text-[14px] font-semibold">
+          <div className="pointer-events-auto flex items-center gap-5 text-[15px] font-bold">
             {[
               { id: 'following' as const, ar: 'متابعون', en: 'Following' },
               { id: 'friends' as const, ar: 'أصدقاء', en: 'Friends' },
@@ -904,7 +1081,7 @@ export function ShortVideosView({
                   type="button"
                   onClick={() => setFeedTab(tab.id)}
                   className={`pb-1.5 relative transition-colors cursor-pointer drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
-                    active ? 'text-white' : 'text-white/55 hover:text-white/85'
+                    active ? 'text-white' : 'text-white/60 hover:text-white/90'
                   }`}
                 >
                   <span>{lang === 'ar' ? tab.ar : tab.en}</span>
@@ -916,10 +1093,14 @@ export function ShortVideosView({
 
           <button
             type="button"
-            onClick={() => setUploadOpen(true)}
-            className="pointer-events-auto w-8 h-8 rounded-full bg-white text-black flex items-center justify-center cursor-pointer"
+            onClick={() => {
+              setStudioStep('capture');
+              setUploadOpen(true);
+            }}
+            aria-label="نشر فيديو جديد"
+            className="pointer-events-auto w-10 h-10 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-white flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
           >
-            <Plus className="w-4 h-4" strokeWidth={2.4} />
+            <Plus className="w-5 h-5" strokeWidth={2.5} />
           </button>
         </div>
 
@@ -1041,36 +1222,32 @@ export function ShortVideosView({
 
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
 
-                  {/* Bottom Metadata: Glides smoothly DOWN & CENTERS when Mobile Bottom Nav hides (ZERO empty gap!) */}
+                  {/* Bottom Metadata: Positioned cleanly above the visible video scrubber lane! */}
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
-                    className={`absolute z-20 space-y-1 transition-all duration-200 ease-out md:bottom-10 md:start-4 md:end-16 md:items-start md:text-start flex flex-col ${
+                    className={`absolute z-20 space-y-1.5 transition-all duration-200 ease-out md:bottom-12 md:start-4 md:end-20 md:items-start md:text-start flex flex-col ${
                       bottomDockHidden
-                        ? 'bottom-[max(18px,calc(env(safe-area-inset-bottom)+14px))] inset-x-16 items-center text-center'
-                        : 'bottom-[calc(88px+env(safe-area-inset-bottom))] start-4 end-16 items-start text-start'
+                        ? 'bottom-[max(44px,calc(env(safe-area-inset-bottom)+38px))] start-4 end-20 items-start text-start'
+                        : 'bottom-[calc(104px+env(safe-area-inset-bottom))] start-4 end-20 items-start text-start'
                     }`}
                   >
-                    <div
-                      className={`flex items-center gap-2 text-sm font-semibold text-white flex-wrap ${
-                        bottomDockHidden ? 'justify-center md:justify-start' : 'justify-start'
-                      }`}
-                    >
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white flex-wrap justify-start">
                       <button
                         type="button"
                         onClick={() => onOpenProfile?.(v.userId)}
                         className="inline-flex items-center gap-2 hover:underline cursor-pointer"
                       >
-                        <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={28} />
+                        <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={30} />
                         <span>{v.displayName}</span>
                       </button>
                       {v.verified && <VerifiedIcon />}
-                      <span className="text-[11.5px] font-normal text-white/65 font-mono-num">@{v.username}</span>
+                      <span className="text-[11.5px] font-normal text-white/70 font-mono-num">@{v.username}</span>
                       {v.userId !== user.id && !v.isFollowingAuthor && (
                         <button
                           type="button"
                           onClick={() => followCreator(v.userId)}
-                          className="ms-0.5 px-2.5 py-0.5 rounded-full bg-[#FF2D55] hover:bg-[#FB7185] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors shadow-md"
+                          className="ms-0.5 px-2.5 py-0.5 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors"
                         >
                           <Plus className="w-3 h-3" strokeWidth={2.8} />
                           <span>متابعة</span>
@@ -1078,36 +1255,38 @@ export function ShortVideosView({
                       )}
                     </div>
 
-                    <div className="text-[13.5px] text-white/95 leading-snug max-w-full">
-                      {isLong && !isExpanded ? (
-                        <>
-                          <span>{v.title.slice(0, 74)}... </span>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: true }))}
-                            className="text-white/75 hover:text-white font-semibold cursor-pointer"
-                          >
-                            المزيد
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <span>{v.title}</span>
-                          {isLong && (
+                    {v.title && (
+                      <div className="text-[13.5px] text-white/95 leading-snug max-w-full">
+                        {isLong && !isExpanded ? (
+                          <>
+                            <span>{v.title.slice(0, 74)}... </span>
                             <button
                               type="button"
-                              onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: false }))}
-                              className="ms-1.5 text-white/75 hover:text-white font-semibold cursor-pointer"
+                              onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: true }))}
+                              className="text-white/80 hover:text-white font-semibold cursor-pointer"
                             >
-                              أقل
+                              المزيد
                             </button>
-                          )}
-                        </>
-                      )}
-                    </div>
+                          </>
+                        ) : (
+                          <>
+                            <span>{v.title}</span>
+                            {isLong && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: false }))}
+                                className="ms-1.5 text-white/80 hover:text-white font-semibold cursor-pointer"
+                              >
+                                أقل
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {v.tags && (isExpanded || !isLong) && (
-                      <div className="text-xs text-white/75 max-w-full">
+                      <div className="text-xs text-white/80 max-w-full">
                         <RichMessageText
                           text={v.tags}
                           onMentionClick={onOpenProfileByUsername}
@@ -1116,24 +1295,20 @@ export function ShortVideosView({
                       </div>
                     )}
 
-                    <div
-                      className={`flex items-center gap-2 text-xs text-white/80 pt-0.5 max-w-full ${
-                        bottomDockHidden ? 'justify-center md:justify-start' : 'justify-start'
-                      }`}
-                    >
+                    <div className="flex items-center gap-2 text-xs text-white/85 pt-0.5 max-w-full justify-start">
                       <Music2 className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate">{v.audioTitle}</span>
                     </div>
                   </div>
 
-                  {/* Right Action Rail: Glides smoothly DOWN when Bottom Dock hides + Unified Share/Report Button! */}
+                  {/* Right Action Rail: Uniform Crisp TikTok Icons Positioned Above Scrubber Lane */}
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
-                    className={`absolute end-3 z-20 flex flex-col items-center gap-3.5 transition-all duration-200 ease-out md:bottom-10 ${
+                    className={`absolute end-3 z-20 flex flex-col items-center gap-4 transition-all duration-200 ease-out md:bottom-12 ${
                       bottomDockHidden
-                        ? 'bottom-[max(18px,calc(env(safe-area-inset-bottom)+14px))]'
-                        : 'bottom-[calc(88px+env(safe-area-inset-bottom))]'
+                        ? 'bottom-[max(44px,calc(env(safe-area-inset-bottom)+38px))]'
+                        : 'bottom-[calc(104px+env(safe-area-inset-bottom))]'
                     }`}
                   >
                     <div className="relative mb-1">
@@ -1143,12 +1318,12 @@ export function ShortVideosView({
                         title={v.displayName}
                         className={`block p-[2px] rounded-full cursor-pointer hover:scale-105 transition-transform ${
                           v.hasActiveStory
-                            ? 'bg-gradient-to-tr from-[#FF2D55] via-[#FB7185] to-[#F59E0B]'
-                            : 'border border-white/30'
+                            ? 'bg-gradient-to-tr from-[#FE2C55] via-[#FF5E7E] to-[#25F4EE]'
+                            : 'border border-white/40'
                         }`}
                       >
                         <div className="p-[1.5px] rounded-full bg-black">
-                          <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={40} />
+                          <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={42} />
                         </div>
                       </button>
 
@@ -1157,50 +1332,42 @@ export function ShortVideosView({
                           type="button"
                           onClick={() => followCreator(v.userId)}
                           title={`متابعة ${v.displayName}`}
-                          className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-[#FF2D55] hover:bg-[#FB7185] text-white border-2 border-black flex items-center justify-center cursor-pointer hover:scale-110 transition-transform shadow-md"
+                          className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-white border-2 border-black flex items-center justify-center cursor-pointer transition-transform"
                         >
                           <Plus className="w-3 h-3" strokeWidth={3} />
                         </button>
                       )}
                     </div>
 
-                    <button type="button" onClick={() => toggleLike(v)} className="flex flex-col items-center gap-1 cursor-pointer">
+                    <button type="button" onClick={() => toggleLike(v)} className="flex flex-col items-center gap-1 cursor-pointer active:scale-95 transition-transform">
                       <Heart
-                        className={`w-7 h-7 ${v.likedByMe ? 'text-[#FF2D55] fill-current' : 'text-white'}`}
-                        strokeWidth={1.9}
+                        className={`w-7 h-7 ${v.likedByMe ? 'text-[#FE2C55] fill-current' : 'text-white'}`}
+                        strokeWidth={2}
                       />
-                      <span className="text-[11px] font-mono-num text-white">{compactNum(v.likesCount)}</span>
+                      <span className="text-[11.5px] font-semibold font-mono-num text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">{compactNum(v.likesCount)}</span>
                     </button>
 
-                    <button type="button" onClick={() => openComments(v)} className="flex flex-col items-center gap-1 cursor-pointer">
-                      <MessageCircle className="w-7 h-7 text-white" strokeWidth={1.9} />
-                      <span className="text-[11px] font-mono-num text-white">{compactNum(v.commentsCount)}</span>
+                    <button type="button" onClick={() => openComments(v)} className="flex flex-col items-center gap-1 cursor-pointer active:scale-95 transition-transform">
+                      <MessageCircle className="w-7 h-7 text-white" strokeWidth={2} />
+                      <span className="text-[11.5px] font-semibold font-mono-num text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">{compactNum(v.commentsCount)}</span>
                     </button>
 
-                    <button type="button" onClick={() => toggleSave(v)} className="flex flex-col items-center gap-1 cursor-pointer">
+                    <button type="button" onClick={() => toggleSave(v)} className="flex flex-col items-center gap-1 cursor-pointer active:scale-95 transition-transform">
                       <Bookmark
-                        className={`w-6 h-6 ${v.savedByMe ? 'text-[#FACC15] fill-current' : 'text-white'}`}
-                        strokeWidth={1.9}
+                        className={`w-7 h-7 ${v.savedByMe ? 'text-[#FACC15] fill-current' : 'text-white'}`}
+                        strokeWidth={2}
                       />
-                      <span className="text-[11px] font-mono-num text-white">{compactNum(v.savesCount)}</span>
+                      <span className="text-[11.5px] font-semibold font-mono-num text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">{compactNum(v.savesCount)}</span>
                     </button>
 
-                    {/* Unified Share + Report Icon (Opens Share Sheet with Social Apps + Report icon right beside them!) */}
                     <button
                       type="button"
                       onClick={() => openShareSheet(v)}
-                      title={v.userId !== user.id ? (lang === 'en' ? 'Share & Report' : 'مشاركة وإبلاغ') : (lang === 'en' ? 'Share' : 'مشاركة')}
-                      className="flex flex-col items-center gap-1 cursor-pointer"
+                      title={lang === 'en' ? 'Share' : 'مشاركة'}
+                      className="flex flex-col items-center gap-1 cursor-pointer active:scale-95 transition-transform"
                     >
-                      <span className="relative flex items-center justify-center">
-                        <Share2 className="w-6 h-6 text-white" strokeWidth={1.9} />
-                        {v.userId !== user.id && (
-                          <span className="absolute -bottom-1 -end-1.5 w-3.5 h-3.5 rounded-full bg-black/90 border border-white/25 flex items-center justify-center">
-                            <Flag className="w-2 h-2 text-[#FDA4AF]" strokeWidth={2.4} />
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-[11px] font-mono-num text-white">{compactNum(v.sharesCount)}</span>
+                      <Share2 className="w-7 h-7 text-white" strokeWidth={2} />
+                      <span className="text-[11.5px] font-semibold font-mono-num text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">{compactNum(v.sharesCount)}</span>
                     </button>
 
                     {v.userId === user.id && (
@@ -1214,12 +1381,12 @@ export function ShortVideosView({
                       />
                     )}
 
-                    <div className="w-9 h-9 rounded-xl bg-[#16161B] border border-white/20 flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-full bg-[#1C1D24] border border-white/25 flex items-center justify-center">
                       <Music2 className="w-4 h-4 text-white" />
                     </div>
                   </div>
 
-                  {/* Interactive Tactile 2026 Video Scrubber (Expands cleanly on touch/drag with floating timestamp!) */}
+                  {/* Always-Visible Advanced Video Progress Scrubber (Cleanly lifted ABOVE bottom dock & safe-area!) */}
                   {idx === activeIndex && (
                     <div
                       dir="ltr"
@@ -1249,10 +1416,15 @@ export function ShortVideosView({
                         setIsScrubbing(false);
                         setScrubHover(false);
                       }}
-                      className="absolute bottom-0 inset-x-0 z-30 h-7 flex items-end cursor-pointer touch-none select-none"
+                      className={`absolute inset-x-3 md:inset-x-4 z-30 h-9 flex items-center cursor-pointer touch-none select-none transition-all duration-200 md:bottom-2 ${
+                        bottomDockHidden
+                          ? 'bottom-[max(10px,calc(env(safe-area-inset-bottom)+6px))]'
+                          : 'bottom-[calc(70px+env(safe-area-inset-bottom))]'
+                      }`}
                     >
+                      {/* Floating Live Timestamp Preview Pill while scrubbing forward/backward */}
                       {isScrubbing && (
-                        <div className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/82 backdrop-blur-xl border border-white/15 text-[11px] font-mono-num text-white shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+                        <div className="pointer-events-none absolute -top-11 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-full bg-[#161823]/95 border border-white/15 text-[13px] font-mono-num text-white flex items-center gap-2 whitespace-nowrap">
                           <span className="font-bold text-white">{fmtSec(currentTime)}</span>
                           <span className="text-white/40">/</span>
                           <span className="text-white/75">{fmtSec(duration)}</span>
@@ -1261,17 +1433,19 @@ export function ShortVideosView({
 
                       <div
                         ref={scrubberBarRef}
-                        className={`relative w-full bg-white/20 transition-all duration-150 ${
-                          isScrubbing || scrubHover ? 'h-[6px]' : 'h-[2.5px]'
+                        className={`relative w-full rounded-full bg-white/30 transition-all duration-150 ${
+                          isScrubbing || scrubHover ? 'h-[8px]' : 'h-[4px]'
                         }`}
                       >
                         <div
                           style={{ width: `${progressPct}%` }}
-                          className="h-full bg-gradient-to-r from-[#FF2D55] via-[#FB7185] to-[#F59E0B] relative"
+                          className="h-full rounded-full bg-[#FE2C55] relative"
                         >
-                          {(isScrubbing || scrubHover) && (
-                            <span className="absolute -end-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-[0_0_12px_rgba(255,45,85,0.85)] border border-black/30 block" />
-                          )}
+                          <span
+                            className={`absolute -end-2 top-1/2 -translate-y-1/2 rounded-full bg-white border border-black/30 block transition-all duration-150 ${
+                              isScrubbing || scrubHover ? 'w-4 h-4' : 'w-2.5 h-2.5'
+                            }`}
+                          />
                         </div>
                       </div>
                     </div>
@@ -2044,133 +2218,297 @@ export function ShortVideosView({
       )}
       </div>
 
-      {/* 2026 Upload Pulse Modal with Automatic Thumbnail Generation Preview */}
+      {/* FULL-SCREEN 2-STEP TIKTOK CREATOR STUDIO (ZERO Bottom Popup Modal!) */}
       {uploadOpen && (
-        <StudioModalOverlay onClose={() => setUploadOpen(false)}>
-          <form onSubmit={publishPulse} className="p-5 space-y-3.5">
-            <div className="pb-3 border-b border-white/[0.08] flex items-center justify-between">
-              <span className="text-sm font-bold text-white">نشر نبض جديد</span>
-              <CloseOrbButton onClick={() => setUploadOpen(false)} />
-            </div>
+        <div className="fixed inset-0 z-[72] bg-[#0B0B0D] flex flex-col">
+          <input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime" onChange={handleVideoUploadFile} className="hidden" />
+          <input ref={posterFileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleManualPosterFile} className="hidden" />
 
-            {/* Auto-Generated Thumbnail Preview Card */}
-            {(uploadedPosterUrl || uploadedVideoUrl) && (
-              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-[#0B0B0F] border border-white/[0.09]">
-                <div className="w-16 h-24 rounded-xl overflow-hidden bg-black border border-white/[0.1] shrink-0 relative">
-                  {uploadedPosterUrl ? (
-                    <img src={uploadedPosterUrl} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <video src={uploadedVideoUrl || ''} muted className="w-full h-full object-cover" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0 space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#34D399]">
-                    <Check className="w-3.5 h-3.5" />
-                    <span>
-                      {generatingThumb
-                        ? 'جارٍ استخراج صورة الغلاف...'
-                        : uploadedPosterUrl
-                        ? 'تم توليد صورة الغلاف تلقائيًا'
-                        : 'تم إرفاق الفيديو'}
-                    </span>
+          {studioStep === 'capture' ? (
+            /* STEP 1: Full-Screen TikTok Camera + Gallery Studio */
+            <div className="relative flex-1 w-full max-w-[540px] mx-auto bg-black flex flex-col overflow-hidden">
+              {/* Live Camera Feed */}
+              <video
+                ref={studioVideoPreviewRef}
+                autoPlay
+                muted
+                playsInline
+                className={`absolute inset-0 w-full h-full object-cover ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''} ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
+              />
+
+              {/* Clean Fallback Canvas if Camera isn't active */}
+              {!cameraReady && (
+                <div className="absolute inset-0 bg-[#121212] flex flex-col items-center justify-center px-6 text-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-[#1C1D24] flex items-center justify-center text-white/80">
+                    <Camera className="w-8 h-8" strokeWidth={1.7} />
                   </div>
-                  <p className="text-[11px] text-[#8E8E93] leading-snug">
-                    ستظهر صورة الغلاف تلقائيًا في ملفك الشخصي وخلاصة نبض.
-                  </p>
+                  <div className="space-y-1.5 max-w-xs">
+                    <div className="text-base font-bold text-white">استوديو نشر فيديو جديد</div>
+                    <p className="text-xs text-[#9E9EA8] leading-relaxed">
+                      {cameraError || 'جارٍ تجهيز الكاميرا... أو يمكنك اختيار فيديو مباشرة من جهازك.'}
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => posterFileRef.current?.click()}
-                    className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[10.5px] text-white cursor-pointer transition-colors"
+                    onClick={() => fileRef.current?.click()}
+                    className="h-11 px-6 rounded-xl bg-[#FE2C55] hover:bg-[#EA284E] text-sm font-bold text-white flex items-center gap-2 cursor-pointer transition-colors"
                   >
-                    تغيير الغلاف يدويًا
+                    <Film className="w-4 h-4" />
+                    <span>اختيار فيديو من المعرض</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Top Bar: Close + Recording Timer + Flip Camera */}
+              <div
+                style={{ paddingTop: 'max(16px, calc(env(safe-area-inset-top) + 10px))' }}
+                className="relative z-20 px-4 pb-3 flex items-center justify-between"
+              >
+                <button
+                  type="button"
+                  onClick={closeCreatorStudio}
+                  aria-label="إغلاق"
+                  className="w-10 h-10 rounded-full bg-black/55 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                {isRecordingClip ? (
+                  <div className="px-3.5 py-1 rounded-full bg-[#FE2C55] text-xs font-bold font-mono-num text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                    <span>{fmtSec(recordElapsedSec)} / {fmtSec(studioDurationSec)}</span>
+                  </div>
+                ) : (
+                  <span className="text-sm font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                    إنشاء فيديو
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setCameraFacing(f => (f === 'user' ? 'environment' : 'user'))}
+                  aria-label="تبديل الكاميرا"
+                  className="w-10 h-10 rounded-full bg-black/55 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <RefreshCw className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1" />
+
+              {/* Bottom TikTok Creator Dock (Duration Selector + Shutter Circle + Gallery Picker) */}
+              <div
+                style={{ paddingBottom: 'max(28px, calc(env(safe-area-inset-bottom) + 18px))' }}
+                className="relative z-20 px-6 pt-6 bg-gradient-to-t from-black/90 via-black/45 to-transparent space-y-5"
+              >
+                {/* Duration Selector */}
+                <div className="flex items-center justify-center gap-6 text-xs font-bold">
+                  {([15, 60, 180] as const).map(sec => (
+                    <button
+                      key={sec}
+                      type="button"
+                      disabled={isRecordingClip}
+                      onClick={() => setStudioDurationSec(sec)}
+                      className={`pb-1 transition-colors cursor-pointer ${
+                        studioDurationSec === sec ? 'text-white border-b-2 border-[#FE2C55]' : 'text-white/55 hover:text-white/85'
+                      }`}
+                    >
+                      {sec === 180 ? '3m' : `${sec}s`}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Main Capture Controls Row */}
+                <div className="flex items-center justify-around">
+                  {/* Left: Quick Skip to Caption if User Already Uploaded */}
+                  <div className="w-16 flex flex-col items-center">
+                    {uploadedVideoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setStudioStep('publish')}
+                        className="flex flex-col items-center gap-1 text-white cursor-pointer"
+                      >
+                        <div className="w-11 h-11 rounded-xl bg-[#25F4EE] text-black flex items-center justify-center">
+                          <Check className="w-5 h-5" strokeWidth={2.5} />
+                        </div>
+                        <span className="text-[11px] font-semibold">التالي</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Center: Iconic TikTok Flat Shutter Ring (ZERO Neon Glow!) */}
+                  <button
+                    type="button"
+                    onClick={toggleStudioRecording}
+                    aria-label={isRecordingClip ? 'إيقاف التصوير' : 'بدء التصوير'}
+                    className="w-[78px] h-[78px] rounded-full border-[4px] border-white flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
+                  >
+                    <span
+                      className={`transition-all duration-150 bg-[#FE2C55] block ${
+                        isRecordingClip ? 'w-7 h-7 rounded-lg' : 'w-[62px] h-[62px] rounded-full'
+                      }`}
+                    />
+                  </button>
+
+                  {/* Right: Gallery Picker Square (Opens Device Videos Immediately) */}
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    className="w-16 flex flex-col items-center gap-1.5 cursor-pointer group"
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-[#1C1D24] border border-white/25 group-hover:border-white/60 flex items-center justify-center text-white transition-colors">
+                      <Film className="w-5 h-5" />
+                    </div>
+                    <span className="text-[11px] font-semibold text-white">رفع</span>
                   </button>
                 </div>
               </div>
-            )}
-
-            <input
-              value={newTitle}
-              onChange={e => setNewTitle(e.target.value)}
-              placeholder="عنوان الفيديو..."
-              className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
-            />
-            <input
-              value={newDesc}
-              onChange={e => setNewDesc(e.target.value)}
-              placeholder="وصف قصير (اختياري)..."
-              className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
-            />
-            <input
-              value={newTags}
-              onChange={e => setNewTags(e.target.value)}
-              placeholder="الوسوم (مثال: #LM #إبداع)..."
-              className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
-            />
-            <input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime" onChange={handleVideoUploadFile} className="hidden" />
-            <input ref={posterFileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleManualPosterFile} className="hidden" />
-            <div className="flex items-center justify-between pt-2">
-              <button
-                type="button"
-                disabled={uploadingVideo}
-                onClick={() => fileRef.current?.click()}
-                className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.1] text-xs font-medium text-[#E4E4E7] cursor-pointer transition-colors disabled:opacity-50"
-              >
-                {uploadingVideo ? 'جارٍ الفحص والرفع...' : uploadedVideoUrl ? 'تغيير الفيديو ✓' : 'اختيار فيديو (حتى 60MB)'}
-              </button>
-              <PublishActionButton
-                type="submit"
-                variant="rose"
-                disabled={!newTitle.trim() || uploadingVideo}
-                label="نشر النبض"
-              />
             </div>
-          </form>
-        </StudioModalOverlay>
+          ) : (
+            /* STEP 2: Full-Screen TikTok Post Screen (Unified Caption, NO Boxes, NO Character Limit Badges!) */
+            <form onSubmit={publishPulse} className="flex-1 w-full max-w-[640px] mx-auto bg-[#121212] flex flex-col">
+              {/* Top Header */}
+              <div
+                style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+                className="px-4 pb-3 border-b border-white/[0.08] flex items-center justify-between shrink-0"
+              >
+                <button
+                  type="button"
+                  onClick={() => setStudioStep('capture')}
+                  className="flex items-center gap-1.5 text-sm font-semibold text-[#F1F1F2] hover:text-white cursor-pointer"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                  <span>رجوع</span>
+                </button>
+                <span className="text-[15px] font-bold text-white">نشر</span>
+                <button
+                  type="button"
+                  onClick={closeCreatorStudio}
+                  aria-label="إغلاق"
+                  className="w-9 h-9 rounded-full hover:bg-white/[0.08] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Main Content: TikTok Split Preview + Unified Free-Form Caption */}
+              <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+                <div className="flex items-start gap-3.5 pb-5 border-b border-white/[0.08]">
+                  {/* Unified Caption Textarea (Serves as Title & Description — NO forced separate boxes or counters!) */}
+                  <textarea
+                    rows={5}
+                    value={newTitle}
+                    onChange={e => setNewTitle(e.target.value)}
+                    placeholder="اكتب وصفًا أو عنوانًا للفيديو... يمكنك إضافة #هاشتاج بحرية"
+                    className="flex-1 bg-transparent text-[15px] text-[#F1F1F2] placeholder:text-[#71717A] leading-relaxed outline-none resize-none"
+                  />
+
+                  {/* Compact Vertical Cover Thumbnail */}
+                  <div className="w-24 h-36 rounded-xl overflow-hidden bg-black border border-white/[0.1] shrink-0 relative flex items-center justify-center">
+                    {uploadedPosterUrl ? (
+                      <img src={uploadedPosterUrl} alt="" className="w-full h-full object-cover" />
+                    ) : localPreviewUrl || uploadedVideoUrl ? (
+                      <video src={localPreviewUrl || uploadedVideoUrl || ''} muted playsInline className="w-full h-full object-cover" />
+                    ) : (
+                      <Film className="w-6 h-6 text-[#71717A]" />
+                    )}
+
+                    {(uploadingVideo || generatingThumb) && (
+                      <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
+                        <span className="w-6 h-6 rounded-full border-2 border-white/25 border-t-[#FE2C55] animate-spin" />
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => posterFileRef.current?.click()}
+                      className="absolute inset-x-0 bottom-0 py-1.5 bg-black/75 text-[10.5px] font-semibold text-white text-center cursor-pointer"
+                    >
+                      تغيير الغلاف
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Hashtag Helper Chips + Swap Video */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {['#LM', '#نبض', '#ترند', '#يومي'].map(tag => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setNewTitle(prev => (prev.includes(tag) ? prev : `${prev.trim()} ${tag}`.trim()))}
+                      className="h-8 px-3 rounded-lg bg-[#1E1F28] hover:bg-[#272936] text-xs font-medium text-[#E4E4E7] flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Hash className="w-3 h-3 text-[#25F4EE]" />
+                      <span>{tag.slice(1)}</span>
+                    </button>
+                  ))}
+
+                  <button
+                    type="button"
+                    disabled={uploadingVideo}
+                    onClick={() => fileRef.current?.click()}
+                    className="ms-auto h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-[#D4D4D8] cursor-pointer transition-colors disabled:opacity-50"
+                  >
+                    {uploadingVideo ? 'جارٍ رفع الفيديو...' : 'تغيير الفيديو'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Bottom Action Bar (Flat Matte TikTok Red Publish Button — ZERO Glow!) */}
+              <div
+                style={{
+                  paddingBottom: 'calc(max(16px, env(safe-area-inset-bottom) + 12px) + var(--lm-kb-offset, 0px))',
+                }}
+                className="px-4 pt-3 border-t border-white/[0.08] flex items-center gap-3 shrink-0 transition-[padding-bottom] duration-150"
+              >
+                <button
+                  type="button"
+                  onClick={closeCreatorStudio}
+                  className="h-12 px-5 rounded-xl bg-[#1E1F28] hover:bg-[#272936] text-sm font-semibold text-[#D4D4D8] cursor-pointer transition-colors"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={(!newTitle.trim() && !uploadedVideoUrl) || uploadingVideo || publishingVideo}
+                  className="flex-1 h-12 rounded-xl bg-[#FE2C55] hover:bg-[#EA284E] disabled:opacity-45 text-sm font-bold text-white cursor-pointer transition-colors"
+                >
+                  {publishingVideo ? 'جارٍ النشر...' : uploadingVideo ? 'جارٍ تجهيز الفيديو...' : 'نشر'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
-      {/* 2026 Edit Own Pulse Video Modal */}
+      {/* 2026 Edit Own Pulse Video Modal (Unified Caption) */}
       {editingVideo && (
         <StudioModalOverlay onClose={() => setEditingVideo(null)}>
           <form onSubmit={saveEditedVideo}>
             <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-bold text-white">
-                <StylusEditIcon className="w-4 h-4 text-[#FBBF24]" />
-                <span>تعديل فيديو نبض</span>
+                <StylusEditIcon className="w-4 h-4 text-[#25F4EE]" />
+                <span>تعديل الفيديو</span>
               </div>
               <CloseOrbButton onClick={() => setEditingVideo(null)} />
             </div>
 
-            <div className="p-5 space-y-3.5">
-              <div>
-                <label className="text-[11px] font-medium text-[#A1A1AA] mb-1 block">عنوان الفيديو</label>
-                <input
-                  value={editTitle}
-                  onChange={e => setEditTitle(e.target.value)}
-                  className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
-                />
-              </div>
+            <div className="p-5 space-y-4">
+              <textarea
+                rows={4}
+                value={editTitle}
+                onChange={e => setEditTitle(e.target.value)}
+                placeholder="اكتب عنوان أو وصف الفيديو..."
+                className="w-full rounded-xl bg-[#121212] border border-white/[0.1] focus:border-[#FE2C55]/60 p-3.5 text-sm text-white outline-none resize-none transition-colors"
+              />
 
-              <div>
-                <label className="text-[11px] font-medium text-[#A1A1AA] mb-1 block">الوصف</label>
-                <textarea
-                  rows={3}
-                  value={editDesc}
-                  onChange={e => setEditDesc(e.target.value)}
-                  placeholder="أضف وصفًا قصيرًا..."
-                  className="w-full rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 p-3 text-xs text-white outline-none resize-none transition-colors"
-                />
-              </div>
+              <input
+                value={editTags}
+                onChange={e => setEditTags(e.target.value)}
+                placeholder="الوسوم (مثال: #LM #نبض)..."
+                className="w-full h-11 rounded-xl bg-[#121212] border border-white/[0.1] focus:border-[#FE2C55]/60 px-3.5 text-xs text-white outline-none transition-colors"
+              />
 
-              <div>
-                <label className="text-[11px] font-medium text-[#A1A1AA] mb-1 block">الوسوم</label>
-                <input
-                  value={editTags}
-                  onChange={e => setEditTags(e.target.value)}
-                  placeholder="#LM #إبداع"
-                  className="w-full h-11 rounded-2xl bg-[#0A0A0D] border border-white/[0.1] focus:border-[#FF2D55]/50 px-3.5 text-xs text-white outline-none transition-colors"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setEditingVideo(null)}

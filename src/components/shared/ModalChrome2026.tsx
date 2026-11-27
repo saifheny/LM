@@ -28,7 +28,7 @@ export function CloseOrbButton({
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`group relative ${dim} rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.15] hover:border-white/[0.32] text-[#D4D4D8] hover:text-white backdrop-blur-xl flex items-center justify-center cursor-pointer transition-colors shadow-[0_6px_18px_rgba(0,0,0,0.45)] shrink-0 ${className}`}
+      className={`group relative ${dim} rounded-full bg-white/[0.08] hover:bg-white/[0.16] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer transition-colors shrink-0 ${className}`}
     >
       <svg
         viewBox="0 0 20 20"
@@ -72,12 +72,12 @@ export function PublishActionButton({
 }) {
   const palette =
     variant === 'rose'
-      ? 'bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] text-white border-white/20 shadow-[0_10px_28px_rgba(255,45,85,0.3)]'
+      ? 'bg-[#FE2C55] hover:bg-[#E5254B] text-white border-transparent'
       : variant === 'live'
-        ? 'bg-gradient-to-tr from-[#EF4444] to-[#F97316] text-white border-white/20 shadow-[0_10px_28px_rgba(239,68,68,0.32)]'
+        ? 'bg-[#FE2C55] hover:bg-[#E5254B] text-white border-transparent'
         : variant === 'emerald'
-          ? 'bg-gradient-to-tr from-[#059669] to-[#34D399] text-black font-bold border-[#6EE7B7]/40 shadow-[0_10px_26px_rgba(16,185,129,0.28)]'
-          : 'bg-gradient-to-b from-white to-[#E4E4E7] text-black font-bold border-white/40 shadow-[0_10px_26px_rgba(255,255,255,0.16)]';
+          ? 'bg-[#10B981] hover:bg-[#059669] text-[#121212] font-bold border-transparent'
+          : 'bg-[#FE2C55] hover:bg-[#E5254B] text-white font-bold border-transparent';
 
   return (
     <motion.button
@@ -127,7 +127,7 @@ export function StudioModalOverlay({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.16 }}
       onClick={onClose}
-      className={`fixed inset-0 ${zClass} bg-[#060B12]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4`}
+      className={`fixed inset-0 ${zClass} bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4`}
     >
       <motion.div
         initial={{ opacity: 0, y: 20, scale: 0.97 }}
@@ -135,7 +135,7 @@ export function StudioModalOverlay({
         exit={{ opacity: 0, y: 14, scale: 0.97 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
         onClick={e => e.stopPropagation()}
-        className="relative w-full sm:max-w-[440px] rounded-t-[28px] sm:rounded-[28px] bg-[#16212E]/98 border-t sm:border border-[#94B3D6]/[0.18] shadow-[0_32px_90px_rgba(0,0,0,0.75)] overflow-hidden text-start"
+        className="relative w-full sm:max-w-[440px] rounded-t-[24px] sm:rounded-[24px] bg-[#1C1D24] border-t sm:border border-white/[0.1] overflow-hidden text-start"
       >
         <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
         {children}

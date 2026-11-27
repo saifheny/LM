@@ -200,7 +200,12 @@ class LiveBroadcastEngine {
     st.activeHighlight = next;
   }
 
-  addNormalComment(roomId: string, user: UserProfile, text: string) {
+  addNormalComment(
+    roomId: string,
+    user: UserProfile,
+    text: string,
+    replyTo?: { id?: string; name?: string; text?: string }
+  ) {
     const st = this.ensureRoom(roomId);
     if (st.bannedUsers.has(user.id)) {
       return { ok: false, error: 'غير مسموح بالتعليق في هذا البث.' };
@@ -219,6 +224,9 @@ class LiveBroadcastEngine {
       avatarColor: user.avatarColor,
       avatarInitials: user.avatarInitials,
       text: text.trim(),
+      replyToId: replyTo?.id ? String(replyTo.id).slice(0, 64) : undefined,
+      replyToName: replyTo?.name ? String(replyTo.name).trim().slice(0, 60) : undefined,
+      replyToText: replyTo?.text ? String(replyTo.text).trim().slice(0, 120) : undefined,
       createdAt: Date.now(),
     };
     st.recentMessages.push(msg);

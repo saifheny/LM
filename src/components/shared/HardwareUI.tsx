@@ -25,7 +25,7 @@ export function ChromeArrowButton({
       style={{ width: size, height: size }}
       className="chrome-rim-btn shrink-0 cursor-pointer disabled:opacity-35 disabled:pointer-events-none"
     >
-      <span className="chrome-rim-btn-inner text-[#A1A1AA] hover:text-white transition-colors">
+      <span className="chrome-rim-btn-inner text-white transition-colors">
         {icon || <ArrowUp style={{ width: size * 0.45, height: size * 0.45 }} strokeWidth={2} />}
       </span>
     </button>
@@ -96,12 +96,12 @@ export function ObsidianComposerPill({
   return (
     <form
       onSubmit={onSubmit}
-      className={`w-full min-h-[50px] rounded-[25px] ps-4 pe-1.5 py-1.5 flex gap-2.5 transition-all duration-200 border ${
+      className={`w-full min-h-[48px] rounded-[24px] ps-4 pe-1.5 py-1.5 flex gap-2 transition-colors duration-150 ${
         isGhostTransparent
-          ? 'bg-[#0E1621]/45 backdrop-blur-sm border-white/[0.2]'
+          ? 'bg-black/38 backdrop-blur-sm border border-white/[0.14]'
           : transparent
-            ? 'bg-[#17212B]/95 backdrop-blur-xl border-[#94B3D6]/[0.24] shadow-2xl'
-            : 'bg-[#17212B]/94 backdrop-blur-xl border-[#94B3D6]/[0.16] shadow-[0_8px_28px_rgba(4,10,18,0.42)]'
+            ? 'bg-[#1D1F28]/96 border border-white/[0.14]'
+            : 'bg-[#22242E] border border-white/[0.08]'
       } ${multiline ? 'items-end' : 'items-center'}`}
     >
       {extraStart && <div className="shrink-0 flex items-center">{extraStart}</div>}

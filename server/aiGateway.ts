@@ -42,7 +42,7 @@ export interface AiChatResponse {
   blocked?: boolean;
   needsApiKey?: boolean;
   missingProvider?: string;
-  blockCategory?: 'FINANCIAL_ISOLATION' | 'PRIVACY_CONSENT_REQUIRED';
+  blockCategory?: 'FINANCIAL_ISOLATION' | 'PRIVACY_CONSENT_REQUIRED' | 'CODING_RESTRICTED';
   reply: string;
   providerUsed: string;
   modelUsed: string;
@@ -65,18 +65,41 @@ const FINANCIAL_BLOCK_PATTERNS = [
   /execute\s.*(payment|transaction|transfer)/i,
 ];
 
+const CODING_BLOCK_PATTERNS = [
+  /(اكتب|اعمل|سوي|انشئ|اصنع|صمم|برمج|طور|ولد|عطني|اعطيني|هات|ابني|بني)\s+(لي\s+|لنا\s+)?(كود|اكواد|برمجه|برمجة|سكريبت|سكربت|دالة|فانكشن|خوارزمية|صفحة\s*html|موقع\s*html|استعلام\s*sql|كلاس|تطبيق\s+برمجي|بوت\s+برمجي)/i,
+  /(كود|اكواد|سكريبت|سكربت|برمجه|برمجة)\s*(html|css|js|javascript|typescript|python|java|c\+\+|c#|php|sql|react|node|بايثون|جافا|اتش\s*تي\s*ام\s*ال|سي\s*اس\s*اس|لصفحة|لموقع|لتطبيق|للعبة|لبوت)/i,
+  /(صحح|عدل|صلح|حل\s+خطا|اصلح|حول|ترجم)\s+(هذا\s+|لي\s+)?(الكود|الاكواد|السكريبت|السكربت|البرمجه|البرمجة|الدالة|الخطا\s+البرمجي)/i,
+  /(عايز|اريد|ابي|محتاج|ابغي|ممكن)\s+(كود|اكواد|سكريبت|سكربت|برمجه|برمجة|دالة\s+برمجية|صفحة\s*html)/i,
+  /(علمني\s+(ال)?برمجه|علمني\s+(ال)?برمجة|كيف\s+ابرمج|ازاي\s+ابرمج|كتابة\s+كود|كتابه\s+كود|انشاء\s+كود)/i,
+  /(write|create|generate|build|make|give\s+me|code|develop|implement|debug|fix|refactor|solve)\s+(a\s+|an\s+|me\s+a\s+|me\s+|some\s+|the\s+)?(source\s+code|code|script|program|function|class|component|algorithm|api\s+endpoint|backend|frontend|webpage|html|css|javascript|typescript|python|java|c\+\+|c#|php|ruby|rust|golang|sql\s+query|regex|bash\s+script|powershell)/i,
+  /\b(html|css|javascript|typescript|python|react|nodejs|node\.js|express|sql|c\+\+|c#|php|golang|rust|kotlin|swift|solidity)\b.*(code|script|example|snippet|function|component|query|loop|sort|program)/i,
+  /\b(code|script|snippet|function|query|program)\b.*\b(in|using|with)\s+(html|css|js|javascript|typescript|python|java|c\+\+|c#|php|sql|react|node|bash|powershell|ruby|go|rust)\b/i,
+  /```[\s\S]*(function\s|const\s|let\s|var\s|def\s|import\s|class\s|SELECT\s|<html|<div|<script|#include)/i,
+];
+
+function isCodingRequest(text: string): boolean {
+  const normalized = normalizeArabicForFilter(text);
+  for (const rx of CODING_BLOCK_PATTERNS) {
+    if (rx.test(normalized)) return true;
+  }
+  return false;
+}
+
 function normalizeArabicForFilter(text: string): string {
   return text
     .replace(/[\u064B-\u065F\u0670]/g, '')
     .replace(/[أإآ]/g, 'ا')
-    .replace(/ى/g, 'ي');
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه');
 }
 
-const LM_AI_SYSTEM_PROMPT = `You are a sharp, helpful AI assistant inside the LM platform.
-Rules:
-1. Never read private 1-on-1 chats unless the user explicitly shares a snippet; in group chats where the group admin enabled you as a member, use the provided recent group context naturally.
-2. You have zero financial authority — never transfer money, modify balances, or execute payments.
-3. Reply directly, clearly, and concisely in the same language the user writes in (Arabic or English).`;
+const LM_AI_SYSTEM_PROMPT = `You are a sharp, friendly everyday AI assistant inside the LM social platform.
+Strict Non-Negotiable Rules:
+1. STRICT NO-CODING POLICY: You are STRICTLY FORBIDDEN from writing, generating, creating, debugging, fixing, or outputting ANY programming code, source code, scripts, HTML, CSS, JavaScript, TypeScript, Python, SQL, C++, Java, shell commands, or code blocks anywhere on LM — under ALL circumstances, even if asked indirectly. If a user asks for programming or code, politely decline in the user's language and explain that LM AI is designed exclusively for everyday conversations, general life questions, and exploring content inside the LM platform.
+2. STRICT VIDEO/CONTENT SCOPING: When context is provided for a specific Pulse video or post (including its caption/title, creator, tags, and comments), answer STRICTLY about THAT exact video/post and its comments. Never mix in unrelated videos or invent details not present in the provided video details.
+3. PRIVACY: Never read private 1-on-1 chats unless the user explicitly shares a snippet; in group chats where the group admin enabled you as a member, use the provided recent group context naturally.
+4. ZERO FINANCIAL AUTHORITY: Never transfer money, modify balances, or execute payments.
+5. STYLE: Reply directly, clearly, naturally, and concisely in the same language the user writes in (Arabic or English).`;
 
 function logSecurity(userId: string, actionType: string, decision: 'ALLOWED' | 'BLOCKED', reason: string): string {
   const id = uuid();
@@ -250,6 +273,24 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         securityAuditId: auditId,
       };
     }
+  }
+
+  // 2. Platform-wide strict no-coding policy (LM AI focuses exclusively on daily conversations & platform content)
+  if (isCodingRequest(prompt)) {
+    const isEn = !/[\u0600-\u06FF]/.test(prompt);
+    const auditId = logSecurity(req.userId, 'CODING_REQUEST_BLOCKED', 'BLOCKED', `Blocked coding request: "${prompt.slice(0, 60)}"`);
+    return {
+      ok: false,
+      blocked: true,
+      blockCategory: 'CODING_RESTRICTED',
+      reply: isEn
+        ? 'I cannot write, generate, or debug programming code on LM. I am here to help with everyday conversations, general questions, and exploring posts and videos inside the platform.'
+        : 'لا يمكنني كتابة أو إنشاء أو تعديل الأكواد البرمجية على منصة LM. أنا هنا لمساعدتك في المحادثات اليومية، الأسئلة العامة، والاستفسار عن المحتوى والفيديوهات داخل المنصة فقط.',
+      providerUsed: 'LM',
+      modelUsed: 'guard',
+      latencyMs: Date.now() - start,
+      securityAuditId: auditId,
+    };
   }
 
   const config = loadProviderConfig();
@@ -476,7 +517,7 @@ export async function streamLmAi(
   const start = Date.now();
   const prompt = (req.prompt || '').trim();
 
-  // Enforce the same financial isolation guard before streaming
+  // Enforce financial isolation AND no-coding guards before streaming
   const normalizedPrompt = normalizeArabicForFilter(prompt);
   for (const rx of FINANCIAL_BLOCK_PATTERNS) {
     if (rx.test(normalizedPrompt)) {
@@ -484,6 +525,11 @@ export async function streamLmAi(
       onChunk(res.reply);
       return res;
     }
+  }
+  if (isCodingRequest(prompt)) {
+    const res = await runLmAi(req);
+    onChunk(res.reply);
+    return res;
   }
 
   const config = loadProviderConfig();

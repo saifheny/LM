@@ -448,13 +448,13 @@ export function AppShell({
   return (
     <div
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
-      className="h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-[#0E1621] text-[#EEF2F7] overflow-hidden flex select-none"
+      className="h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-[#121212] text-[#F1F1F2] overflow-hidden flex select-none"
     >
-      {/* DESKTOP / LAPTOP FLOATING COLLAPSIBLE SIDEBAR (Instant single-frame switch — ZERO reflow lag!) */}
+      {/* DESKTOP / LAPTOP CLEAN MATTE SIDEBAR (ZERO glow, ZERO floating clutter!) */}
       <aside
         style={{ contain: 'layout style' }}
-        className={`hidden md:flex flex-col justify-between shrink-0 my-2.5 ms-2.5 h-[calc(100%-20px)] rounded-[24px] bg-[#15202D]/95 backdrop-blur-xl border border-[#94B3D6]/[0.13] shadow-[0_14px_40px_rgba(4,10,18,0.48)] py-3.5 px-2 z-30 overflow-hidden ${
-          sidebarCollapsed ? 'w-[66px]' : 'w-[216px]'
+        className={`hidden md:flex flex-col justify-between shrink-0 h-full bg-[#161823] border-e border-white/[0.08] py-4 px-2.5 z-30 overflow-hidden ${
+          sidebarCollapsed ? 'w-[68px]' : 'w-[220px]'
         }`}
       >
         <div className="space-y-4">
@@ -621,7 +621,7 @@ export function AppShell({
         ref={mainRef}
         onScroll={handleMainScroll}
         className={`flex-1 min-w-0 h-full max-w-full relative overflow-x-hidden ${
-          activeTab === 'videos' || activeTab === 'live' ? 'bg-[#070B12]' : 'bg-[#0E1621]'
+          activeTab === 'videos' || activeTab === 'live' ? 'bg-black' : 'bg-[#121212]'
         } ${
           isFullHeightViewport
             ? 'overflow-hidden'
@@ -657,7 +657,7 @@ export function AppShell({
             exit={{ y: '110%', opacity: 0 }}
             transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             onClick={e => e.stopPropagation()}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-t-[24px] rounded-b-none bg-[#15202D]/96 backdrop-blur-xl border-t border-x border-[#94B3D6]/[0.15] px-2 pt-2 shadow-[0_-12px_34px_rgba(4,10,18,0.65)]"
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#121212]/97 border-t border-white/[0.08] px-2 pt-2"
           >
             <div className="flex items-center justify-around gap-0.5 max-w-full">
               {NAV_ITEMS.map(item => {
@@ -746,12 +746,12 @@ export function AppShell({
               exit={{ opacity: 0, y: 18 }}
               transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
               onClick={e => e.stopPropagation()}
-              className="md:hidden fixed inset-0 z-[65] h-[100dvh] bg-[#0E1621] text-[#EEF2F7] flex flex-col overflow-hidden text-start"
+              className="md:hidden fixed inset-0 z-[65] h-[100dvh] bg-[#121212] text-[#F1F1F2] flex flex-col overflow-hidden text-start"
             >
-              {/* Sculpted Top Navigation Header with Back Arrow Orb */}
+              {/* Clean Open Top Navigation Header */}
               <div
                 style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
-                className="px-4 pb-3.5 border-b border-[#94B3D6]/[0.12] flex items-center justify-between gap-3 shrink-0 bg-[#15202D]/95 backdrop-blur-xl"
+                className="px-4 pb-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3 shrink-0 bg-[#121212]"
               >
                 <div className="flex items-center gap-3">
                   <motion.button

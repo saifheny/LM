@@ -124,6 +124,9 @@ export interface LiveChatMessage {
   avatarColor: string;
   avatarInitials: string;
   text: string;
+  replyToId?: string;
+  replyToName?: string;
+  replyToText?: string;
   isGift?: boolean;
   giftName?: string;
   giftValueEgp?: number;

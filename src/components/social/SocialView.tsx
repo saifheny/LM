@@ -1029,7 +1029,7 @@ export function SocialView({
           setRecordingPostId(null);
         }
       }}
-      className="min-h-full w-full max-w-full overflow-x-hidden bg-[#0E1621] text-[#F2F2F5]"
+      className="min-h-full w-full max-w-full overflow-x-hidden bg-[#121212] text-[#F2F2F5]"
     >
       {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop, ZERO Sideways Overflow on Mobile!) */}
       <div className="max-w-[620px] w-full mx-auto min-h-full px-1 sm:px-0 overflow-x-hidden">
@@ -1058,7 +1058,7 @@ export function SocialView({
                     : 'border border-white/[0.22]'
                 }`}
               >
-                <div className="p-[2px] rounded-full bg-[#0E1621]">
+                <div className="p-[2px] rounded-full bg-[#121212]">
                   <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={50} />
                 </div>
               </button>
@@ -1089,7 +1089,7 @@ export function SocialView({
               className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
             >
               <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] group-hover:scale-[1.04] transition-transform">
-                <div className="p-[2px] rounded-full bg-[#0E1621]">
+                <div className="p-[2px] rounded-full bg-[#121212]">
                   <UserAvatar initials={st.avatarInitials} avatarUrl={st.avatarUrl} size={50} />
                 </div>
               </div>
@@ -1348,38 +1348,35 @@ export function SocialView({
               </div>
             )}
 
-            <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
+            <div className="mt-2 pt-2 border-t border-white/[0.07] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
                 <button
                   type="button"
-                  disabled={uploadedMediaUrls.length >= 4}
                   onClick={() => fileRef.current?.click()}
-                  title="إضافة صور (حتى 4)"
-                  className="w-8 h-8 rounded-full hover:bg-white/[0.06] text-[#8E8E93] hover:text-white disabled:opacity-35 flex items-center justify-center cursor-pointer"
+                  title="إضافة صور"
+                  className="w-9 h-9 rounded-full hover:bg-white/[0.08] text-[#A6A7B2] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                 >
-                  <ImageIcon className="w-4 h-4" strokeWidth={1.8} />
+                  <ImageIcon className="w-5 h-5" strokeWidth={1.85} />
                 </button>
-                {uploadedMediaUrls.length > 0 && (
-                  <span className="text-[11px] font-mono-num text-[#7A7A85]">{uploadedMediaUrls.length}/4</span>
-                )}
                 <button
                   type="button"
                   onClick={() => setMusicPickerOpen(true)}
-                  title="إضافة موسيقى مجانية مرخّصة للصورة"
-                  className={`w-8 h-8 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
-                    selectedMusic ? 'text-[#34D399] bg-[#10B981]/15' : 'text-[#8E8E93] hover:text-white'
+                  title="إضافة موسيقى"
+                  className={`w-9 h-9 rounded-full hover:bg-white/[0.08] flex items-center justify-center cursor-pointer transition-colors ${
+                    selectedMusic ? 'text-[#25F4EE]' : 'text-[#A6A7B2] hover:text-white'
                   }`}
                 >
-                  <Music className="w-4 h-4" strokeWidth={1.8} />
+                  <Music className="w-5 h-5" strokeWidth={1.85} />
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowPollBuilder(v => !v)}
-                  className={`w-8 h-8 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer ${
-                    showPollBuilder ? 'text-white bg-white/[0.08]' : 'text-[#8E8E93] hover:text-white'
+                  title="استطلاع"
+                  className={`w-9 h-9 rounded-full hover:bg-white/[0.08] flex items-center justify-center cursor-pointer transition-colors ${
+                    showPollBuilder ? 'text-[#FE2C55]' : 'text-[#A6A7B2] hover:text-white'
                   }`}
                 >
-                  <BarChart2 className="w-4 h-4" strokeWidth={1.8} />
+                  <BarChart2 className="w-5 h-5" strokeWidth={1.85} />
                 </button>
               </div>
 
@@ -1410,9 +1407,9 @@ export function SocialView({
           </div>
         )}
 
-        {/* Continuous Elevated Card Feed (Session-newly-published posts hoisted #1 right in front of you!) */}
+        {/* Open Borderless Feed (ZERO Post Boxes — Session-newly-published posts hoisted #1 right in front of you!) */}
         {(!activeHashtag || hashtagFilter !== 'videos') && (
-        <div className="px-2.5 sm:px-3 py-2.5 space-y-2.5">
+        <div className="divide-y divide-white/[0.08]">
           {(() => {
             let list = posts;
             if (sessionNewPostIds.length > 0) {
@@ -1439,7 +1436,7 @@ export function SocialView({
             const isPostSensitiveHidden = Boolean(post.isSensitive) && !revealedPosts[post.id];
 
             return (
-              <article key={post.id} className="lm-feed-card rounded-[20px] px-3.5 sm:px-4 py-3.5 max-w-full overflow-x-clip">
+              <article key={post.id} className="px-3.5 sm:px-4 py-4 max-w-full overflow-x-clip">
                 {/* X-Style Single-Action Repost Attribution Banner */}
                 {post.repostedBy && (
                   <button
@@ -1477,7 +1474,7 @@ export function SocialView({
                           : ''
                       }`}
                     >
-                      <div className={post.hasActiveStory ? 'p-[1.5px] rounded-full bg-[#0E1621]' : ''}>
+                      <div className={post.hasActiveStory ? 'p-[1.5px] rounded-full bg-[#121212]' : ''}>
                         <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
                       </div>
                     </button>
@@ -1544,12 +1541,12 @@ export function SocialView({
                             }
                           }}
                           title={lang === 'en' ? 'Share post' : 'مشاركة المنشور'}
-                          className="w-7 h-7 rounded-full text-[#8E8E93] hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                          className="w-9 h-9 rounded-full text-[#A6A7B2] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                         >
-                          <Share2 className="w-3.5 h-3.5" strokeWidth={1.85} />
+                          <Share2 className="w-[19px] h-[19px]" strokeWidth={1.9} />
                         </button>
 
-                        {post.userId === user.id ? (
+                        {post.userId === user.id && (
                           <ActionMenuOrb
                             editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
                             removeLabel={lang === 'en' ? 'Remove post' : 'إزالة المنشور'}
@@ -1558,57 +1555,6 @@ export function SocialView({
                               setEditingPostText(post.content);
                             }}
                             onRemove={() => deletePost(post.id)}
-                          />
-                        ) : (
-                          <ActionMenuOrb
-                            extraItems={[
-                              {
-                                id: 'save',
-                                label: post.savedByMe
-                                  ? lang === 'en'
-                                    ? 'Remove from saved'
-                                    : 'إزالة من المحفوظات'
-                                  : lang === 'en'
-                                    ? 'Save post'
-                                    : 'حفظ المنشور',
-                                icon: <Bookmark className={`w-3.5 h-3.5 ${post.savedByMe ? 'text-[#FACC15] fill-current' : 'text-[#D4D4D8]'}`} />,
-                                onClick: () => toggleSavePost(post.id),
-                              },
-                              {
-                                id: 'copy_link',
-                                label: lang === 'en' ? 'Copy link' : 'نسخ رابط المنشور',
-                                icon: <Link2 className="w-3.5 h-3.5 text-[#D4D4D8]" />,
-                                onClick: () => {
-                                  navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
-                                  apiPost<{ ok: boolean; sharesCount: number }>('/api/shares/track', {
-                                    targetType: 'post',
-                                    targetId: post.id,
-                                    userId: user.id,
-                                    channel: 'copy',
-                                  })
-                                    .then(r => {
-                                      if (r.ok) {
-                                        setPosts(prev =>
-                                          prev.map(p => (p.id === post.id ? { ...p, sharesCount: r.sharesCount } : p))
-                                        );
-                                      }
-                                    })
-                                    .catch(() => {});
-                                },
-                              },
-                              {
-                                id: 'report',
-                                label: lang === 'en' ? 'Report post' : 'إبلاغ عن المنشور',
-                                icon: <Flag className="w-3.5 h-3.5 text-[#FB7185]" />,
-                                danger: true,
-                                onClick: () =>
-                                  setReportRequest({
-                                    targetType: 'post',
-                                    targetId: post.id,
-                                    label: lang === 'en' ? 'this post' : 'هذا المنشور',
-                                  }),
-                              },
-                            ]}
                           />
                         )}
                       </div>
@@ -1835,9 +1781,9 @@ export function SocialView({
                       </div>
                     )}
 
-                    {/* Action Row — Clean Mobile-Safe Bottom Bar (Share & Report moved cleanly to TOP header corner!) */}
-                    <div className="mt-3 flex items-center justify-between gap-2 text-[#7A7A85] min-w-0">
-                      <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-wrap">
+                    {/* Action Row — Enlarged, Evenly Spaced, ZERO Overlap on Mobile or Laptop! */}
+                    <div className="mt-3.5 flex items-center justify-between gap-3 text-[#A6A7B2] min-w-0">
+                      <div className="flex items-center gap-5 sm:gap-6 min-w-0 flex-wrap">
                         <FacebookReactionButton
                           reactions={post.reactions}
                           myReaction={post.myReaction}
@@ -1852,11 +1798,11 @@ export function SocialView({
                             e.stopPropagation();
                             toggleThread(post.id);
                           }}
-                          className={`flex items-center gap-1.5 text-xs hover:text-white transition-colors cursor-pointer ${
+                          className={`flex items-center gap-2 text-[13px] hover:text-white transition-colors cursor-pointer py-1 ${
                             isThreadOpen ? 'text-white' : ''
                           }`}
                         >
-                          <MessageCircle className="w-4 h-4" strokeWidth={1.75} />
+                          <MessageCircle className="w-5 h-5" strokeWidth={1.85} />
                           <span className="font-mono-num">{formatCount(post.commentsCount)}</span>
                         </button>
 
@@ -1868,11 +1814,11 @@ export function SocialView({
                               setRepostMenuPostId(cur => (cur === post.id ? null : post.id))
                             }
                             title={lang === 'en' ? 'Repost or Quote' : 'إعادة نشر أو اقتباس'}
-                            className={`flex items-center gap-1.5 text-xs transition-colors cursor-pointer ${
-                              post.repostedByMe ? 'text-[#34D399] font-semibold' : 'hover:text-white'
+                            className={`flex items-center gap-2 text-[13px] transition-colors cursor-pointer py-1 ${
+                              post.repostedByMe ? 'text-[#25F4EE] font-semibold' : 'hover:text-white'
                             }`}
                           >
-                            <Repeat2 className="w-4 h-4" strokeWidth={post.repostedByMe ? 2.2 : 1.75} />
+                            <Repeat2 className="w-5 h-5" strokeWidth={post.repostedByMe ? 2.2 : 1.85} />
                             <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
                           </button>
 
@@ -1924,11 +1870,11 @@ export function SocialView({
                           type="button"
                           onClick={() => toggleSavePost(post.id)}
                           title={post.savedByMe ? (lang === 'en' ? 'Unsave' : 'إزالة من المحفوظات') : lang === 'en' ? 'Save post' : 'حفظ المنشور'}
-                          className={`w-7 h-7 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
+                          className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
                             post.savedByMe ? 'text-[#FACC15]' : 'hover:text-white'
                           }`}
                         >
-                          <Bookmark className={`w-4 h-4 ${post.savedByMe ? 'fill-current' : ''}`} strokeWidth={1.75} />
+                          <Bookmark className={`w-5 h-5 ${post.savedByMe ? 'fill-current' : ''}`} strokeWidth={1.85} />
                         </button>
                       </div>
                     </div>
@@ -2424,12 +2370,12 @@ export function SocialView({
         return (
           <div
             onClick={e => e.stopPropagation()}
-            className="fixed inset-0 z-[55] bg-[#0E1621] text-[#EEF2F7] flex flex-col overflow-hidden"
+            className="fixed inset-0 z-[55] bg-[#121212] text-[#EEF2F7] flex flex-col overflow-hidden"
           >
-            {/* Sticky Facebook-Style Top Navigation Bar */}
+            {/* Open Borderless Top Navigation Bar (ZERO Boxed Containers!) */}
             <header
               style={{ paddingTop: 'max(12px, calc(env(safe-area-inset-top) + 6px))' }}
-              className="shrink-0 bg-[#15202D]/95 backdrop-blur-xl border-b border-[#94B3D6]/[0.12] px-3.5 sm:px-5 pb-3"
+              className="shrink-0 bg-[#121212] border-b border-white/[0.08] px-3.5 sm:px-5 pb-3"
             >
               <div className="max-w-[660px] mx-auto flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
@@ -2437,12 +2383,12 @@ export function SocialView({
                     type="button"
                     onClick={closePostDetail}
                     aria-label={t(lang, 'back')}
-                    className="w-9 h-9 rounded-full bg-[#1E2C3C] hover:bg-[#27394D] border border-[#94B3D6]/[0.16] text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                    className="w-10 h-10 rounded-full text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
                   >
-                    <BackArrow className="w-4 h-4" />
+                    <BackArrow className="w-5 h-5" />
                   </button>
                   <div className="min-w-0">
-                    <div className="text-[14.5px] font-bold text-white truncate">
+                    <div className="text-[15px] font-bold text-white truncate">
                       {dPost
                         ? lang === 'en'
                           ? `${dPost.displayName}'s Post`
@@ -2452,7 +2398,7 @@ export function SocialView({
                           : 'المنشور'}
                     </div>
                     {dPost && (
-                      <div className="text-[11px] text-[#8DA2BC] font-mono-num truncate">
+                      <div className="text-[11.5px] text-[#A6A7B2] font-mono-num truncate">
                         @{dPost.username} · {dPost.createdAt}
                       </div>
                     )}
@@ -2479,25 +2425,25 @@ export function SocialView({
                       })
                     }
                     title={lang === 'en' ? 'Share' : 'مشاركة'}
-                    className="w-9 h-9 rounded-full bg-[#1E2C3C] hover:bg-[#27394D] border border-[#94B3D6]/[0.16] text-[#D7E3F0] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                    className="w-10 h-10 rounded-full text-[#D4D4D8] hover:text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
                   >
-                    <Share2 className="w-4 h-4" />
+                    <Share2 className="w-5 h-5" />
                   </button>
                 )}
               </div>
             </header>
 
-            {/* Scrollable Stage: FULL POST ON TOP + ALL COMMENTS DIRECTLY BELOW */}
-            <div className="flex-1 overflow-y-auto px-3 sm:px-4 pt-3.5 pb-32">
+            {/* Scrollable Stage: OPEN BORDERLESS POST ON TOP + OPEN BORDERLESS COMMENTS BELOW */}
+            <div className="flex-1 overflow-y-auto px-3.5 sm:px-5 pt-4 pb-28">
               <div className="max-w-[660px] mx-auto space-y-4">
                 {!dPost ? (
-                  <div className="lm-feed-card rounded-[20px] p-5">
+                  <div className="py-6">
                     <CommentListSkeleton rows={3} />
                   </div>
                 ) : (
                   <>
-                    {/* TOP SECTION: FULL POST CARD */}
-                    <article className="lm-feed-card rounded-[22px] p-4 sm:p-5 space-y-3.5">
+                    {/* TOP SECTION: OPEN FULL POST (ZERO Outer Card Box!) */}
+                    <article className="pb-4 border-b border-white/[0.08] space-y-3.5">
                       <div className="flex items-center justify-between gap-2">
                         <button
                           type="button"
@@ -2690,15 +2636,15 @@ export function SocialView({
                       </div>
                     </div>
 
-                    {/* ALL THREADED COMMENTS & NESTED REPLIES BELOW THE POST */}
-                    <div className="space-y-3">
+                    {/* ALL THREADED COMMENTS & NESTED REPLIES — COMPLETELY OPEN BORDERLESS! */}
+                    <div className="divide-y divide-white/[0.06]">
                       {loadingCommentsByPost[dPost.id] ? (
                         <CommentListSkeleton rows={3} />
                       ) : dRootComments.length === 0 ? (
-                        <div className="rounded-[20px] bg-[#15202D]/80 border border-[#94B3D6]/[0.1] p-6">
+                        <div className="py-8">
                           <EmptyState2026
                             compact
-                            icon={<MessageCircle className="w-4 h-4" />}
+                            icon={<MessageCircle className="w-5 h-5" />}
                             title={lang === 'en' ? 'No comments yet' : 'لا توجد تعليقات بعد'}
                             subtitle={lang === 'en' ? 'Be the first to share your thoughts below.' : 'كن أول من يضيف تعليقًا في الأسفل.'}
                           />
@@ -2707,10 +2653,10 @@ export function SocialView({
                         dRootComments.map(c => {
                           const replies = getDReplies(c.id);
                           return (
-                            <div key={c.id} className="space-y-2.5">
-                              <div className="flex gap-2.5 items-start">
+                            <div key={c.id} className="py-3.5 space-y-2.5">
+                              <div className="flex gap-3 items-start">
                                 {c.isAi ? (
-                                  <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={32} />
+                                  <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={34} />
                                 ) : (
                                   <button
                                     type="button"
@@ -2720,18 +2666,18 @@ export function SocialView({
                                     }}
                                     className="shrink-0 cursor-pointer hover:opacity-85"
                                   >
-                                    <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={32} />
+                                    <UserAvatar initials={c.avatarInitials} avatarUrl={c.avatarUrl} size={34} />
                                   </button>
                                 )}
 
                                 <div className="flex-1 min-w-0">
-                                  <div className="rounded-2xl bg-[#17212B] border border-[#94B3D6]/[0.1] px-3.5 py-2.5">
+                                  <div>
                                     <div className="flex items-center gap-1.5 text-xs flex-wrap mb-1">
                                       <span className="font-bold text-white">{c.displayName}</span>
                                       {c.verified && <VerifiedIcon />}
                                       {c.isAi && <AiSummonBadge label="LM AI" compact />}
                                       {!c.isAi && c.aiSummoned && <AiSummonBadge label="AI" compact />}
-                                      <span className="text-[11px] text-[#8DA2BC]">· {c.createdAt}</span>
+                                      <span className="text-[11px] text-[#A6A7B2]">· {c.createdAt}</span>
                                     </div>
 
                                     <SensitiveCommentShield
@@ -2866,17 +2812,17 @@ export function SocialView({
                                   </div>
 
                                   {replies.length > 0 && (
-                                    <div className="mt-2.5 ms-2 ps-3 border-s-2 border-[#94B3D6]/[0.16] space-y-2">
+                                    <div className="mt-2.5 ms-2 ps-3 border-s border-white/[0.12] space-y-2.5">
                                       {replies.map(rep => (
-                                        <div key={rep.id} className="flex gap-2 items-start">
+                                        <div key={rep.id} className="flex gap-2.5 items-start">
                                           <UserAvatar initials={rep.avatarInitials} avatarUrl={rep.avatarUrl} size={26} />
                                           <div className="flex-1 min-w-0">
-                                            <div className="rounded-2xl bg-[#141E2B] border border-[#94B3D6]/[0.09] px-3 py-2">
+                                            <div>
                                               <div className="flex items-center gap-1.5 text-[11.5px] flex-wrap mb-0.5">
                                                 <span className="font-bold text-white">{rep.displayName}</span>
                                                 {rep.verified && <VerifiedIcon />}
                                                 {rep.isAi && <AiSummonBadge label="LM AI" compact />}
-                                                <span className="text-[10.5px] text-[#8DA2BC]">· {rep.createdAt}</span>
+                                                <span className="text-[10.5px] text-[#A6A7B2]">· {rep.createdAt}</span>
                                               </div>
                                               {rep.audioUrl ? (
                                                 <SmartVoicePill
@@ -2941,13 +2887,13 @@ export function SocialView({
               </div>
             </div>
 
-            {/* Sticky Bottom Comment Composer */}
+            {/* Borderless Floating Comment Composer — ONLY input pill lifts cleanly above mobile keyboard! */}
             {dPost && (
               <div
-                style={{ paddingBottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
-                className="shrink-0 bg-[#15202D]/95 backdrop-blur-xl border-t border-[#94B3D6]/[0.14] px-3 sm:px-4 pt-2.5"
+                style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom) + 6px) + var(--lm-kb-offset, 0px))' }}
+                className="pointer-events-none fixed inset-x-3 sm:inset-x-4 z-[58] transition-[bottom] duration-150"
               >
-                <div className="max-w-[660px] mx-auto space-y-2">
+                <div className="pointer-events-auto max-w-[660px] mx-auto space-y-2">
                   {replyParentByPost[dPost.id] && (
                     <div className="w-fit max-w-[300px] rounded-2xl bg-[#1D2C3D] border border-[#94B3D6]/[0.18] px-3 py-1.5 flex items-center gap-2.5">
                       <span className="w-[2.5px] self-stretch rounded-full bg-[#7C5CFF]" />
@@ -3025,48 +2971,67 @@ export function SocialView({
         );
       })()}
 
-      {/* FULL-PAGE EXPANDED COMPOSER (Keeps Typed Text + Bottom 1-4 Photos Shelf!) */}
+      {/* FULL-PAGE EXPANDED COMPOSER (ZERO Glowing Buttons, ZERO Bottom Container, ZERO 4/4 or Char Counters!) */}
       {composerExpanded && (
         <form
           onSubmit={submitPost}
-          className="fixed inset-0 z-50 bg-[#0E1621] flex flex-col justify-between"
+          className="fixed inset-0 z-50 bg-[#121212] flex flex-col justify-between"
         >
-          {/* Top Bar */}
-          <div className="px-5 py-4 border-b border-white/[0.07] flex items-center justify-between max-w-[780px] w-full mx-auto">
+          {/* Open Clean Top Bar */}
+          <div
+            style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+            className="px-4 sm:px-5 pb-3.5 border-b border-white/[0.08] flex items-center justify-between max-w-[780px] w-full mx-auto"
+          >
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setComposerExpanded(false)}
                 title="تصغير"
-                className="w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer"
+                className="w-9 h-9 rounded-full text-[#D4D4D8] hover:text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer transition-colors"
               >
-                <Minimize2 className="w-4 h-4" />
+                <Minimize2 className="w-5 h-5" />
               </button>
-              <div className="flex items-center gap-2">
-                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={32} />
+              <div className="flex items-center gap-2.5">
+                <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={34} />
                 <span className="text-sm font-semibold text-white">{user.displayName}</span>
               </div>
             </div>
 
-            <PublishActionButton
+            <button
               type="submit"
-              variant="luminous"
-              loading={publishing}
-              disabled={!draft.trim() && uploadedMediaUrls.length === 0}
-              label="نشر المنشور"
-              loadingLabel="جارٍ النشر..."
-            />
+              disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0)}
+              className="h-9 px-5 rounded-full bg-[#FE2C55] hover:bg-[#E5254B] text-white text-xs font-bold cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+            >
+              {publishing ? 'جارٍ النشر...' : 'نشر'}
+            </button>
           </div>
 
           {/* Spacious Full-Height Writing Area */}
-          <div className="flex-1 overflow-y-auto px-5 py-6 max-w-[780px] w-full mx-auto">
+          <div className="flex-1 overflow-y-auto px-4 sm:px-5 pt-5 pb-28 max-w-[780px] w-full mx-auto">
             <textarea
               autoFocus
               value={draft}
               onChange={e => setDraft(e.target.value)}
               placeholder={lang === 'ar' ? 'اكتب فكرتك بحرية...' : 'Write freely...'}
-              className="w-full min-h-[260px] bg-transparent resize-none text-[18px] leading-[1.8] text-[#F2F2F5] placeholder:text-[#585860] outline-none"
+              className="w-full min-h-[240px] bg-transparent resize-none text-[18px] leading-[1.8] text-[#F1F1F2] placeholder:text-[#6E707D] outline-none"
             />
+
+            {uploadedMediaUrls.length > 0 && (
+              <div className="mt-4 flex items-center gap-2.5 overflow-x-auto no-scrollbar">
+                {uploadedMediaUrls.map((url, idx) => (
+                  <div key={idx} className="relative w-24 h-24 rounded-2xl overflow-hidden shrink-0">
+                    <img src={url} alt="" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removeUploadedImg(idx)}
+                      className="absolute top-1 end-1 w-6 h-6 rounded-full bg-black/75 text-white flex items-center justify-center cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {showPollBuilder && (
               <div className="mt-4 pt-4 border-t border-white/[0.08] space-y-2.5 max-w-[520px]">
@@ -3074,7 +3039,7 @@ export function SocialView({
                   value={pollQuestion}
                   onChange={e => setPollQuestion(e.target.value)}
                   placeholder="سؤال الاستطلاع..."
-                  className="w-full h-10 rounded-xl bg-[#131318] border border-white/[0.1] px-3.5 text-sm text-white outline-none"
+                  className="w-full h-10 rounded-xl bg-[#1E1F26] px-3.5 text-sm text-white outline-none"
                 />
                 {pollOpts.map((opt, idx) => (
                   <input
@@ -3086,14 +3051,14 @@ export function SocialView({
                       setPollOpts(next);
                     }}
                     placeholder={`الخيار ${idx + 1}`}
-                    className="w-full h-9 rounded-xl bg-[#131318] border border-white/[0.08] px-3.5 text-xs text-white outline-none"
+                    className="w-full h-9 rounded-xl bg-[#1E1F26] px-3.5 text-xs text-white outline-none"
                   />
                 ))}
                 {pollOpts.length < 4 && (
                   <button
                     type="button"
                     onClick={() => setPollOpts([...pollOpts, ''])}
-                    className="text-xs text-[#8E8E93] hover:text-white cursor-pointer"
+                    className="text-xs text-[#A6A7B2] hover:text-white cursor-pointer"
                   >
                     + خيار إضافي
                   </button>
@@ -3102,73 +3067,44 @@ export function SocialView({
             )}
           </div>
 
-          {/* Bottom Attached Media Tray (Up to 4 Images + Add More + Poll Toggle) */}
-          <div className="border-t border-white/[0.08] bg-[#0D0D11] px-5 py-4">
-            <div className="max-w-[780px] mx-auto space-y-3">
-              {uploadedMediaUrls.length > 0 && (
-                <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar">
-                  {uploadedMediaUrls.map((url, idx) => (
-                    <div key={idx} className="relative w-24 h-24 rounded-2xl overflow-hidden border border-white/[0.12] shrink-0">
-                      <img src={url} alt="" className="w-full h-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => removeUploadedImg(idx)}
-                        className="absolute top-1 end-1 w-5 h-5 rounded-full bg-black/80 text-white flex items-center justify-center cursor-pointer"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  {uploadedMediaUrls.length < 4 && (
-                    <button
-                      type="button"
-                      onClick={() => fileRef.current?.click()}
-                      className="w-24 h-24 rounded-2xl border border-dashed border-white/[0.18] hover:border-white/40 text-[#8E8E93] hover:text-white flex flex-col items-center justify-center gap-1 shrink-0 cursor-pointer transition-colors"
-                    >
-                      <Plus className="w-5 h-5" />
-                      <span className="text-[10.5px] font-mono-num">{uploadedMediaUrls.length}/4</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={uploadedMediaUrls.length >= 4}
-                    onClick={() => fileRef.current?.click()}
-                    className="px-3.5 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-35 text-xs text-[#E4E4E7] flex items-center gap-2 cursor-pointer"
-                  >
-                    <ImageIcon className="w-4 h-4" />
-                    <span>صور ({uploadedMediaUrls.length}/4)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMusicPickerOpen(true)}
-                    className={`px-3.5 py-2 rounded-full text-xs flex items-center gap-2 cursor-pointer ${
-                      selectedMusic
-                        ? 'bg-[#10B981]/20 border border-[#34D399]/40 text-[#6EE7B7] font-semibold'
-                        : 'bg-white/[0.06] hover:bg-white/[0.12] text-[#E4E4E7]'
-                    }`}
-                  >
-                    <Music className="w-4 h-4" />
-                    <span>{selectedMusic ? selectedMusic.title : 'موسيقى'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowPollBuilder(v => !v)}
-                    className={`px-3.5 py-2 rounded-full text-xs flex items-center gap-2 cursor-pointer ${
-                      showPollBuilder ? 'bg-white text-black font-semibold' : 'bg-white/[0.06] hover:bg-white/[0.12] text-[#E4E4E7]'
-                    }`}
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                    <span>استطلاع</span>
-                  </button>
-                </div>
-
-                <span className="text-[11px] font-mono-num text-[#7A7A85]">{draft.length} حرف</span>
-              </div>
+          {/* Floating Borderless Icon Tools Lifting Cleanly Above Keyboard (ZERO Container Box, ZERO 4/4 or Char Counters!) */}
+          <div
+            style={{ bottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
+            className="fixed inset-x-4 z-50 transition-[bottom] duration-150"
+          >
+            <div className="max-w-[780px] mx-auto flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                title="إضافة صور"
+                className="w-10 h-10 rounded-full text-[#D4D4D8] hover:text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <ImageIcon className="w-5 h-5" strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setMusicPickerOpen(true)}
+                title={selectedMusic ? selectedMusic.title : 'إضافة موسيقى'}
+                className={`w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  selectedMusic
+                    ? 'text-[#25F4EE] bg-[#25F4EE]/12'
+                    : 'text-[#D4D4D8] hover:text-white hover:bg-white/[0.08]'
+                }`}
+              >
+                <Music className="w-5 h-5" strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPollBuilder(v => !v)}
+                title="استطلاع"
+                className={`w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  showPollBuilder
+                    ? 'text-[#FE2C55] bg-[#FE2C55]/15'
+                    : 'text-[#D4D4D8] hover:text-white hover:bg-white/[0.08]'
+                }`}
+              >
+                <BarChart2 className="w-5 h-5" strokeWidth={1.9} />
+              </button>
             </div>
           </div>
         </form>

@@ -7,8 +7,6 @@ import {
   ChevronRight,
   Copy,
   Check,
-  ThumbsUp,
-  ThumbsDown,
   RotateCcw,
   Plus,
   KeyRound,
@@ -26,6 +24,7 @@ import { ObsidianComposerPill, ChromeArrowButton } from '../shared/HardwareUI';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { MARKDOWN_LINK_COMPONENTS, RichMessageText } from '../shared/LmBrandMark';
 import { QuickRemovePill } from '../shared/ActionOrb2026';
+import { FacebookReactionButton } from '../shared/TelegramReactions';
 import { CloseOrbButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
@@ -622,8 +621,30 @@ export function AiView({ user, lang }: AiViewProps) {
     setTimeout(() => setCopiedId(null), 1500);
   }
 
-  function toggleFeedback(id: string, val: 'up' | 'down') {
-    setTurns(prev => prev.map(t => (t.id === id ? { ...t, feedback: t.feedback === val ? null : val } : t)));
+  const [aiReactions, setAiReactions] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('lm_ai_reactions');
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  function reactToAiTurn(turnId: string, reactionId: string) {
+    setAiReactions(prev => {
+      const next = { ...prev };
+      if (next[turnId] === reactionId) {
+        delete next[turnId];
+      } else {
+        next[turnId] = reactionId;
+      }
+      try {
+        localStorage.setItem('lm_ai_reactions', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
   }
 
   function regenerateFrom(aiIdx: number) {
@@ -655,7 +676,7 @@ export function AiView({ user, lang }: AiViewProps) {
         setComposerFocused(false);
         setMobileNavExpanded(false);
       }}
-      className="h-full w-full bg-[#0E1621] text-[#F2F2F5] relative flex flex-col overflow-hidden"
+      className="h-full w-full bg-[#121212] text-[#F2F2F5] relative flex flex-col overflow-hidden"
     >
       {/* FLOATING COMPACT MODEL PILL + SAVED HISTORY TRIGGER (Zero Top Header Bar!) */}
       <div
@@ -786,7 +807,7 @@ export function AiView({ user, lang }: AiViewProps) {
 
                   {browsingListRaw.length > 6 && (
                     <div className="px-1.5">
-                      <div className="h-8 rounded-xl bg-[#0E1621] border border-white/[0.08] px-2.5 flex items-center gap-1.5">
+                      <div className="h-8 rounded-xl bg-[#121212] border border-white/[0.08] px-2.5 flex items-center gap-1.5">
                         <Search className="w-3 h-3 text-[#7A7A85]" />
                         <input
                           value={modelSearch}
@@ -1154,49 +1175,42 @@ export function AiView({ user, lang }: AiViewProps) {
                         </button>
                       )}
 
-                      <div className="flex items-center gap-1 text-[#7A7A85] pt-0.5">
+                      <div className="flex items-center gap-2.5 text-[#8E8E93] pt-1 flex-wrap">
+                        {(() => {
+                          const myRx = aiReactions[t.id] || null;
+                          const rxCounts: Record<string, number> = myRx ? { [myRx]: 1 } : {};
+                          return (
+                            <FacebookReactionButton
+                              compact
+                              reactions={rxCounts}
+                              myReaction={myRx}
+                              totalCount={myRx ? 1 : 0}
+                              onReact={rxId => reactToAiTurn(t.id, rxId)}
+                              lang={lang}
+                            />
+                          );
+                        })()}
+
                         <button
                           type="button"
                           onClick={() => handleCopy(t.id, t.content)}
                           title="نسخ"
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                          className="w-8 h-8 rounded-full hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                         >
-                          {copiedId === t.id ? <Check className="w-3.5 h-3.5 text-[#22C55E]" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => toggleFeedback(t.id, 'up')}
-                          title="إعجاب"
-                          className={`w-7 h-7 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
-                            t.feedback === 'up' ? 'text-white bg-white/[0.1]' : 'hover:text-white'
-                          }`}
-                        >
-                          <ThumbsUp className="w-3.5 h-3.5" />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => toggleFeedback(t.id, 'down')}
-                          title="عدم إعجاب"
-                          className={`w-7 h-7 rounded-full hover:bg-white/[0.06] flex items-center justify-center cursor-pointer transition-colors ${
-                            t.feedback === 'down' ? 'text-[#EF4444] bg-white/[0.08]' : 'hover:text-white'
-                          }`}
-                        >
-                          <ThumbsDown className="w-3.5 h-3.5" />
+                          {copiedId === t.id ? <Check className="w-4 h-4 text-[#22C55E]" /> : <Copy className="w-4 h-4" />}
                         </button>
 
                         <button
                           type="button"
                           onClick={() => regenerateFrom(idx)}
                           title="إعادة التوليد"
-                          className="w-7 h-7 rounded-full hover:bg-white/[0.06] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                          className="w-8 h-8 rounded-full hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                         >
-                          <RotateCcw className="w-3.5 h-3.5" />
+                          <RotateCcw className="w-4 h-4" />
                         </button>
 
                         {t.modelLabel && (
-                          <span className="ms-2 text-[10.5px] font-mono-num text-[#585860]">{t.modelLabel}</span>
+                          <span className="ms-1 text-[11px] font-mono-num text-[#71717A]">{t.modelLabel}</span>
                         )}
                       </div>
                     </div>
@@ -1268,7 +1282,7 @@ export function AiView({ user, lang }: AiViewProps) {
                     e.preventDefault();
                     sendPrompt(prompt);
                   }}
-                  className="w-full rounded-[26px] bg-[#14141B]/95 backdrop-blur-2xl border border-white/[0.12] focus-within:border-white/[0.24] shadow-[0_18px_52px_rgba(0,0,0,0.65)] px-4 pt-3 pb-2.5 transition-colors"
+                  className="w-full rounded-[24px] bg-[#1C1D24] border border-white/[0.1] focus-within:border-white/[0.22] px-4 pt-3 pb-2.5 transition-colors"
                 >
                   <textarea
                     ref={desktopTaRef}
@@ -1391,7 +1405,7 @@ export function AiView({ user, lang }: AiViewProps) {
                 value={apiKeyDraft}
                 onChange={e => setApiKeyDraft(e.target.value)}
                 placeholder={setupCompany.placeholder}
-                className="flex-1 h-11 rounded-full bg-[#0E1621] border border-white/[0.12] px-4 text-xs font-mono-num text-white placeholder:text-[#585860] outline-none focus:border-white/30"
+                className="flex-1 h-11 rounded-full bg-[#121212] border border-white/[0.12] px-4 text-xs font-mono-num text-white placeholder:text-[#585860] outline-none focus:border-white/30"
               />
               <ChromeArrowButton type="submit" disabled={!apiKeyDraft.trim()} size={42} />
             </div>

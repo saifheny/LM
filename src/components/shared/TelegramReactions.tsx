@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ThumbsUp } from 'lucide-react';
 
@@ -516,20 +516,35 @@ export function FacebookReactionButton({
   totalCount,
   onReact,
   lang = 'ar',
+  compact = false,
 }: {
   reactions?: Record<string, number>;
   myReaction?: string | null;
   totalCount: number;
   onReact: (reactionId: string) => void;
   lang?: 'ar' | 'en';
+  compact?: boolean;
 }) {
   const [dockOpen, setDockOpen] = useState(false);
   const [bursts, setBursts] = useState<BurstEvent[]>([]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const holdTimerRef = useRef<number | null>(null);
   const longPressedRef = useRef(false);
 
   const activeDef = myReaction ? resolveReaction(myReaction) : null;
+
+  // Keep mobile long-press reaction dock open cleanly until user taps a reaction or taps outside!
+  useEffect(() => {
+    if (!dockOpen) return;
+    const onOutside = (ev: PointerEvent) => {
+      if (containerRef.current && !containerRef.current.contains(ev.target as Node)) {
+        setDockOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onOutside, true);
+    return () => document.removeEventListener('pointerdown', onOutside, true);
+  }, [dockOpen]);
 
   const topReactionKeys = Object.entries(reactions)
     .filter(([, count]) => count > 0)
@@ -560,13 +575,15 @@ export function FacebookReactionButton({
 
   function handleSelect(reactionId: string) {
     setDockOpen(false);
+    longPressedRef.current = false;
     if (myReaction !== reactionId) {
       triggerBurst(reactionId);
     }
     onReact(reactionId);
   }
 
-  function handleQuickTap() {
+  function handleQuickTap(e: React.MouseEvent) {
+    e.stopPropagation();
     if (longPressedRef.current) {
       longPressedRef.current = false;
       return;
@@ -576,15 +593,44 @@ export function FacebookReactionButton({
     onReact(targetId);
   }
 
+  function startHold() {
+    longPressedRef.current = false;
+    if (holdTimerRef.current) window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      setDockOpen(true);
+      try {
+        navigator.vibrate?.(16);
+      } catch {
+        // ignore
+      }
+    }, 280);
+  }
+
+  function cancelHold() {
+    if (holdTimerRef.current) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  }
+
   return (
     <div
+      ref={containerRef}
       className="relative inline-flex items-center"
-      onMouseEnter={keepOpen}
-      onMouseLeave={scheduleClose}
+      onMouseEnter={e => {
+        if (window.matchMedia?.('(hover: hover)').matches) keepOpen();
+        void e;
+      }}
+      onMouseLeave={e => {
+        if (window.matchMedia?.('(hover: hover)').matches) scheduleClose();
+        void e;
+      }}
     >
       <AnimatePresence>
         {dockOpen && (
           <div
+            onClick={e => e.stopPropagation()}
             onMouseEnter={keepOpen}
             onMouseLeave={scheduleClose}
             className="absolute bottom-full start-0 pb-2.5 z-40"
@@ -597,30 +643,17 @@ export function FacebookReactionButton({
       <motion.button
         type="button"
         whileTap={{ scale: 0.92 }}
-        onPointerDown={() => {
-          longPressedRef.current = false;
-          holdTimerRef.current = window.setTimeout(() => {
-            longPressedRef.current = true;
-            setDockOpen(true);
-          }, 260);
+        onContextMenu={e => e.preventDefault()}
+        onPointerDown={e => {
+          e.stopPropagation();
+          startHold();
         }}
-        onPointerUp={() => {
-          if (holdTimerRef.current) {
-            window.clearTimeout(holdTimerRef.current);
-            holdTimerRef.current = null;
-          }
-        }}
-        onPointerCancel={() => {
-          if (holdTimerRef.current) {
-            window.clearTimeout(holdTimerRef.current);
-            holdTimerRef.current = null;
-          }
-        }}
+        onPointerUp={cancelHold}
+        onPointerCancel={cancelHold}
         onClick={handleQuickTap}
-        className={`relative inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-xs transition-colors cursor-pointer select-none ${
-          activeDef
-            ? 'bg-white/[0.09] border-white/[0.18] text-white font-semibold'
-            : 'bg-[#131318] border-white/[0.08] text-[#A1A1AA] hover:border-white/20 hover:text-white'
+        style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+        className={`relative inline-flex items-center gap-2 py-1 text-[13px] transition-colors cursor-pointer select-none ${
+          activeDef ? 'text-white font-semibold' : 'text-[#A6A7B2] hover:text-white'
         }`}
       >
         <ReactionBurstEffect bursts={bursts} />
@@ -632,25 +665,25 @@ export function FacebookReactionButton({
           transition={{ type: 'spring', stiffness: 520, damping: 20 }}
           className="flex items-center justify-center"
         >
-          {activeDef ? activeDef.renderIcon(18) : <ThumbsUp className="w-3.5 h-3.5" strokeWidth={1.9} />}
+          {activeDef ? activeDef.renderIcon(compact ? 19 : 21) : <ThumbsUp className={compact ? 'w-[18px] h-[18px]' : 'w-5 h-5'} strokeWidth={1.9} />}
         </motion.span>
 
-        <span style={activeDef ? { color: activeDef.accent } : undefined} className="text-[11.5px]">
+        <span style={activeDef ? { color: activeDef.accent } : undefined} className="text-[12.5px]">
           {activeDef ? (lang === 'en' ? activeDef.labelEn : activeDef.label) : lang === 'en' ? 'Like' : 'إعجاب'}
         </span>
 
         {totalCount > 0 && (
-          <span className="flex items-center gap-1 ms-0.5 ps-1.5 border-s border-white/[0.1]">
+          <span className="flex items-center gap-1 ms-0.5 ps-1.5 border-s border-white/[0.12]">
             {topReactionKeys.length > 0 && (
               <span className="flex items-center -space-x-1 rtl:space-x-reverse">
                 {topReactionKeys.map(k => (
-                  <span key={k} className="inline-flex rounded-full ring-1 ring-[#0A0A0C]">
-                    {resolveReaction(k).renderIcon(13)}
+                  <span key={k} className="inline-flex rounded-full ring-1 ring-[#121212]">
+                    {resolveReaction(k).renderIcon(14)}
                   </span>
                 ))}
               </span>
             )}
-            <span className="font-mono-num text-[11px] text-[#D4D4D8]">{totalCount}</span>
+            <span className="font-mono-num text-[12px] text-[#D4D4D8]">{totalCount}</span>
           </span>
         )}
       </motion.button>
