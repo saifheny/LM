@@ -47,11 +47,28 @@ export function getCloudinaryConfig(): CloudinaryConfig | null {
 
 export function getSupabaseConfig(): SupabaseConfig | null {
   const rawUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
-  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '').trim();
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_KEY ||
+    ''
+  ).trim();
   if (!rawUrl || !key || !/^https?:\/\//i.test(rawUrl)) return null;
   const mediaBucket = (process.env.SUPABASE_MEDIA_BUCKET || 'lm-media').trim() || 'lm-media';
   const stateBucket = (process.env.SUPABASE_STATE_BUCKET || 'lm-state').trim() || 'lm-state';
   return { url: rawUrl, serviceRoleKey: key, mediaBucket, stateBucket };
+}
+
+/**
+ * Supports BOTH modern Supabase `sb_secret_...` keys (apikey header ONLY — not a JWT!)
+ * and legacy `service_role` JWT keys (`apikey` + `Authorization: Bearer`).
+ */
+export function buildSupabaseAuthHeaders(key: string, extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { apikey: key, ...extra };
+  if (!key.startsWith('sb_secret_') && !key.startsWith('sb_publishable_')) {
+    headers.Authorization = `Bearer ${key}`;
+  }
+  return headers;
 }
 
 export function getCloudStorageStatus(): {
@@ -78,11 +95,9 @@ export async function ensureSupabaseBucket(
   try {
     const resp = await fetch(`${cfg.url}/storage/v1/bucket`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${cfg.serviceRoleKey}`,
-        apikey: cfg.serviceRoleKey,
+      headers: buildSupabaseAuthHeaders(cfg.serviceRoleKey, {
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({
         id: bucketName,
         name: bucketName,
@@ -145,12 +160,10 @@ async function uploadToSupabaseMedia(
   const uploadUrl = `${cfg.url}/storage/v1/object/${encodeURIComponent(cfg.mediaBucket)}/${objectPath}`;
   const resp = await fetch(uploadUrl, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${cfg.serviceRoleKey}`,
-      apikey: cfg.serviceRoleKey,
+    headers: buildSupabaseAuthHeaders(cfg.serviceRoleKey, {
       'Content-Type': mimeType || 'application/octet-stream',
       'x-upsert': 'true',
-    },
+    }),
     body: fileBytes,
     signal: AbortSignal.timeout(45_000),
   });

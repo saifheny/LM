@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import type { DatabaseSync } from 'node:sqlite';
-import { ensureSupabaseBucket, getSupabaseConfig } from './cloudStorage.ts';
+import { buildSupabaseAuthHeaders, ensureSupabaseBucket, getSupabaseConfig } from './cloudStorage.ts';
 
 const SNAPSHOT_OBJECT_PATH = 'lm.db.gz';
 const SQLITE_HEADER = Buffer.from('SQLite format 3\0', 'utf8');
@@ -42,10 +42,7 @@ export async function restoreDatabaseSnapshotIfConfigured(dbPath: string): Promi
     const url = `${cfg.url}/storage/v1/object/${encodeURIComponent(cfg.stateBucket)}/${SNAPSHOT_OBJECT_PATH}`;
     const resp = await fetch(url, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${cfg.serviceRoleKey}`,
-        apikey: cfg.serviceRoleKey,
-      },
+      headers: buildSupabaseAuthHeaders(cfg.serviceRoleKey),
       signal: AbortSignal.timeout(12_000),
     });
 
@@ -118,12 +115,10 @@ export async function syncDatabaseSnapshotNow(db: DatabaseSync, dbPath: string):
 
       const resp = await fetch(uploadUrl, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${cfg.serviceRoleKey}`,
-          apikey: cfg.serviceRoleKey,
+        headers: buildSupabaseAuthHeaders(cfg.serviceRoleKey, {
           'Content-Type': 'application/gzip',
           'x-upsert': 'true',
-        },
+        }),
         body: gzBytes,
         signal: AbortSignal.timeout(15_000),
       });
