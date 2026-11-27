@@ -14,6 +14,8 @@ import {
   EyeOff,
   Flag,
   Heart,
+  Mic,
+  MicOff,
   Monitor,
   Volume2,
   VolumeX,
@@ -21,13 +23,17 @@ import {
   Radio,
   RefreshCw,
   Share2,
+  ShieldBan,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
   Square,
+  Trash2,
+  Video,
+  VideoOff,
   X,
 } from 'lucide-react';
-import { Lang, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
+import { Lang, LiveChatMessage, LiveRoomItem, LiveRoomState, UserProfile } from '../../types';
 import { UserAvatar } from '../shared/LmBrandMark';
 import type { SharePayload } from '../shared/ShareSheetModal';
 import { ObsidianComposerPill } from '../shared/HardwareUI';
@@ -48,6 +54,142 @@ interface LiveViewProps {
 }
 
 const LIVE_CATEGORIES = ['عام', 'دردشة', 'تقنية', 'موسيقى', 'ألعاب', 'رياضة'];
+
+/**
+ * Real-Time Audio-Reactive Avatar Stage for Camera-Off / Voice-Only Live Broadcasts!
+ * Reads live microphone (or WebRTC remote audio) FFT frequencies via Web Audio API AnalyserNode
+ * so concentric rings + 12 vocal frequency bars pulse dynamically whenever the host speaks!
+ */
+function LiveVoiceAvatarStage({
+  avatarUrl,
+  initials,
+  hostName,
+  title,
+  stream,
+  micMuted,
+}: {
+  avatarUrl: string | null;
+  initials: string;
+  hostName: string;
+  title: string;
+  stream: MediaStream | null;
+  micMuted: boolean;
+}) {
+  const [voiceLevel, setVoiceLevel] = useState(0);
+  const [bars, setBars] = useState<number[]>(() => Array(12).fill(6));
+
+  useEffect(() => {
+    if (!stream || micMuted || stream.getAudioTracks().length === 0) {
+      setVoiceLevel(0);
+      setBars(Array(12).fill(6));
+      return;
+    }
+
+    let rafId = 0;
+    let audioCtx: AudioContext | null = null;
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioCtx = new AudioCtx();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      analyser.smoothingTimeConstant = 0.76;
+      source.connect(analyser);
+      const freqData = new Uint8Array(analyser.frequencyBinCount);
+
+      const tick = () => {
+        analyser.getByteFrequencyData(freqData);
+        let sum = 0;
+        const nextBars: number[] = [];
+        for (let i = 0; i < 12; i++) {
+          const binIdx = Math.min(freqData.length - 1, i + 1);
+          const v = freqData[binIdx] / 255;
+          sum += v;
+          nextBars.push(Math.round(6 + v * 36));
+        }
+        const avg = Math.min(1, (sum / 12) * 1.45);
+        setVoiceLevel(avg);
+        setBars(nextBars);
+        rafId = window.requestAnimationFrame(tick);
+      };
+      rafId = window.requestAnimationFrame(tick);
+    } catch {
+      // ignore if AudioContext restricted
+    }
+
+    return () => {
+      if (rafId) window.cancelAnimationFrame(rafId);
+      audioCtx?.close().catch(() => {});
+    };
+  }, [stream, micMuted]);
+
+  return (
+    <div className="w-full h-full bg-gradient-to-b from-[#171923] via-[#121216] to-[#0B0B0E] flex flex-col items-center justify-center gap-5 px-6 text-center select-none">
+      {/* Audio-Reactive Concentric Rings + Host Profile Picture */}
+      <div className="relative flex items-center justify-center w-48 h-48">
+        <span
+          style={{
+            transform: `scale(${1 + voiceLevel * 0.55})`,
+            opacity: micMuted ? 0.08 : 0.14 + voiceLevel * 0.42,
+          }}
+          className="pointer-events-none absolute w-32 h-32 rounded-full bg-[#FE2C55] transition-transform duration-75"
+        />
+        <span
+          style={{
+            transform: `scale(${1 + voiceLevel * 0.34})`,
+            opacity: micMuted ? 0.12 : 0.2 + voiceLevel * 0.5,
+          }}
+          className="pointer-events-none absolute w-32 h-32 rounded-full border-2 border-[#25F4EE] transition-transform duration-75"
+        />
+        <div className="relative z-10 p-1 rounded-full bg-[#121216] border-2 border-white/20">
+          <UserAvatar initials={initials} avatarUrl={avatarUrl} size={112} />
+        </div>
+        {micMuted && (
+          <span className="absolute bottom-3 end-5 z-20 w-9 h-9 rounded-full bg-[#EF4444] border-2 border-[#121216] text-white flex items-center justify-center">
+            <MicOff className="w-4 h-4" />
+          </span>
+        )}
+      </div>
+
+      {/* Host Identity + Live Status */}
+      <div className="space-y-1 max-w-xs">
+        <div className="text-base font-bold text-white truncate">{hostName}</div>
+        <div className="text-xs text-[#9E9EA8] line-clamp-1">{title}</div>
+      </div>
+
+      {/* Live Vocal Frequency Waveform Equalizer (12 Real-Time Spectrum Bars) */}
+      <div className="h-11 flex items-center justify-center gap-1.5 px-4">
+        {bars.map((h, i) => (
+          <span
+            key={i}
+            style={{ height: `${micMuted ? 5 : h}px` }}
+            className={`w-1.5 rounded-full transition-[height] duration-75 ${
+              micMuted
+                ? 'bg-white/20'
+                : i % 2 === 0
+                  ? 'bg-[#25F4EE]'
+                  : 'bg-[#FE2C55]'
+            }`}
+          />
+        ))}
+      </div>
+
+      <div className="px-3.5 py-1 rounded-full bg-white/[0.06] text-[11.5px] font-semibold text-[#D4D4D8] inline-flex items-center gap-1.5">
+        {micMuted ? (
+          <>
+            <MicOff className="w-3.5 h-3.5 text-[#FF595A]" />
+            <span>الميكروفون مكتوم · الكاميرا مغلقة</span>
+          </>
+        ) : (
+          <>
+            <Mic className="w-3.5 h-3.5 text-[#25F4EE]" />
+            <span>بث صوتي مباشر · الكاميرا مغلقة</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -138,6 +280,16 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   const [goLiveAllowComments, setGoLiveAllowComments] = useState(true);
   const [goLiveSlowMode, setGoLiveSlowMode] = useState(false);
   const [goLiveAudience, setGoLiveAudience] = useState<'everyone' | 'followers'>('everyone');
+  // Host Real-Time Broadcast Super-Controls (Mic Mute, Camera Off, Flip Camera, Comment Delete, Block User, Control Panel)
+  const [hostMicMuted, setHostMicMuted] = useState(false);
+  const [hostCamOff, setHostCamOff] = useState(false);
+  const [hostFacing, setHostFacing] = useState<'user' | 'environment'>('user');
+  const [hostControlsOpen, setHostControlsOpen] = useState(false);
+  const [hostModerateMsg, setHostModerateMsg] = useState<LiveChatMessage | null>(null);
+  const [blockedUsersList, setBlockedUsersList] = useState<
+    Array<{ id: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null }>
+  >([]);
+
   const [startingLive, setStartingLive] = useState(false);
   const [hostingRoomId, setHostingRoomId] = useState<string | null>(null);
   const [livePeerCount, setLivePeerCount] = useState(0);
@@ -195,19 +347,23 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   }, [user.id, setActiveRoomId]);
 
   const loadState = useCallback(async (id: string) => {
-    const res = await apiGet<{ ok: boolean; state: LiveRoomState }>(`/api/live/rooms/${id}/state`);
-    roomStateCacheRef.current[id] = res.state;
-    setRoomState(prev => {
-      if (prev && prev.roomId !== id && activeRoomIdRef.current !== id) return prev;
-      return res.state;
-    });
-    setOptimisticLikes(prev => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }, []);
+    try {
+      const res = await apiGet<{ ok: boolean; state: LiveRoomState }>(`/api/live/rooms/${id}/state?userId=${encodeURIComponent(user.id)}`);
+      roomStateCacheRef.current[id] = res.state;
+      setRoomState(prev => {
+        if (prev && prev.roomId !== id && activeRoomIdRef.current !== id) return prev;
+        return res.state;
+      });
+      setOptimisticLikes(prev => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch {
+      // room may be unavailable or blocked
+    }
+  }, [user.id]);
 
   useEffect(() => {
     loadRooms();
@@ -321,6 +477,14 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         setViewerConnecting(false);
       }
       loadRooms();
+    }
+    if (lastWsEvent.event === 'live:user_blocked') {
+      const p = lastWsEvent.payload as { hostId?: string; blockedUserId?: string; roomId?: string };
+      if (p?.blockedUserId === user.id) {
+        teardownViewerRtc();
+        showNotice('لم يعد هذا البث متاحًا لك');
+        loadRooms();
+      }
     }
     if (lastWsEvent.event === 'content:reported') {
       const payload = lastWsEvent.payload as {
@@ -459,19 +623,115 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     };
   }, []);
 
-  // Re-attach local camera video element when hosting
+  // Re-attach local camera video element when hosting OR when turning camera back ON!
   useEffect(() => {
-    if (isHostingActiveRoom && camStreamRef.current && camVideoRef.current) {
+    if (isHostingActiveRoom && !hostCamOff && camStreamRef.current && camVideoRef.current) {
       camVideoRef.current.srcObject = camStreamRef.current;
     }
-  }, [isHostingActiveRoom, activeIndex]);
+  }, [isHostingActiveRoom, hostCamOff, activeIndex]);
 
-  // Re-attach remote live video element when viewer receives host stream
+  // Re-attach remote live video/audio element when viewer receives host stream OR host toggles camera!
   useEffect(() => {
     if (viewerConnected && remoteLiveStreamRef.current && remoteLiveVideoRef.current) {
       remoteLiveVideoRef.current.srcObject = remoteLiveStreamRef.current;
     }
-  }, [viewerConnected, activeIndex]);
+  }, [viewerConnected, activeIndex, roomState?.hostCamOff]);
+
+  const loadBlockedUsers = useCallback(async () => {
+    try {
+      const res = await apiGet<{
+        ok: boolean;
+        blockedUsers: Array<{ id: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null }>;
+      }>(`/api/users/${user.id}/blocks`);
+      setBlockedUsersList(res.blockedUsers || []);
+    } catch {
+      // ignore
+    }
+  }, [user.id]);
+
+  async function moderateActiveRoom(
+    action:
+      | 'delete_active'
+      | 'delete_message'
+      | 'toggle_highlights'
+      | 'toggle_comments'
+      | 'set_slow_mode'
+      | 'set_host_media'
+      | 'ban_user'
+      | 'unban_user',
+    extra?: Record<string, unknown>
+  ) {
+    if (!activeRoom?.id) return;
+    try {
+      const res = await apiPost<{ ok: boolean; state?: LiveRoomState }>(`/api/live/rooms/${activeRoom.id}/moderate`, {
+        action,
+        hostId: user.id,
+        ...extra,
+      });
+      if (res.state) {
+        roomStateCacheRef.current[activeRoom.id] = res.state;
+        setRoomState(res.state);
+      }
+    } catch (err) {
+      showNotice(err instanceof Error ? err.message : 'تعذر تنفيذ الإجراء');
+    }
+  }
+
+  function toggleHostMic() {
+    const nextMuted = !hostMicMuted;
+    setHostMicMuted(nextMuted);
+    camStreamRef.current?.getAudioTracks().forEach(tr => {
+      tr.enabled = !nextMuted;
+    });
+    void moderateActiveRoom('set_host_media', { micMuted: nextMuted });
+    showNotice(nextMuted ? 'تم كتم الميكروفون' : 'تم تشغيل الميكروفون');
+  }
+
+  function toggleHostCam() {
+    const nextCamOff = !hostCamOff;
+    setHostCamOff(nextCamOff);
+    camStreamRef.current?.getVideoTracks().forEach(tr => {
+      tr.enabled = !nextCamOff;
+    });
+    void moderateActiveRoom('set_host_media', { camOff: nextCamOff });
+    showNotice(nextCamOff ? 'تم إغلاق الكاميرا — بث صوتي بصورتك الشخصية' : 'تم تشغيل الكاميرا');
+  }
+
+  async function flipLiveCamera() {
+    if (!isHostingActiveRoom || hostCamOff || !navigator.mediaDevices?.getUserMedia) return;
+    const nextFacing = hostFacing === 'user' ? 'environment' : 'user';
+    try {
+      const newVidStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: nextFacing } },
+        audio: false,
+      });
+      const newTrack = newVidStream.getVideoTracks()[0];
+      if (!newTrack) return;
+      const currentStream = camStreamRef.current;
+      if (currentStream) {
+        currentStream.getVideoTracks().forEach(oldTrack => {
+          oldTrack.stop();
+          currentStream.removeTrack(oldTrack);
+        });
+        currentStream.addTrack(newTrack);
+        if (camVideoRef.current) camVideoRef.current.srcObject = currentStream;
+      }
+      hostPeersRef.current.forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) sender.replaceTrack(newTrack).catch(() => {});
+      });
+      setHostFacing(nextFacing);
+      showNotice(nextFacing === 'environment' ? 'تم التبديل للكاميرا الخلفية' : 'تم التبديل للكاميرا الأمامية');
+    } catch {
+      showNotice('تعذر تبديل الكاميرا على هذا الجهاز');
+    }
+  }
+
+  async function unblockUserFromLive(targetUserId: string) {
+    await api(`/api/users/${targetUserId}/block?blockerId=${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+    setBlockedUsersList(prev => prev.filter(u => u.id !== targetUserId));
+    showNotice('تم إلغاء الحظر');
+  }
 
   // Viewer automatically joins real WebRTC live room when swiping onto another user's live broadcast
   useEffect(() => {
@@ -672,10 +932,35 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       });
 
       camStreamRef.current = stream;
+      setHostMicMuted(false);
+      setHostCamOff(!stream || stream.getVideoTracks().length === 0);
+      setHostFacing(goLiveFacing);
       setHostingRoomId(res.room.id);
       setActiveRoomId(res.room.id);
       setGoLiveOpen(false);
       setGoLiveTitle('');
+      // Sync initial Go Live studio settings (comments / slow mode / camera state) immediately!
+      if (!goLiveAllowComments || goLiveSlowMode || !stream || stream.getVideoTracks().length === 0) {
+        apiPost(`/api/live/rooms/${res.room.id}/moderate`, {
+          action: 'toggle_comments',
+          hostId: user.id,
+          commentsEnabled: goLiveAllowComments,
+        }).catch(() => {});
+        if (goLiveSlowMode) {
+          apiPost(`/api/live/rooms/${res.room.id}/moderate`, {
+            action: 'set_slow_mode',
+            hostId: user.id,
+            slowModeSec: 8,
+          }).catch(() => {});
+        }
+        if (!stream || stream.getVideoTracks().length === 0) {
+          apiPost(`/api/live/rooms/${res.room.id}/moderate`, {
+            action: 'set_host_media',
+            hostId: user.id,
+            camOff: true,
+          }).catch(() => {});
+        }
+      }
       const refreshed = await apiGet<{ ok: boolean; rooms: LiveRoomItem[] }>(`/api/live/rooms?userId=${user.id}`);
       const list = refreshed.rooms || [];
       setRooms(list);
@@ -855,33 +1140,52 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             const isCurrent = idx === activeIndex;
             const isHostingThis = Boolean(hostingRoomId && room.id === hostingRoomId);
             const isLandscape = room.orientation === 'landscape';
+            const remoteHostCamOff = Boolean(roomState && roomState.roomId === room.id && roomState.hostCamOff);
+            const remoteHostMicMuted = Boolean(roomState && roomState.roomId === room.id && roomState.hostMicMuted);
 
             const mediaNode = isHostingThis ? (
-              camStreamRef.current ? (
+              camStreamRef.current && !hostCamOff && camStreamRef.current.getVideoTracks().length > 0 ? (
                 <video
                   ref={camVideoRef}
                   autoPlay
                   playsInline
                   muted
-                  className={`w-full h-full scale-x-[-1] ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
+                  className={`w-full h-full ${hostFacing === 'user' ? 'scale-x-[-1]' : ''} ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
                 />
               ) : (
-                <div className="w-full h-full bg-gradient-to-b from-[#1A0D0E] via-[#0A0A0D] to-black flex flex-col items-center justify-center gap-3 px-6 text-center">
-                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={86} online />
-                  <div className="text-sm font-bold text-white">{room.title}</div>
-                  <div className="text-xs text-[#FB7185]">
-                    {lang === 'en' ? 'Interactive Live Room' : 'غرفة بث صوتي/تفاعلي مباشر'}
-                  </div>
-                </div>
+                <LiveVoiceAvatarStage
+                  avatarUrl={user.avatarUrl}
+                  initials={user.avatarInitials}
+                  hostName={user.displayName}
+                  title={room.title}
+                  stream={camStreamRef.current}
+                  micMuted={hostMicMuted}
+                />
               )
             ) : isCurrent && viewerConnected ? (
-              <video
-                ref={remoteLiveVideoRef}
-                autoPlay
-                playsInline
-                muted={muted}
-                className={`w-full h-full ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`}
-              />
+              <>
+                <video
+                  ref={remoteLiveVideoRef}
+                  autoPlay
+                  playsInline
+                  muted={muted}
+                  className={
+                    remoteHostCamOff
+                      ? 'hidden'
+                      : `w-full h-full ${isLandscape ? 'object-contain bg-black' : 'object-cover'}`
+                  }
+                />
+                {remoteHostCamOff && (
+                  <LiveVoiceAvatarStage
+                    avatarUrl={room.hostAvatarUrl}
+                    initials={room.hostInitials}
+                    hostName={room.hostName}
+                    title={room.title}
+                    stream={remoteLiveStreamRef.current}
+                    micMuted={remoteHostMicMuted}
+                  />
+                )}
+              </>
             ) : room.videoUrl ? (
               isCurrent ? (
                 <video
@@ -1026,6 +1330,15 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   <span>{formatCompact(displayedLikes)}</span>
                 </span>
               </div>
+
+              {/* Subtle Live Indicator if Host Muted Mic While Camera is ON */}
+              {((isHostingActiveRoom && hostMicMuted && !hostCamOff) ||
+                (!isHostingActiveRoom && roomState?.roomId === activeRoom.id && roomState.hostMicMuted && !roomState.hostCamOff)) && (
+                <div className="px-2.5 py-1 rounded-full bg-[#EF4444]/85 text-[11px] font-bold text-white inline-flex items-center gap-1.5">
+                  <MicOff className="w-3.5 h-3.5" />
+                  <span>المذيع كتم الصوت</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -1108,12 +1421,16 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 <div
                   key={msg.id}
                   onClick={() => {
-                    setReplyToLiveComment({
-                      id: msg.id,
-                      displayName: msg.displayName,
-                      text: msg.text,
-                    });
-                    setLiveInputFocused(true);
+                    if (isOwnerOfActiveRoom && msg.userId !== user.id) {
+                      setHostModerateMsg(msg);
+                    } else {
+                      setReplyToLiveComment({
+                        id: msg.id,
+                        displayName: msg.displayName,
+                        text: msg.text,
+                      });
+                      setLiveInputFocused(true);
+                    }
                   }}
                   className={`group cursor-pointer transition-colors ${
                     isReply
@@ -1182,7 +1499,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           )}
         </div>
 
-        {/* Uniform Side Action Buttons (All 40x40 with 20x20 Crisp Icons — ZERO Glow, Hides in Clear-Display Mode!) */}
+        {/* Uniform Side Action Buttons (All 40x40 with 20x20 Crisp Icons — Host Super-Controls + Clear Mode!) */}
         <div
           onClick={e => e.stopPropagation()}
           style={{ bottom: 'calc(82px + env(safe-area-inset-bottom))' }}
@@ -1190,6 +1507,57 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             cleanView ? 'opacity-0 translate-x-4 pointer-events-none' : 'opacity-100 translate-x-0'
           }`}
         >
+          {isHostingActiveRoom && (
+            <>
+              <button
+                type="button"
+                onClick={toggleHostMic}
+                title={hostMicMuted ? 'تشغيل الميكروفون' : 'كتم الميكروفون'}
+                className={`w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  hostMicMuted ? 'bg-[#EF4444] text-white' : 'bg-black/55 hover:bg-black/75 text-white'
+                }`}
+              >
+                {hostMicMuted ? <MicOff className="w-5 h-5" strokeWidth={2} /> : <Mic className="w-5 h-5" strokeWidth={2} />}
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleHostCam}
+                title={hostCamOff ? 'تشغيل الكاميرا' : 'إغلاق الكاميرا (صوت فقط)'}
+                className={`w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  hostCamOff ? 'bg-[#EF4444] text-white' : 'bg-black/55 hover:bg-black/75 text-white'
+                }`}
+              >
+                {hostCamOff ? <VideoOff className="w-5 h-5" strokeWidth={2} /> : <Video className="w-5 h-5" strokeWidth={2} />}
+              </button>
+
+              {!hostCamOff && (
+                <button
+                  type="button"
+                  onClick={flipLiveCamera}
+                  title="تبديل الكاميرا"
+                  className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
+                >
+                  <RefreshCw className="w-5 h-5" strokeWidth={2} />
+                </button>
+              )}
+            </>
+          )}
+
+          {isOwnerOfActiveRoom && (
+            <button
+              type="button"
+              onClick={() => {
+                loadBlockedUsers();
+                setHostControlsOpen(true);
+              }}
+              title="لوحة تحكم المذيع"
+              className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-[#25F4EE] flex items-center justify-center cursor-pointer transition-colors"
+            >
+              <SlidersHorizontal className="w-5 h-5" strokeWidth={2} />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -1312,30 +1680,36 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 transparent={!liveInputFocused && !commentText.trim()}
               />
               <div className="flex-1 min-w-0">
-                <ObsidianComposerPill
-                  transparent
-                  value={commentText}
-                  onChange={setCommentText}
-                  onSubmit={handleSendComment}
-                  onFocus={() => {
-                    setLiveInputFocused(true);
-                    setComposerFocused(true);
-                  }}
-                  onBlur={() => {
-                    setLiveInputFocused(false);
-                    setTimeout(() => setComposerFocused(false), 140);
-                  }}
-                  placeholder={
-                    replyToLiveComment
-                      ? `اكتب ردك على ${replyToLiveComment.displayName}...`
-                      : pinMode && isOwnerOfActiveRoom
-                        ? lang === 'en'
-                          ? 'Pinned comment...'
-                          : 'تعليق مثبت...'
-                        : t(lang, 'add_comment')
-                  }
-                  disabled={!commentText.trim()}
-                />
+                {!isOwnerOfActiveRoom && roomState?.roomId === activeRoom?.id && roomState?.commentsEnabled === false ? (
+                  <div className="h-11 px-4 rounded-full bg-black/60 text-xs font-medium text-[#A1A1AA] flex items-center justify-center">
+                    أوقف صاحب البث التعليقات مؤقتًا
+                  </div>
+                ) : (
+                  <ObsidianComposerPill
+                    transparent
+                    value={commentText}
+                    onChange={setCommentText}
+                    onSubmit={handleSendComment}
+                    onFocus={() => {
+                      setLiveInputFocused(true);
+                      setComposerFocused(true);
+                    }}
+                    onBlur={() => {
+                      setLiveInputFocused(false);
+                      setTimeout(() => setComposerFocused(false), 140);
+                    }}
+                    placeholder={
+                      replyToLiveComment
+                        ? `اكتب ردك على ${replyToLiveComment.displayName}...`
+                        : pinMode && isOwnerOfActiveRoom
+                          ? lang === 'en'
+                            ? 'Pinned comment...'
+                            : 'تعليق مثبت...'
+                          : t(lang, 'add_comment')
+                    }
+                    disabled={!commentText.trim()}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -1620,6 +1994,252 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* HOST COMMENT MODERATION SHEET (Tap Any Viewer Comment -> Reply / Pin / Delete / Block User!) */}
+      {hostModerateMsg && activeRoom && (
+        <div
+          onClick={() => setHostModerateMsg(null)}
+          className="fixed inset-0 z-[74] bg-black/62 backdrop-blur-sm flex items-end justify-center p-3"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ paddingBottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
+            className="w-full max-w-[440px] rounded-2xl bg-[#181920] border border-white/[0.1] overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-white/[0.08] flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-[#25F4EE] truncate">{hostModerateMsg.displayName}</div>
+                <div className="text-xs text-[#D4D4D8] line-clamp-2 mt-0.5">{hostModerateMsg.text}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHostModerateMsg(null)}
+                className="w-8 h-8 rounded-full hover:bg-white/[0.08] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="divide-y divide-white/[0.06] text-sm font-medium text-[#F1F1F2]">
+              <button
+                type="button"
+                onClick={() => {
+                  const target = hostModerateMsg;
+                  setHostModerateMsg(null);
+                  setReplyToLiveComment({ id: target.id, displayName: target.displayName, text: target.text });
+                  setLiveInputFocused(true);
+                }}
+                className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.06] cursor-pointer"
+              >
+                <span>الرد على التعليق</span>
+                <CornerDownLeft className="w-[18px] h-[18px] text-[#25F4EE]" />
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const target = hostModerateMsg;
+                  setHostModerateMsg(null);
+                  await apiPost(`/api/live/rooms/${activeRoom.id}/highlight`, {
+                    userId: user.id,
+                    text: `${target.displayName}: ${target.text}`,
+                  }).catch(() => {});
+                  showNotice('تم تثبيت التعليق');
+                }}
+                className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.06] cursor-pointer"
+              >
+                <span>تثبيت التعليق في البث</span>
+                <Pin className="w-[18px] h-[18px] text-[#FBBF24]" />
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const mid = hostModerateMsg.id;
+                  setHostModerateMsg(null);
+                  await moderateActiveRoom('delete_message', { messageId: mid });
+                  showNotice('تم حذف التعليق من البث');
+                }}
+                className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.06] text-[#FBBF24] cursor-pointer"
+              >
+                <span>حذف هذا التعليق</span>
+                <Trash2 className="w-[18px] h-[18px]" />
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const targetUid = hostModerateMsg.userId;
+                  const targetName = hostModerateMsg.displayName;
+                  setHostModerateMsg(null);
+                  await moderateActiveRoom('ban_user', { userId: targetUid, blockGlobally: true });
+                  showNotice(`تم حظر ${targetName} من البث ومن رؤية ملفك الشخصي`);
+                }}
+                className="w-full h-12 px-4 flex items-center justify-between hover:bg-[#FF595A]/12 text-[#FF595A] cursor-pointer"
+              >
+                <span>حظر الشخص (من البث والملف الشخصي)</span>
+                <ShieldBan className="w-[18px] h-[18px]" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HOST LIVE CONTROL CENTER SHEET (Comments On/Off, Slow Mode, Clear Pin, Blocked Users Manager!) */}
+      {hostControlsOpen && activeRoom && (
+        <div
+          onClick={() => setHostControlsOpen(false)}
+          className="fixed inset-0 z-[74] bg-black/62 backdrop-blur-sm flex items-end justify-center"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ paddingBottom: 'max(22px, calc(env(safe-area-inset-bottom) + 14px))' }}
+            className="w-full max-w-[520px] max-h-[80vh] overflow-y-auto rounded-t-[24px] bg-[#181920] border-t border-white/[0.1] px-5 pt-3 space-y-5"
+          >
+            <div className="flex flex-col items-center gap-2 pb-2 border-b border-white/[0.08]">
+              <div className="w-10 h-1 rounded-full bg-white/25" />
+              <div className="w-full flex items-center justify-between">
+                <span className="text-sm font-bold text-white">أدوات التحكم في البث المباشر</span>
+                <button
+                  type="button"
+                  onClick={() => setHostControlsOpen(false)}
+                  className="w-8 h-8 rounded-full bg-white/[0.08] text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Media Row (Mic + Camera) */}
+            {isHostingActiveRoom && (
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={toggleHostMic}
+                  className={`h-11 rounded-xl px-3 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+                    hostMicMuted ? 'bg-[#EF4444] text-white' : 'bg-[#22242E] hover:bg-[#2C2F3C] text-white'
+                  }`}
+                >
+                  {hostMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 text-[#25F4EE]" />}
+                  <span>{hostMicMuted ? 'فتح المايك' : 'كتم المايك'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleHostCam}
+                  className={`h-11 rounded-xl px-3 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+                    hostCamOff ? 'bg-[#EF4444] text-white' : 'bg-[#22242E] hover:bg-[#2C2F3C] text-white'
+                  }`}
+                >
+                  {hostCamOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4 text-[#25F4EE]" />}
+                  <span>{hostCamOff ? 'تشغيل الكاميرا' : 'إغلاق الكاميرا'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Comments Toggle + Slow Mode + Clear Pinned */}
+            <div className="space-y-3.5 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-white">السماح بالتعليقات</div>
+                  <div className="text-[11px] text-[#8E8E93]">إيقاف أو تشغيل تعليقات المشاهدين فورًا</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => moderateActiveRoom('toggle_comments')}
+                  className={`w-11 h-6 rounded-full p-0.5 transition-colors cursor-pointer ${
+                    roomState?.commentsEnabled !== false ? 'bg-[#25F4EE]' : 'bg-white/15'
+                  }`}
+                >
+                  <span
+                    className={`block w-5 h-5 rounded-full bg-black transition-transform ${
+                      roomState?.commentsEnabled !== false ? '-translate-x-5 rtl:-translate-x-5 ltr:translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-white">وضع التهدئة (Slow Mode)</div>
+                  <div className="text-[11px] text-[#8E8E93]">تحديد مهلة بين تعليقات نفس المشاهد</div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {[0, 5, 15, 30].map(sec => {
+                    const active = (roomState?.slowModeSec || 0) === sec;
+                    return (
+                      <button
+                        key={sec}
+                        type="button"
+                        onClick={() => moderateActiveRoom('set_slow_mode', { slowModeSec: sec })}
+                        className={`h-8 px-2.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                          active ? 'bg-[#FE2C55] text-white' : 'bg-[#22242E] text-[#A1A1AA] hover:text-white'
+                        }`}
+                      >
+                        {sec === 0 ? 'إيقاف' : `${sec}ث`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {roomState?.activeHighlight && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    moderateActiveRoom('delete_active');
+                    showNotice('تمت إزالة التعليق المثبت');
+                  }}
+                  className="w-full h-10 rounded-xl bg-[#22242E] hover:bg-[#2C2F3C] text-xs font-semibold text-[#FBBF24] flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Pin className="w-4 h-4" />
+                  <span>إزالة التعليق المثبت الحالي</span>
+                </button>
+              )}
+            </div>
+
+            {/* Blocked Users List with 1-Tap Unblock */}
+            <div className="pt-3 border-t border-white/[0.08] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <ShieldBan className="w-4 h-4 text-[#FF595A]" />
+                  <span>المحظورون من البث والملف الشخصي ({blockedUsersList.length})</span>
+                </span>
+              </div>
+
+              {blockedUsersList.length === 0 ? (
+                <div className="py-3 text-center text-[11.5px] text-[#7A7A85]">
+                  لا يوجد مستخدمون محظورون — اضغط على أي تعليق في البث لحذفه أو حظر صاحبه.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-44 overflow-y-auto">
+                  {blockedUsersList.map(bu => (
+                    <div
+                      key={bu.id}
+                      className="flex items-center justify-between gap-2.5 py-1.5"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <UserAvatar initials={bu.avatarInitials} avatarUrl={bu.avatarUrl} size={32} />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-white truncate">{bu.displayName}</div>
+                          <div className="text-[10.5px] text-[#8E8E93] font-mono-num truncate">@{bu.username}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => unblockUserFromLive(bu.id)}
+                        className="h-8 px-3 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-[11px] font-semibold text-white cursor-pointer shrink-0"
+                      >
+                        إلغاء الحظر
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Universal Discreet Content Reporting Sheet/Modal */}
       <ReportContentModal

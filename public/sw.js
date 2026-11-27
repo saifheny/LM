@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lm-shell-v31';
+const CACHE_NAME = 'lm-shell-v32';
 
 self.addEventListener('install', event => {
   self.skipWaiting();

@@ -32,6 +32,8 @@ import {
   ChevronRight,
   Camera,
   Hash,
+  Monitor,
+  Smartphone,
 } from 'lucide-react';
 
 import { ConversationItem, Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
@@ -69,7 +71,9 @@ interface ShortVideosViewProps {
 /**
  * Generates a crisp JPEG thumbnail File from a user-selected video File right in the browser!
  */
-async function generateVideoThumbnail(videoFile: File): Promise<File | null> {
+async function generateVideoThumbnail(
+  videoFile: File
+): Promise<{ file: File | null; orientation: 'portrait' | 'landscape' }> {
   return new Promise(resolve => {
     const objectUrl = URL.createObjectURL(videoFile);
     const vid = document.createElement('video');
@@ -80,38 +84,39 @@ async function generateVideoThumbnail(videoFile: File): Promise<File | null> {
     vid.src = objectUrl;
 
     let done = false;
-    const finish = (file: File | null) => {
+    const finish = (file: File | null, orientation: 'portrait' | 'landscape' = 'portrait') => {
       if (done) return;
       done = true;
       URL.revokeObjectURL(objectUrl);
-      resolve(file);
+      resolve({ file, orientation });
     };
 
-    const timeout = window.setTimeout(() => finish(null), 6000);
+    const timeout = window.setTimeout(() => finish(null, 'portrait'), 6000);
 
     const captureFrame = () => {
       try {
         const w = vid.videoWidth || 720;
         const h = vid.videoHeight || 1280;
+        const detectedOrient: 'portrait' | 'landscape' = w > h * 1.08 ? 'landscape' : 'portrait';
         const scale = Math.min(1, 720 / Math.max(w, 1));
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(160, Math.round(w * scale));
         canvas.height = Math.max(160, Math.round(h * scale));
         const ctx = canvas.getContext('2d');
-        if (!ctx) return finish(null);
+        if (!ctx) return finish(null, detectedOrient);
         ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
         canvas.toBlob(
           blob => {
             window.clearTimeout(timeout);
-            if (!blob) return finish(null);
-            finish(new File([blob], `pulse_thumb_${Date.now()}.jpg`, { type: 'image/jpeg' }));
+            if (!blob) return finish(null, detectedOrient);
+            finish(new File([blob], `pulse_thumb_${Date.now()}.jpg`, { type: 'image/jpeg' }), detectedOrient);
           },
           'image/jpeg',
           0.86
         );
       } catch {
         window.clearTimeout(timeout);
-        finish(null);
+        finish(null, 'portrait');
       }
     };
 
@@ -126,7 +131,7 @@ async function generateVideoThumbnail(videoFile: File): Promise<File | null> {
     vid.onseeked = captureFrame;
     vid.onerror = () => {
       window.clearTimeout(timeout);
-      finish(null);
+      finish(null, 'portrait');
     };
   });
 }
@@ -282,6 +287,7 @@ export function ShortVideosView({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [studioStep, setStudioStep] = useState<'capture' | 'publish'>('capture');
   const [studioDurationSec, setStudioDurationSec] = useState<15 | 60 | 180>(60);
+  const [studioOrientation, setStudioOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -360,7 +366,10 @@ export function ShortVideosView({
       }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: cameraFacing }, width: { ideal: 1080 }, height: { ideal: 1920 } },
+          video:
+            studioOrientation === 'landscape'
+              ? { facingMode: { ideal: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }
+              : { facingMode: { ideal: cameraFacing }, width: { ideal: 1080 }, height: { ideal: 1920 } },
           audio: true,
         });
         if (cancelled) {
@@ -385,7 +394,7 @@ export function ShortVideosView({
       cancelled = true;
       stopStudioCamera();
     };
-  }, [uploadOpen, studioStep, cameraFacing, lang, stopStudioCamera]);
+  }, [uploadOpen, studioStep, cameraFacing, studioOrientation, lang, stopStudioCamera]);
 
   // Edit Own Pulse Comment Inline
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -876,7 +885,7 @@ export function ShortVideosView({
     scrubTo(ratio * duration);
   }
 
-  async function processSelectedVideoFile(f: File) {
+  async function processSelectedVideoFile(f: File, keepChosenOrient = false) {
     if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
     const previewObj = URL.createObjectURL(f);
     setLocalPreviewUrl(previewObj);
@@ -884,10 +893,13 @@ export function ShortVideosView({
     setUploadingVideo(true);
     setGeneratingThumb(true);
     try {
-      const [upVideo, thumbFile] = await Promise.all([apiUploadFile(f, 'pulse_video'), generateVideoThumbnail(f)]);
+      const [upVideo, thumbResult] = await Promise.all([apiUploadFile(f, 'pulse_video'), generateVideoThumbnail(f)]);
       setUploadedVideoUrl(upVideo.url);
-      if (thumbFile) {
-        const upThumb = await apiUploadFile(thumbFile, 'pulse_poster');
+      if (!keepChosenOrient) {
+        setStudioOrientation(thumbResult.orientation);
+      }
+      if (thumbResult.file) {
+        const upThumb = await apiUploadFile(thumbResult.file, 'pulse_poster');
         setUploadedPosterUrl(upThumb.url);
       }
     } catch (err) {
@@ -944,7 +956,7 @@ export function ShortVideosView({
         const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
         const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
         const file = new File([blob], `lm_pulse_${Date.now()}.${ext}`, { type: blob.type });
-        void processSelectedVideoFile(file);
+        void processSelectedVideoFile(file, true);
       };
 
       recorder.start(250);
@@ -996,6 +1008,7 @@ export function ShortVideosView({
         tags: newTags.trim() || extractedTags || '#LM',
         videoUrl: uploadedVideoUrl || '/uploads/seed/reel1.mp4',
         posterUrl: uploadedPosterUrl,
+        orientation: studioOrientation,
       });
       closeCreatorStudio();
       await loadVideos();
@@ -1151,7 +1164,7 @@ export function ShortVideosView({
                   style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
                   className="w-full h-full relative cursor-pointer select-none"
                 >
-                  {/* Mount active <video> ONLY on the visible slide — pointer-events-none blocks mobile contextmenu so 2x long-press NEVER breaks! */}
+                  {/* Mount active <video> ONLY on the visible slide — supports BOTH Portrait (9:16) & Landscape (16:9)! */}
                   {idx === activeIndex ? (
                     <video
                       ref={el => {
@@ -1183,7 +1196,9 @@ export function ShortVideosView({
                           setDuration(e.currentTarget.duration);
                         }
                       }}
-                      className="pointer-events-none w-full h-full object-cover bg-black select-none"
+                      className={`pointer-events-none w-full h-full bg-black select-none ${
+                        v.orientation === 'landscape' ? 'object-contain' : 'object-cover'
+                      }`}
                     />
                   ) : v.posterUrl ? (
                     <img
@@ -1191,10 +1206,12 @@ export function ShortVideosView({
                       alt=""
                       loading="lazy"
                       draggable={false}
-                      className="pointer-events-none w-full h-full object-cover bg-black select-none"
+                      className={`pointer-events-none w-full h-full bg-black select-none ${
+                        v.orientation === 'landscape' ? 'object-contain' : 'object-cover'
+                      }`}
                     />
                   ) : (
-                    <div className="pointer-events-none w-full h-full bg-gradient-to-b from-[#14141A] via-[#09090D] to-black" />
+                    <div className="pointer-events-none w-full h-full bg-[#0C0C10]" />
                   )}
 
                   {idx === activeIndex && videoBuffering && !paused && (
@@ -1456,46 +1473,30 @@ export function ShortVideosView({
           })}
         </Swiper>
 
+        {/* Compact Subtle Pill Toast (Zero boxy banners!) */}
         {shareToast && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-1.5 rounded-full bg-[#16161C]/95 border border-white/15 text-xs text-white shadow-xl">
-            {shareToast}
+          <div className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-1.5 rounded-full bg-[#1C1D24]/95 text-xs font-semibold text-white inline-flex items-center gap-1.5 whitespace-nowrap">
+            <Check className="w-3.5 h-3.5 text-[#25F4EE]" strokeWidth={2.5} />
+            <span>{shareToast}</span>
           </div>
         )}
 
-        {/* FULL TIKTOK BOTTOM SHARE SHEET (Centered Inside Video Stage Like Live — ZERO X Button!) */}
+        {/* SLEEK COMPACT 2026 SHARE SHEET (Zero bulky preview box, crisp matte rows!) */}
         {shareVideo && (
-          <div onClick={() => setShareVideo(null)} className="absolute inset-0 z-50 bg-black/65 flex items-end justify-center">
+          <div onClick={() => setShareVideo(null)} className="absolute inset-0 z-50 bg-black/58 flex items-end justify-center">
             <div
               onClick={e => e.stopPropagation()}
-              style={{ paddingBottom: 'max(22px, calc(env(safe-area-inset-bottom) + 14px))' }}
-              className="w-full rounded-t-[26px] bg-[#131318]/97 backdrop-blur-2xl border-t border-white/[0.12] pt-2.5 px-4 space-y-4"
+              style={{ paddingBottom: 'max(20px, calc(env(safe-area-inset-bottom) + 12px))' }}
+              className="w-full rounded-t-[24px] bg-[#181920] border-t border-white/[0.1] pt-2.5 px-4 space-y-4"
             >
-            {/* Drag Handle Pill + Rich Video Preview Card */}
             <div className="flex flex-col items-center gap-2">
-              <div className="w-10 h-1 rounded-full bg-white/25" />
-              <span className="text-xs font-semibold text-white">مشاركة فيديو نبض</span>
-            </div>
-
-            <div className="rounded-2xl overflow-hidden bg-[#0A0A0D] border border-white/[0.1] flex items-stretch text-start">
-              {shareVideo.posterUrl ? (
-                <img src={shareVideo.posterUrl} alt="" className="w-16 h-20 object-cover shrink-0 bg-black" />
-              ) : (
-                <div className="w-16 h-20 bg-black shrink-0 flex items-center justify-center">
-                  <UserAvatar initials={shareVideo.avatarInitials} avatarUrl={shareVideo.avatarUrl} size={36} />
-                </div>
-              )}
-              <div className="flex-1 min-w-0 p-2.5 flex flex-col justify-center gap-0.5">
-                <div className="text-[11px] text-[#A1A1AA] font-mono-num truncate">@{shareVideo.username}</div>
-                <div className="text-xs font-semibold text-white line-clamp-2 leading-snug">{shareVideo.title}</div>
-                <div dir="ltr" className="text-[10px] font-mono-num text-[#7A7A85] truncate">
-                  {`${window.location.origin}/pulse/${shareVideo.id}`}
-                </div>
-              </div>
+              <div className="w-9 h-1 rounded-full bg-white/25" />
+              <span className="text-[13px] font-bold text-white">مشاركة</span>
             </div>
 
             {/* Row 1: Direct LM Contacts */}
             {contacts.length > 0 && (
-              <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pb-1">
+              <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pb-0.5">
                 {contacts.map(c => {
                   const sent = Boolean(sentToIds[c.id]);
                   return (
@@ -2227,13 +2228,13 @@ export function ShortVideosView({
           {studioStep === 'capture' ? (
             /* STEP 1: Full-Screen TikTok Camera + Gallery Studio */
             <div className="relative flex-1 w-full max-w-[540px] mx-auto bg-black flex flex-col overflow-hidden">
-              {/* Live Camera Feed */}
+              {/* Live Camera Feed (Adapts seamlessly between Portrait 9:16 & Landscape 16:9!) */}
               <video
                 ref={studioVideoPreviewRef}
                 autoPlay
                 muted
                 playsInline
-                className={`absolute inset-0 w-full h-full object-cover ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''} ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
+                className={`absolute inset-0 w-full h-full ${studioOrientation === 'landscape' ? 'object-contain bg-black' : 'object-cover'} ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''} ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
               />
 
               {/* Clean Fallback Canvas if Camera isn't active */}
@@ -2284,14 +2285,36 @@ export function ShortVideosView({
                   </span>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => setCameraFacing(f => (f === 'user' ? 'environment' : 'user'))}
-                  aria-label="تبديل الكاميرا"
-                  className="w-10 h-10 rounded-full bg-black/55 text-white flex items-center justify-center cursor-pointer"
-                >
-                  <RefreshCw className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isRecordingClip}
+                    onClick={() => setStudioOrientation(o => (o === 'portrait' ? 'landscape' : 'portrait'))}
+                    aria-label="تغيير اتجاه الفيديو"
+                    className="h-10 px-3 rounded-full bg-black/55 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-45"
+                  >
+                    {studioOrientation === 'landscape' ? (
+                      <>
+                        <Monitor className="w-4 h-4 text-[#25F4EE]" />
+                        <span>عريض</span>
+                      </>
+                    ) : (
+                      <>
+                        <Smartphone className="w-4 h-4 text-white" />
+                        <span>طولي</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCameraFacing(f => (f === 'user' ? 'environment' : 'user'))}
+                    aria-label="تبديل الكاميرا"
+                    className="w-10 h-10 rounded-full bg-black/55 text-white flex items-center justify-center cursor-pointer"
+                  >
+                    <RefreshCw className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
               <div className="flex-1" />
@@ -2403,12 +2426,16 @@ export function ShortVideosView({
                     className="flex-1 bg-transparent text-[15px] text-[#F1F1F2] placeholder:text-[#71717A] leading-relaxed outline-none resize-none"
                   />
 
-                  {/* Compact Vertical Cover Thumbnail */}
-                  <div className="w-24 h-36 rounded-xl overflow-hidden bg-black border border-white/[0.1] shrink-0 relative flex items-center justify-center">
+                  {/* Adaptive Video Cover Thumbnail (Matches Portrait or Landscape!) */}
+                  <div
+                    className={`rounded-xl overflow-hidden bg-black border border-white/[0.1] shrink-0 relative flex items-center justify-center transition-all ${
+                      studioOrientation === 'landscape' ? 'w-36 h-24' : 'w-24 h-36'
+                    }`}
+                  >
                     {uploadedPosterUrl ? (
-                      <img src={uploadedPosterUrl} alt="" className="w-full h-full object-cover" />
+                      <img src={uploadedPosterUrl} alt="" className={`w-full h-full ${studioOrientation === 'landscape' ? 'object-contain' : 'object-cover'}`} />
                     ) : localPreviewUrl || uploadedVideoUrl ? (
-                      <video src={localPreviewUrl || uploadedVideoUrl || ''} muted playsInline className="w-full h-full object-cover" />
+                      <video src={localPreviewUrl || uploadedVideoUrl || ''} muted playsInline className={`w-full h-full ${studioOrientation === 'landscape' ? 'object-contain' : 'object-cover'}`} />
                     ) : (
                       <Film className="w-6 h-6 text-[#71717A]" />
                     )}
@@ -2425,6 +2452,37 @@ export function ShortVideosView({
                       className="absolute inset-x-0 bottom-0 py-1.5 bg-black/75 text-[10.5px] font-semibold text-white text-center cursor-pointer"
                     >
                       تغيير الغلاف
+                    </button>
+                  </div>
+                </div>
+
+                {/* Orientation Switcher: User Freely Chooses Portrait (9:16) OR Landscape (16:9)! */}
+                <div className="flex items-center justify-between gap-3 py-1">
+                  <span className="text-xs font-semibold text-[#D4D4D8]">وضع عرض الفيديو</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStudioOrientation('portrait')}
+                      className={`h-9 px-3.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        studioOrientation === 'portrait'
+                          ? 'bg-[#FE2C55] text-white'
+                          : 'bg-[#1E1F28] text-[#A1A1AA] hover:text-white'
+                      }`}
+                    >
+                      <Smartphone className="w-4 h-4" />
+                      <span>طولي 9:16</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStudioOrientation('landscape')}
+                      className={`h-9 px-3.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        studioOrientation === 'landscape'
+                          ? 'bg-[#25F4EE] text-black font-bold'
+                          : 'bg-[#1E1F28] text-[#A1A1AA] hover:text-white'
+                      }`}
+                    >
+                      <Monitor className="w-4 h-4" />
+                      <span>عريض 16:9</span>
                     </button>
                   </div>
                 </div>

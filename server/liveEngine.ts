@@ -13,6 +13,10 @@ export interface RoomRuntimeState {
   highlightQueue: HighlightComment[];
   recentMessages: LiveChatMessage[];
   highlightsEnabled: boolean;
+  commentsEnabled: boolean;
+  slowModeSec: number;
+  hostMicMuted: boolean;
+  hostCamOff: boolean;
   cooldownSec: number;
   bannedUserIds: string[];
   platformCutPct: number;
@@ -68,8 +72,13 @@ class LiveBroadcastEngine {
     highlightQueue: HighlightComment[];
     recentMessages: LiveChatMessage[];
     lastHighlightByUser: Map<string, number>;
+    lastCommentByUser: Map<string, number>;
     bannedUsers: Set<string>;
     highlightsEnabled: boolean;
+    commentsEnabled: boolean;
+    slowModeSec: number;
+    hostMicMuted: boolean;
+    hostCamOff: boolean;
     cooldownSec: number;
     platformCutPct: number;
     totalGiftsEgp: number;
@@ -129,8 +138,13 @@ class LiveBroadcastEngine {
       highlightQueue: [] as HighlightComment[],
       recentMessages: initialMessages,
       lastHighlightByUser: new Map<string, number>(),
+      lastCommentByUser: new Map<string, number>(),
       bannedUsers: new Set<string>(),
       highlightsEnabled: row ? Boolean(row.highlights_enabled) : true,
+      commentsEnabled: true,
+      slowModeSec: 0,
+      hostMicMuted: false,
+      hostCamOff: false,
       cooldownSec: row ? Number(row.cooldown_sec || 10) : 10,
       platformCutPct: row ? Number(row.platform_cut_pct || 25) : 25,
       totalGiftsEgp: row ? Number(row.total_gifts_egp || 0) : 0,
@@ -149,6 +163,10 @@ class LiveBroadcastEngine {
       highlightQueue: st.highlightQueue,
       recentMessages: st.recentMessages.slice(-250),
       highlightsEnabled: st.highlightsEnabled,
+      commentsEnabled: st.commentsEnabled,
+      slowModeSec: st.slowModeSec,
+      hostMicMuted: st.hostMicMuted,
+      hostCamOff: st.hostCamOff,
       cooldownSec: st.cooldownSec,
       bannedUserIds: Array.from(st.bannedUsers),
       platformCutPct: st.platformCutPct,
@@ -204,11 +222,24 @@ class LiveBroadcastEngine {
     roomId: string,
     user: UserProfile,
     text: string,
-    replyTo?: { id?: string; name?: string; text?: string }
+    replyTo?: { id?: string; name?: string; text?: string },
+    isHost = false
   ) {
     const st = this.ensureRoom(roomId);
-    if (st.bannedUsers.has(user.id)) {
+    if (!isHost && !st.commentsEnabled) {
+      return { ok: false, error: 'أوقف صاحب البث التعليقات مؤقتًا.' };
+    }
+    if (!isHost && st.bannedUsers.has(user.id)) {
       return { ok: false, error: 'غير مسموح بالتعليق في هذا البث.' };
+    }
+    if (!isHost && st.slowModeSec > 0) {
+      const now = Date.now();
+      const lastTs = st.lastCommentByUser.get(user.id) || 0;
+      const elapsed = (now - lastTs) / 1000;
+      if (elapsed < st.slowModeSec) {
+        return { ok: false, error: `وضع التهدئة مفعّل — انتظر ${Math.ceil(st.slowModeSec - elapsed)} ثانية.` };
+      }
+      st.lastCommentByUser.set(user.id, now);
     }
     const mod = this.checkModeration(text);
     if (!mod.ok) return { ok: false, error: mod.reason };
@@ -372,16 +403,51 @@ class LiveBroadcastEngine {
     return { ok: true, creatorShare, platformShare, totalGiftsEgp: st.totalGiftsEgp };
   }
 
-  moderate(roomId: string, action: 'delete_active' | 'toggle_highlights' | 'ban_user' | 'unban_user' | 'set_cooldown', payload?: { userId?: string; cooldownSec?: number }) {
+  moderate(
+    roomId: string,
+    action:
+      | 'delete_active'
+      | 'delete_message'
+      | 'toggle_highlights'
+      | 'toggle_comments'
+      | 'set_slow_mode'
+      | 'set_host_media'
+      | 'ban_user'
+      | 'unban_user'
+      | 'set_cooldown',
+    payload?: {
+      userId?: string;
+      messageId?: string;
+      cooldownSec?: number;
+      slowModeSec?: number;
+      commentsEnabled?: boolean;
+      micMuted?: boolean;
+      camOff?: boolean;
+    }
+  ) {
     const st = this.ensureRoom(roomId);
     if (action === 'delete_active') {
       st.activeHighlight = null;
       this.promoteNext(roomId);
+    } else if (action === 'delete_message' && payload?.messageId) {
+      st.recentMessages = st.recentMessages.filter(m => m.id !== payload.messageId);
+      if (st.activeHighlight?.id === payload.messageId) {
+        st.activeHighlight = null;
+        this.promoteNext(roomId);
+      }
     } else if (action === 'toggle_highlights') {
       st.highlightsEnabled = !st.highlightsEnabled;
       db.prepare('UPDATE live_rooms SET highlights_enabled = ? WHERE id = ?').run(st.highlightsEnabled ? 1 : 0, roomId);
+    } else if (action === 'toggle_comments') {
+      st.commentsEnabled = typeof payload?.commentsEnabled === 'boolean' ? payload.commentsEnabled : !st.commentsEnabled;
+    } else if (action === 'set_slow_mode' && typeof payload?.slowModeSec === 'number') {
+      st.slowModeSec = Math.max(0, Math.min(60, Math.floor(payload.slowModeSec)));
+    } else if (action === 'set_host_media') {
+      if (typeof payload?.micMuted === 'boolean') st.hostMicMuted = payload.micMuted;
+      if (typeof payload?.camOff === 'boolean') st.hostCamOff = payload.camOff;
     } else if (action === 'ban_user' && payload?.userId) {
       st.bannedUsers.add(payload.userId);
+      st.recentMessages = st.recentMessages.filter(m => m.userId !== payload.userId);
       if (st.activeHighlight?.userId === payload.userId) {
         st.activeHighlight = null;
         this.promoteNext(roomId);

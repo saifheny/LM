@@ -9,6 +9,7 @@ import {
   Play,
   Repeat2,
   Share2,
+  ShieldBan,
   UserCheck,
   UserPlus,
   X,
@@ -66,6 +67,8 @@ export function ProfileView({
 }: ProfileViewProps) {
   const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
+  const [blockedByMe, setBlockedByMe] = useState(false);
+  const [isBlockedFromViewing, setIsBlockedFromViewing] = useState(false);
   const [hasActiveStory, setHasActiveStory] = useState(false);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
@@ -109,11 +112,14 @@ export function ProfileView({
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
+    setIsBlockedFromViewing(false);
     try {
       const res = await apiGet<{
         ok: boolean;
+        blocked?: boolean;
         user: UserProfile;
         isFollowing: boolean;
+        blockedByMe?: boolean;
         hasActiveStory?: boolean;
         posts: SocialPost[];
         videos: ShortVideoItem[];
@@ -124,6 +130,7 @@ export function ProfileView({
       }>(`/api/users/${profileUserId}/profile?viewerId=${currentUser.id}`);
       setProfileUser(res.user);
       setIsFollowing(res.isFollowing);
+      setBlockedByMe(Boolean(res.blockedByMe));
       setHasActiveStory(Boolean(res.hasActiveStory));
       setPosts(res.posts);
       setVideos(res.videos);
@@ -131,12 +138,28 @@ export function ProfileView({
       setSavedVideos(res.savedVideos || []);
       setFollowersList(res.followersList || []);
       setFollowingList(res.followingList || []);
-    } catch {
-      // ignore
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('غير متاح') || msg.includes('403')) {
+        setIsBlockedFromViewing(true);
+        setProfileUser(null);
+      }
     } finally {
       setLoading(false);
     }
   }, [profileUserId, currentUser.id]);
+
+  async function toggleBlockUser() {
+    if (!profileUser || isMe) return;
+    if (blockedByMe) {
+      await api(`/api/users/${profileUser.id}/block?blockerId=${encodeURIComponent(currentUser.id)}`, { method: 'DELETE' });
+      setBlockedByMe(false);
+    } else {
+      await apiPost(`/api/users/${profileUser.id}/block`, { blockerId: currentUser.id });
+      setBlockedByMe(true);
+      setIsFollowing(false);
+    }
+  }
 
   useEffect(() => {
     setPeopleSheet(null);
@@ -343,6 +366,20 @@ export function ProfileView({
     );
   }
 
+  if (isBlockedFromViewing) {
+    return (
+      <div className="min-h-full w-full bg-[#121212] flex flex-col items-center justify-center gap-3 px-6 text-center">
+        <div className="w-14 h-14 rounded-full bg-[#1E1F28] flex items-center justify-center text-[#FF595A]">
+          <ShieldBan className="w-6 h-6" />
+        </div>
+        <div className="text-base font-bold text-white">هذا الملف الشخصي غير متاح</div>
+        <p className="text-xs text-[#8E8E93] max-w-xs leading-relaxed">
+          قام صاحب هذا الحساب بتقييد الوصول إلى ملفه الشخصي وبثوثه المباشرة.
+        </p>
+      </div>
+    );
+  }
+
   if (!profileUser) {
     return (
       <div className="min-h-full w-full bg-[#121212] flex items-center justify-center text-xs text-[#7A7A85]">
@@ -482,6 +519,19 @@ export function ProfileView({
                   >
                     <MessageCircle className="w-4 h-4" />
                     <span>{lang === 'ar' ? 'مراسلة' : 'Message'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleBlockUser}
+                    title={blockedByMe ? 'إلغاء الحظر' : 'حظر هذا المستخدم'}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-colors ${
+                      blockedByMe
+                        ? 'bg-[#FF595A]/20 text-[#FF595A] hover:bg-[#FF595A]/30'
+                        : 'bg-[#1E1F28] hover:bg-[#FF595A]/15 text-[#A1A1AA] hover:text-[#FF595A]'
+                    }`}
+                  >
+                    <ShieldBan className="w-4 h-4" />
                   </button>
                 </>
               )}

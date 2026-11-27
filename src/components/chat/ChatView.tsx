@@ -78,10 +78,12 @@ const WORLD_LANGUAGES = [
 ];
 
 const CHAT_WALLPAPERS = [
-  { id: 'lm-wp-telegram', label: 'تيليجرام', labelEn: 'Telegram', swatch: '#142336', accent: '#60A5FA' },
-  { id: 'lm-wp-whatsapp', label: 'واتساب', labelEn: 'WhatsApp', swatch: '#0E1F24', accent: '#34D399' },
-  { id: 'lm-wp-aurora', label: 'أورورا', labelEn: 'Aurora', swatch: '#1D1738', accent: '#A78BFA' },
-  { id: 'lm-wp-emerald', label: 'زمرد', labelEn: 'Emerald', swatch: '#0F2723', accent: '#2DD4BF' },
+  { id: 'lm-wp-telegram', label: 'تيليجرام كلاسيك', labelEn: 'Telegram Classic', swatch: '#14263D', accent: '#38BDF8' },
+  { id: 'lm-wp-whatsapp', label: 'واتساب الداكن', labelEn: 'WhatsApp Dark', swatch: '#0E2024', accent: '#34D399' },
+  { id: 'lm-wp-aurora', label: 'أورورا البنفسجي', labelEn: 'Aurora Violet', swatch: '#22153E', accent: '#C084FC' },
+  { id: 'lm-wp-emerald', label: 'الزمرد الليلي', labelEn: 'Midnight Emerald', swatch: '#0E2924', accent: '#2DD4BF' },
+  { id: 'lm-wp-sunset', label: 'غروب دافئ', labelEn: 'Warm Sunset', swatch: '#291521', accent: '#FB7185' },
+  { id: 'lm-wp-obsidian', label: 'أوبسيديان صافي', labelEn: 'Obsidian Matte', swatch: '#14171F', accent: '#94A3B8' },
 ] as const;
 
 function isMostlyLatin(text: string): boolean {
@@ -1578,7 +1580,10 @@ export function ChatView({
           )
         )}
 
-        {/* Open Message Stream on Authentic Telegram / WhatsApp Dark Doodle Wallpaper */}
+        {/* Stationary Multi-Layer Telegram/WhatsApp Gradient-Masked Doodle Wallpaper Behind Scrolling Thread! */}
+        <div className={`lm-chat-backdrop ${chatWallpaper}`} />
+
+        {/* Open Message Stream Floating Cleanly Above Stationary Wallpaper */}
         <div
           onClick={() => {
             setWallpaperMenuOpen(false);
@@ -1590,7 +1595,7 @@ export function ChatView({
               setMsgSearchQ('');
             }
           }}
-          className={`flex-1 overflow-y-auto px-3 sm:px-4 pt-20 pb-28 space-y-2 lm-chat-wallpaper ${chatWallpaper}`}
+          className="relative z-10 flex-1 overflow-y-auto px-3 sm:px-4 pt-20 pb-28 space-y-2"
         >
           {activeConv?.pinnedMessage && (
             <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#17212B]/88 backdrop-blur-md border border-[#94B3D6]/[0.15] flex items-center gap-2 text-[11.5px] text-[#B8CAE0] mb-2 shadow-md">

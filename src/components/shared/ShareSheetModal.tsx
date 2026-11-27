@@ -3,7 +3,7 @@ import { Check, Flag, Image as ImageIcon, Link2, Send, Share2 } from 'lucide-rea
 import { ConversationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar } from './LmBrandMark';
 import { SharePlatformIcons } from './Icons2026Pro';
-import { CloseOrbButton, StudioModalOverlay } from './ModalChrome2026';
+import { CloseOrbButton } from './ModalChrome2026';
 import { apiGet, apiPost } from '../../lib/api';
 
 export interface SharePayload {
@@ -358,101 +358,76 @@ export function ShareSheetModal({
   ];
 
   return (
-    <StudioModalOverlay zClass="z-[75]" onClose={onClose}>
-      <div className="p-4 sm:p-5 space-y-4">
-        {/* Top Header */}
-        <div className="flex items-center justify-between pb-2.5 border-b border-[#94B3D6]/[0.12]">
-          <div className="flex items-center gap-2 text-sm font-bold text-white">
-            <Share2 className="w-4 h-4 text-[#A8C5E8]" />
-            <span>مشاركة {badgeLabel}</span>
-          </div>
-          <CloseOrbButton onClick={onClose} />
-        </div>
-
-        {/* Rich Live Link Preview Card (Zero broken lm:neutral thumbnails!) */}
-        <div className="rounded-2xl overflow-hidden bg-[#101925] border border-[#94B3D6]/[0.14] flex items-stretch">
-          {validPreviewImg ? (
-            <img
-              src={validPreviewImg}
-              alt=""
-              className="w-24 h-24 object-cover shrink-0 bg-[#0B121B]"
-            />
-          ) : (
-            <div className="w-20 shrink-0 bg-gradient-to-br from-[#1C2A3B] to-[#131D2B] flex items-center justify-center border-e border-[#94B3D6]/[0.12]">
-              {active.kind === 'app' ? (
-                <LmBrandMark size={42} />
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[76] bg-black/62 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ paddingBottom: 'max(20px, calc(env(safe-area-inset-bottom) + 12px))' }}
+        className="w-full sm:max-w-[440px] rounded-t-[24px] sm:rounded-[24px] bg-[#181920] border-t sm:border border-white/[0.1] px-4 pt-2.5 space-y-4"
+      >
+        {/* Sleek Drag Handle + Compact Single-Line Title (ZERO Bulky Tall Box!) */}
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-9 h-1 rounded-full bg-white/25 sm:hidden" />
+          <div className="w-full flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              {validPreviewImg ? (
+                <img src={validPreviewImg} alt="" className="w-9 h-9 rounded-xl object-cover shrink-0 bg-black" />
+              ) : active.kind === 'app' ? (
+                <LmBrandMark size={30} />
               ) : (
-                <UserAvatar
-                  initials={active.avatarInitials || 'LM'}
-                  avatarUrl={active.avatarUrl}
-                  size={46}
-                />
+                <UserAvatar initials={active.avatarInitials || 'LM'} avatarUrl={active.avatarUrl} size={34} />
               )}
+              <div className="min-w-0">
+                <div className="text-[13px] font-bold text-white truncate">{active.title}</div>
+                <div className="text-[11px] text-[#8E8E93] truncate">{active.subtitle || badgeLabel}</div>
+              </div>
             </div>
-          )}
-
-          <div className="flex-1 min-w-0 p-3 flex flex-col justify-center gap-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#7C5CFF]/20 text-[#DDD6FE]">
-                {badgeLabel}
-              </span>
-              {active.subtitle && (
-                <span className="text-[11px] text-[#8DA2BC] font-mono-num truncate">{active.subtitle}</span>
-              )}
-            </div>
-            <div className="text-[13px] font-bold text-white line-clamp-1">{active.title}</div>
-            {active.snippet && (
-              <div className="text-[12px] text-[#9EB2C8] line-clamp-2 leading-snug">{active.snippet}</div>
-            )}
-            <div dir="ltr" className="text-[10.5px] font-mono-num text-[#7E93AB] truncate pt-0.5">
-              {fullUrl}
-            </div>
+            <CloseOrbButton size="sm" onClick={onClose} />
           </div>
         </div>
 
         {/* Send Directly to LM Chat Contacts */}
         {contacts.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-[11.5px] font-medium text-[#96A7BC]">إرسال مباشر داخل LM</div>
-            <div className="flex items-center gap-3 overflow-x-auto no-scrollbar pb-1">
-              {contacts.slice(0, 10).map(c => {
-                const sent = Boolean(sentIds[c.id]);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => sendToLmChat(c)}
-                    className="flex flex-col items-center gap-1.5 shrink-0 w-16 cursor-pointer group"
-                  >
-                    <div className="relative">
-                      <UserAvatar initials={c.title.slice(0, 2)} avatarUrl={c.avatarUrl} size={46} />
-                      <span
-                        className={`absolute -bottom-0.5 -end-0.5 w-5 h-5 rounded-full flex items-center justify-center border-2 border-[#16212E] ${
-                          sent ? 'bg-[#10B981] text-black' : 'bg-[#7C5CFF] text-white group-hover:scale-110 transition-transform'
-                        }`}
-                      >
-                        {sent ? <Check className="w-3 h-3" strokeWidth={2.6} /> : <Send className="w-2.5 h-2.5" />}
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-[#D7E3F0] truncate w-full text-center">{c.title.split(' ')[0]}</span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pb-0.5">
+            {contacts.slice(0, 10).map(c => {
+              const sent = Boolean(sentIds[c.id]);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => sendToLmChat(c)}
+                  className="flex flex-col items-center gap-1.5 shrink-0 w-16 cursor-pointer group"
+                >
+                  <div className="relative">
+                    <UserAvatar initials={c.title.slice(0, 2)} avatarUrl={c.avatarUrl} size={46} />
+                    <span
+                      className={`absolute -bottom-0.5 -end-0.5 w-5 h-5 rounded-full flex items-center justify-center border-2 border-[#181920] ${
+                        sent ? 'bg-[#22C55E] text-black' : 'bg-[#FE2C55] text-white'
+                      }`}
+                    >
+                      {sent ? <Check className="w-3 h-3" strokeWidth={2.6} /> : <Send className="w-2.5 h-2.5" />}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-[#E4E4E7] truncate w-full text-center">{c.title.split(' ')[0]}</span>
+                </button>
+              );
+            })}
           </div>
         )}
 
-        {/* External Platforms + Copy + Image Card Share + Native Share */}
-        <div className="flex items-center gap-3 overflow-x-auto no-scrollbar pt-2.5 border-t border-[#94B3D6]/[0.12]">
+        {/* Compact Horizontal Share Actions Row (Uniform Flat Matte Circles — ZERO Glow!) */}
+        <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar pt-3 border-t border-white/[0.08]">
           <button
             type="button"
             onClick={copyLink}
             className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
           >
-            <div className="w-11 h-11 rounded-full bg-[#223244] hover:bg-[#2C4056] text-white flex items-center justify-center border border-[#94B3D6]/[0.18] transition-colors">
-              {copied ? <Check className="w-4 h-4 text-[#34D399]" /> : <Link2 className="w-4 h-4" />}
+            <div className="w-12 h-12 rounded-full bg-[#242630] hover:bg-[#2F3240] text-white flex items-center justify-center transition-colors">
+              {copied ? <Check className="w-5 h-5 text-[#25F4EE]" /> : <Link2 className="w-5 h-5" />}
             </div>
-            <span className="text-[10.5px] text-[#D7E3F0] truncate w-full text-center">
+            <span className="text-[10.5px] text-[#D4D4D8] truncate w-full text-center">
               {copied ? 'تم النسخ' : 'نسخ الرابط'}
             </span>
           </button>
@@ -463,11 +438,11 @@ export function ShareSheetModal({
             onClick={shareAsImageCard}
             className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer disabled:opacity-50"
           >
-            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#7C5CFF] to-[#498AF5] text-white flex items-center justify-center shadow-lg transition-transform active:scale-95">
-              <ImageIcon className="w-4 h-4" />
+            <div className="w-12 h-12 rounded-full bg-[#25F4EE] text-black flex items-center justify-center transition-transform active:scale-95">
+              <ImageIcon className="w-5 h-5" />
             </div>
-            <span className="text-[10.5px] text-[#D7E3F0] truncate w-full text-center">
-              {sharingCard ? 'جارٍ...' : 'بطاقة صورة'}
+            <span className="text-[10.5px] text-[#D4D4D8] truncate w-full text-center">
+              {sharingCard ? 'جارٍ...' : 'صورة'}
             </span>
           </button>
 
@@ -477,10 +452,10 @@ export function ShareSheetModal({
               onClick={triggerNativeShare}
               className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
             >
-              <div className="w-11 h-11 rounded-full bg-white text-[#0E1621] flex items-center justify-center transition-transform active:scale-95">
-                <Share2 className="w-4 h-4" />
+              <div className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center transition-transform active:scale-95">
+                <Share2 className="w-5 h-5" />
               </div>
-              <span className="text-[10.5px] text-[#D7E3F0] truncate w-full text-center">مشاركة</span>
+              <span className="text-[10.5px] text-[#D4D4D8] truncate w-full text-center">المزيد</span>
             </button>
           )}
 
@@ -498,11 +473,11 @@ export function ShareSheetModal({
             >
               <div
                 style={{ backgroundColor: t.bg }}
-                className="w-11 h-11 rounded-full flex items-center justify-center border border-white/[0.1]"
+                className="w-12 h-12 rounded-full flex items-center justify-center"
               >
                 {SharePlatformIcons[t.id]}
               </div>
-              <span className="text-[10.5px] text-[#96A7BC] truncate w-full text-center">{t.label}</span>
+              <span className="text-[10.5px] text-[#A1A1AA] truncate w-full text-center">{t.label}</span>
             </a>
           ))}
 
@@ -516,18 +491,22 @@ export function ShareSheetModal({
               }}
               className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
             >
-              <div className="w-11 h-11 rounded-full bg-[#FB7185]/16 hover:bg-[#FB7185]/28 text-[#FDA4AF] border border-[#FB7185]/28 flex items-center justify-center transition-colors">
-                <Flag className="w-4 h-4" />
+              <div className="w-12 h-12 rounded-full bg-[#FF595A]/15 hover:bg-[#FF595A]/25 text-[#FF595A] flex items-center justify-center transition-colors">
+                <Flag className="w-5 h-5" />
               </div>
-              <span className="text-[10.5px] text-[#FDA4AF] truncate w-full text-center">إبلاغ</span>
+              <span className="text-[10.5px] text-[#FF595A] truncate w-full text-center">إبلاغ</span>
             </button>
           )}
         </div>
 
         {toast && (
-          <div className="text-center text-xs text-[#6EE7B7] font-medium pt-0.5">{toast}</div>
+          <div className="flex justify-center">
+            <span className="px-3.5 py-1 rounded-full bg-white/[0.08] text-xs text-[#25F4EE] font-semibold">
+              {toast}
+            </span>
+          </div>
         )}
       </div>
-    </StudioModalOverlay>
+    </div>
   );
 }

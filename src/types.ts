@@ -165,6 +165,7 @@ export interface ShortVideoItem {
   videoUrl: string | null;
   posterUrl: string | null;
   scenePreset: string;
+  orientation?: 'portrait' | 'landscape';
   durationSec: number;
   likesCount: number;
   commentsCount: number;
@@ -332,6 +333,10 @@ export interface LiveRoomState {
   highlightQueue: HighlightComment[];
   recentMessages: LiveChatMessage[];
   highlightsEnabled: boolean;
+  commentsEnabled?: boolean;
+  slowModeSec?: number;
+  hostMicMuted?: boolean;
+  hostCamOff?: boolean;
   cooldownSec: number;
   bannedUserIds: string[];
   platformCutPct: number;

@@ -346,6 +346,13 @@ export function initDatabase() {
       PRIMARY KEY (follower_id, following_id)
     );
 
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      blocker_id TEXT NOT NULL,
+      blocked_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (blocker_id, blocked_id)
+    );
+
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -450,6 +457,11 @@ export function initDatabase() {
   }
   try {
     db.exec("ALTER TABLE live_rooms ADD COLUMN orientation TEXT DEFAULT 'portrait';");
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec("ALTER TABLE short_videos ADD COLUMN orientation TEXT DEFAULT 'portrait';");
   } catch {
     // column already exists
   }

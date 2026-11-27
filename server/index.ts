@@ -958,11 +958,84 @@ app.get('/api/users/:id', (req, res) => {
   res.json({ ok: true, user });
 });
 
+function isUserBlockedBy(ownerId: string, viewerId: string): boolean {
+  if (!ownerId || !viewerId || ownerId === viewerId) return false;
+  return Boolean(
+    db.prepare('SELECT 1 FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').get(ownerId, viewerId)
+  );
+}
+
+app.get('/api/users/:id/blocks', (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_initials, u.avatar_url, b.created_at
+    FROM user_blocks b
+    JOIN users u ON b.blocked_id = u.id
+    WHERE b.blocker_id = ?
+    ORDER BY b.created_at DESC
+  `).all(req.params.id) as Array<Record<string, unknown>>;
+  res.json({
+    ok: true,
+    blockedUsers: rows.map(r => ({
+      id: String(r.id),
+      username: String(r.username || ''),
+      displayName: String(r.display_name || 'مستخدم'),
+      avatarColor: String(r.avatar_color || '#27272A'),
+      avatarInitials: String(r.avatar_initials || 'LM'),
+      avatarUrl: r.avatar_url ? String(r.avatar_url) : null,
+      createdAt: String(r.created_at || ''),
+    })),
+  });
+});
+
+app.post('/api/users/:id/block', (req, res) => {
+  const targetId = req.params.id;
+  const { blockerId } = req.body as { blockerId?: string };
+  if (!blockerId || !targetId || blockerId === targetId) {
+    return res.status(400).json({ ok: false, error: 'طلب حظر غير صالح.' });
+  }
+  db.prepare('INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id) VALUES (?, ?)').run(blockerId, targetId);
+  db.prepare('DELETE FROM user_follows WHERE (follower_id = ? AND following_id = ?) OR (follower_id = ? AND following_id = ?)').run(
+    blockerId,
+    targetId,
+    targetId,
+    blockerId
+  );
+  // Immediately ban user from all active live broadcasts hosted by blockerId
+  const hostRooms = db.prepare('SELECT id FROM live_rooms WHERE host_id = ? AND is_active = 1').all(blockerId) as Array<{ id: string }>;
+  for (const hr of hostRooms) {
+    liveEngine.moderate(hr.id, 'ban_user', { userId: targetId });
+  }
+  broadcast('live:user_blocked', { hostId: blockerId, blockedUserId: targetId });
+  res.json({ ok: true, blocked: true });
+});
+
+app.delete('/api/users/:id/block', (req, res) => {
+  const targetId = req.params.id;
+  const blockerId = String(req.query.blockerId || '');
+  if (!blockerId || !targetId) {
+    return res.status(400).json({ ok: false, error: 'بيانات إلغاء الحظر غير مكتملة.' });
+  }
+  db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').run(blockerId, targetId);
+  const hostRooms = db.prepare('SELECT id FROM live_rooms WHERE host_id = ? AND is_active = 1').all(blockerId) as Array<{ id: string }>;
+  for (const hr of hostRooms) {
+    liveEngine.moderate(hr.id, 'unban_user', { userId: targetId });
+  }
+  res.json({ ok: true, blocked: false });
+});
+
 app.get('/api/users/:id/profile', (req, res) => {
   const targetId = req.params.id;
   const viewerId = String(req.query.viewerId || '');
   const user = getUserOrNull(targetId);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+  if (viewerId && isUserBlockedBy(targetId, viewerId)) {
+    return res.status(403).json({
+      ok: false,
+      blocked: true,
+      error: 'هذا الملف الشخصي غير متاح لك.',
+    });
+  }
+  const blockedByMe = viewerId ? isUserBlockedBy(viewerId, targetId) : false;
 
   const isFollowing = viewerId
     ? Boolean(db.prepare('SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?').get(viewerId, targetId))
@@ -1099,6 +1172,7 @@ app.get('/api/users/:id/profile', (req, res) => {
     videoUrl: r.video_url,
     posterUrl: r.poster_url,
     scenePreset: r.scene_preset,
+    orientation: String(r.orientation || 'portrait') === 'landscape' ? 'landscape' : 'portrait',
     durationSec: Number(r.duration_sec),
     likesCount: Number(r.likes_count),
     commentsCount: Number(r.comments_count),
@@ -1134,6 +1208,7 @@ app.get('/api/users/:id/profile', (req, res) => {
     videoUrl: r.video_url,
     posterUrl: r.poster_url,
     scenePreset: r.scene_preset,
+    orientation: String(r.orientation || 'portrait') === 'landscape' ? 'landscape' : 'portrait',
     durationSec: Number(r.duration_sec),
     likesCount: Number(r.likes_count),
     commentsCount: Number(r.comments_count),
@@ -1198,7 +1273,7 @@ app.get('/api/users/:id/profile', (req, res) => {
 
   const hasActiveStory = getActiveStoryUserSet().has(targetId);
 
-  res.json({ ok: true, user, isFollowing, hasActiveStory, posts, videos, savedPosts, savedVideos, followersList, followingList });
+  res.json({ ok: true, user, isFollowing, blockedByMe, hasActiveStory, posts, videos, savedPosts, savedVideos, followersList, followingList });
 });
 
 app.patch('/api/users/:id', (req, res) => {
@@ -1633,6 +1708,7 @@ app.get('/api/hashtags/:tag', (req, res) => {
       videoUrl: r.video_url,
       posterUrl: r.poster_url,
       scenePreset: r.scene_preset,
+      orientation: String(r.orientation || 'portrait') === 'landscape' ? 'landscape' : 'portrait',
       durationSec: Number(r.duration_sec),
       likesCount: Number(r.likes_count),
       commentsCount: Number(r.comments_count),
@@ -2514,6 +2590,7 @@ app.get('/api/videos', (req, res) => {
       videoUrl: r.video_url,
       posterUrl: r.poster_url,
       scenePreset: r.scene_preset,
+      orientation: String(r.orientation || 'portrait') === 'landscape' ? 'landscape' : 'portrait',
       durationSec: Number(r.duration_sec),
       likesCount: Number(r.likes_count),
       commentsCount: Number(r.comments_count),
@@ -2543,16 +2620,18 @@ app.get('/api/videos', (req, res) => {
 });
 
 app.post('/api/videos', (req, res) => {
-  const { userId, title, description, tags, videoUrl, posterUrl } = req.body as {
+  const { userId, title, description, tags, videoUrl, posterUrl, orientation } = req.body as {
     userId: string;
     title?: string;
     description?: string;
     tags?: string;
     videoUrl?: string;
     posterUrl?: string | null;
+    orientation?: 'portrait' | 'landscape';
   };
   const cleanTitle = (title || '').trim();
   const cleanDesc = (description || '').trim();
+  const orient = orientation === 'landscape' ? 'landscape' : 'portrait';
   if (!userId || (!cleanTitle && !videoUrl)) {
     return res.status(400).json({ ok: false, error: 'أضف فيديو أو عنوانًا للنشر.' });
   }
@@ -2560,21 +2639,22 @@ app.post('/api/videos', (req, res) => {
   const extractedTags = (cleanTitle.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ');
   const finalTags = (tags || '').trim() || extractedTags || '#LM';
   db.prepare(`
-    INSERT INTO short_videos (id, user_id, title, description, tags, video_url, poster_url)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, cleanTitle, cleanDesc, finalTags, videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null);
-  res.json({ ok: true, id, posterUrl: posterUrl || null });
+    INSERT INTO short_videos (id, user_id, title, description, tags, video_url, poster_url, orientation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, cleanTitle, cleanDesc, finalTags, videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null, orient);
+  res.json({ ok: true, id, posterUrl: posterUrl || null, orientation: orient });
 });
 
 app.patch('/api/videos/:id', (req, res) => {
-  const { userId, title, description, tags } = req.body as {
+  const { userId, title, description, tags, orientation } = req.body as {
     userId?: string;
     title?: string;
     description?: string;
     tags?: string;
+    orientation?: 'portrait' | 'landscape';
   };
-  const row = db.prepare('SELECT user_id, title, description, tags FROM short_videos WHERE id = ?').get(req.params.id) as
-    | { user_id: string; title: string; description: string; tags: string }
+  const row = db.prepare('SELECT user_id, title, description, tags, orientation FROM short_videos WHERE id = ?').get(req.params.id) as
+    | { user_id: string; title: string; description: string; tags: string; orientation?: string }
     | undefined;
   if (!row) return res.status(404).json({ ok: false, error: 'الفيديو غير موجود.' });
   if (userId && row.user_id !== userId) {
@@ -2583,10 +2663,12 @@ app.patch('/api/videos/:id', (req, res) => {
   const nextTitle = (title ?? row.title).trim() || row.title;
   const nextDesc = (description ?? row.description).trim();
   const nextTags = (tags ?? row.tags).trim();
-  db.prepare('UPDATE short_videos SET title = ?, description = ?, tags = ? WHERE id = ?').run(
+  const nextOrient = orientation === 'landscape' ? 'landscape' : orientation === 'portrait' ? 'portrait' : (row.orientation === 'landscape' ? 'landscape' : 'portrait');
+  db.prepare('UPDATE short_videos SET title = ?, description = ?, tags = ?, orientation = ? WHERE id = ?').run(
     nextTitle,
     nextDesc,
     nextTags,
+    nextOrient,
     req.params.id
   );
   res.json({
@@ -2594,7 +2676,8 @@ app.patch('/api/videos/:id', (req, res) => {
     title: nextTitle,
     description: nextDesc,
     tags: nextTags,
-    video: { id: req.params.id, title: nextTitle, description: nextDesc, tags: nextTags },
+    orientation: nextOrient,
+    video: { id: req.params.id, title: nextTitle, description: nextDesc, tags: nextTags, orientation: nextOrient },
   });
 });
 
@@ -3592,7 +3675,10 @@ app.get('/api/live/rooms', (req, res) => {
   const storyUsers = getActiveStoryUserSet();
   const liveReports = getReportCountsMap('live');
 
-  const mapped = rows.map((r, idx) => {
+  // Strictly hide live broadcasts hosted by users who have blocked this viewer!
+  const visibleRows = viewerId ? rows.filter(r => !isUserBlockedBy(String(r.host_id), viewerId)) : rows;
+
+  const mapped = visibleRows.map((r, idx) => {
     const runtime = liveEngine.getPublicState(String(r.id));
     const rCnt = liveReports.get(String(r.id)) || 0;
     return {
@@ -3695,6 +3781,13 @@ app.delete('/api/live/rooms/:id', (req, res) => {
 });
 
 app.get('/api/live/rooms/:id/state', (req, res) => {
+  const viewerId = String(req.query.userId || '');
+  if (viewerId) {
+    const room = db.prepare('SELECT host_id FROM live_rooms WHERE id = ?').get(req.params.id) as { host_id: string } | undefined;
+    if (room && isUserBlockedBy(room.host_id, viewerId)) {
+      return res.status(403).json({ ok: false, blocked: true, error: 'لا يمكنك مشاهدة هذا البث.' });
+    }
+  }
   res.json({ ok: true, state: liveEngine.getPublicState(req.params.id) });
 });
 
@@ -3708,16 +3801,21 @@ app.post('/api/live/rooms/:id/comment', (req, res) => {
   };
   const user = getUserOrNull(userId);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+  const room = db.prepare('SELECT host_id, title, category FROM live_rooms WHERE id = ?').get(req.params.id) as
+    | { host_id: string; title: string; category: string }
+    | undefined;
+  if (room && isUserBlockedBy(room.host_id, userId)) {
+    return res.status(403).json({ ok: false, blocked: true, error: 'تم حظرك من هذا البث المباشر.' });
+  }
+  const isHost = Boolean(room && room.host_id === userId);
   const result = liveEngine.addNormalComment(
     req.params.id,
     user,
     text,
-    replyToName ? { id: replyToId, name: replyToName, text: replyToText } : undefined
+    replyToName ? { id: replyToId, name: replyToName, text: replyToText } : undefined,
+    isHost
   );
   if (!result.ok) return res.status(400).json(result);
-  const room = db.prepare('SELECT host_id, title, category FROM live_rooms WHERE id = ?').get(req.params.id) as
-    | { host_id: string; title: string; category: string }
-    | undefined;
   if (room) {
     recordUserInteraction({
       userId,
@@ -3778,12 +3876,53 @@ app.post('/api/live/rooms/:id/gift', (req, res) => {
 });
 
 app.post('/api/live/rooms/:id/moderate', (req, res) => {
-  const { action, userId, cooldownSec } = req.body as {
-    action: 'delete_active' | 'toggle_highlights' | 'ban_user' | 'unban_user' | 'set_cooldown';
+  const { action, hostId, userId, messageId, cooldownSec, slowModeSec, commentsEnabled, micMuted, camOff, blockGlobally } = req.body as {
+    action:
+      | 'delete_active'
+      | 'delete_message'
+      | 'toggle_highlights'
+      | 'toggle_comments'
+      | 'set_slow_mode'
+      | 'set_host_media'
+      | 'ban_user'
+      | 'unban_user'
+      | 'set_cooldown';
+    hostId?: string;
     userId?: string;
+    messageId?: string;
     cooldownSec?: number;
+    slowModeSec?: number;
+    commentsEnabled?: boolean;
+    micMuted?: boolean;
+    camOff?: boolean;
+    blockGlobally?: boolean;
   };
-  const state = liveEngine.moderate(req.params.id, action, { userId, cooldownSec });
+  const room = db.prepare('SELECT host_id FROM live_rooms WHERE id = ?').get(req.params.id) as { host_id: string } | undefined;
+  if (!room) return res.status(404).json({ ok: false, error: 'غرفة البث غير موجودة.' });
+  if (hostId && room.host_id !== hostId) {
+    return res.status(403).json({ ok: false, error: 'صاحب البث فقط يمكنه استخدام أدوات التحكم.' });
+  }
+  if (action === 'ban_user' && userId && blockGlobally !== false) {
+    db.prepare('INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id) VALUES (?, ?)').run(room.host_id, userId);
+    db.prepare('DELETE FROM user_follows WHERE (follower_id = ? AND following_id = ?) OR (follower_id = ? AND following_id = ?)').run(
+      room.host_id,
+      userId,
+      userId,
+      room.host_id
+    );
+    broadcast('live:user_blocked', { hostId: room.host_id, blockedUserId: userId, roomId: req.params.id });
+  } else if (action === 'unban_user' && userId) {
+    db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').run(room.host_id, userId);
+  }
+  const state = liveEngine.moderate(req.params.id, action, {
+    userId,
+    messageId,
+    cooldownSec,
+    slowModeSec,
+    commentsEnabled,
+    micMuted,
+    camOff,
+  });
   res.json({ ok: true, state });
 });
 
