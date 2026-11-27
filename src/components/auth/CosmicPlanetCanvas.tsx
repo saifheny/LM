@@ -172,9 +172,9 @@ export function CosmicPlanetCanvas() {
       return;
     }
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
     renderer.setPixelRatio(dpr);
-    renderer.setClearColor(0x050409, 1);
+    renderer.setClearColor(0x070914, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
@@ -185,7 +185,7 @@ export function CosmicPlanetCanvas() {
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 120);
 
     const GLOBE_RADIUS = 2.68;
-    const GLOBE_Y_OFFSET = -0.62;
+    const GLOBE_Y_OFFSET = -1.08;
 
     // ------------------------------------------------------------------
     // 1. DEEP SPACE CRISP STARFIELD (Occluded naturally behind planet)
@@ -537,12 +537,12 @@ export function CosmicPlanetCanvas() {
       hubMeshes.push({ mesh: decal, unitDir, baseOpacity: 0.42 * h.intensity });
     }
 
-    // 3D. Four Unmistakable Luminous 3D Orbital Signal Arcs + Moving Comet Pulses + Pinpoint Rings!
+    // 3D. Six Unmistakable Luminous 3D Orbital Signal Arcs + Moving Comet Pulses + Dual Orbital Rings!
     const beaconTex = createBeaconRingTexture();
     const cometTex = createRadialGlowTexture(
       'rgba(255, 255, 255, 1.0)',
-      'rgba(233, 213, 255, 0.85)',
-      'rgba(168, 85, 247, 0.25)'
+      'rgba(216, 180, 254, 0.90)',
+      'rgba(96, 165, 250, 0.28)'
     );
     const arcSpecs = [
       // Arc 1: Atlantic horizon sweeping cleanly into Cairo / Mediterranean
@@ -553,9 +553,99 @@ export function CosmicPlanetCanvas() {
       { from: { lat: 19, lon: 73 }, to: { lat: 36, lon: 140 }, altitude: 1.27, speed: 0.26, phase: 0.65 },
       // Arc 4: Americas to Europe across North Atlantic
       { from: { lat: 41, lon: -74 }, to: { lat: 51, lon: 0 }, altitude: 1.26, speed: 0.23, phase: 0.18 },
+      // Arc 5: Cairo to Nairobi / Southern Africa
+      { from: { lat: 30, lon: 31 }, to: { lat: -26, lon: 28 }, altitude: 1.24, speed: 0.25, phase: 0.52 },
+      // Arc 6: Tokyo to Sydney across Western Pacific
+      { from: { lat: 36, lon: 140 }, to: { lat: -34, lon: 151 }, altitude: 1.25, speed: 0.22, phase: 0.82 },
     ];
 
     const arcDisposables: Array<{ dispose: () => void }> = [cometTex];
+
+    // Next-Gen Futuristic Dual Tilted 3D Orbital Energy Rings + 180 Orbiting Micro-Satellites!
+    const orbitalRig = new THREE.Group();
+    orbitalRig.position.set(0, GLOBE_Y_OFFSET, 0);
+    scene.add(orbitalRig);
+
+    const ringSpecs = [
+      { radius: GLOBE_RADIUS * 1.24, tube: 0.0085, color: 0xa78bfa, opacity: 0.26, tiltX: 1.24, tiltZ: 0.28 },
+      { radius: GLOBE_RADIUS * 1.38, tube: 0.0065, color: 0x60a5fa, opacity: 0.19, tiltX: 1.82, tiltZ: -0.34 },
+    ];
+    const orbitalRings: THREE.Mesh[] = [];
+    for (const rs of ringSpecs) {
+      const rGeo = new THREE.TorusGeometry(rs.radius, rs.tube, 8, 128);
+      const rMat = new THREE.MeshBasicMaterial({
+        color: rs.color,
+        transparent: true,
+        opacity: rs.opacity,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const rMesh = new THREE.Mesh(rGeo, rMat);
+      rMesh.rotation.x = rs.tiltX;
+      rMesh.rotation.z = rs.tiltZ;
+      orbitalRig.add(rMesh);
+      orbitalRings.push(rMesh);
+      arcDisposables.push(rGeo, rMat);
+    }
+
+    const ORBIT_PARTICLES = 180;
+    const orbitPos = new Float32Array(ORBIT_PARTICLES * 3);
+    const orbitSizes = new Float32Array(ORBIT_PARTICLES);
+    const orbitPhases = new Float32Array(ORBIT_PARTICLES);
+    for (let i = 0; i < ORBIT_PARTICLES; i++) {
+      const angle = (i / ORBIT_PARTICLES) * Math.PI * 2;
+      const onOuter = i % 2 === 1;
+      const r = GLOBE_RADIUS * (onOuter ? 1.38 : 1.24) + (Math.random() - 0.5) * 0.12;
+      const ySpread = (Math.random() - 0.5) * 0.18;
+      const x = Math.cos(angle) * r;
+      const z = Math.sin(angle) * r;
+      // Tilt particle ring harmoniously with primary orbital plane
+      const tilt = onOuter ? -0.36 : 0.32;
+      orbitPos[i * 3] = x;
+      orbitPos[i * 3 + 1] = ySpread * Math.cos(tilt) - z * Math.sin(tilt);
+      orbitPos[i * 3 + 2] = ySpread * Math.sin(tilt) + z * Math.cos(tilt);
+      orbitSizes[i] = i % 11 === 0 ? 3.2 : 1.5 + Math.random() * 1.1;
+      orbitPhases[i] = Math.random() * Math.PI * 2;
+    }
+    const orbitParticlesGeo = new THREE.BufferGeometry();
+    orbitParticlesGeo.setAttribute('position', new THREE.BufferAttribute(orbitPos, 3));
+    orbitParticlesGeo.setAttribute('aSize', new THREE.BufferAttribute(orbitSizes, 1));
+    orbitParticlesGeo.setAttribute('aPhase', new THREE.BufferAttribute(orbitPhases, 1));
+    const orbitParticlesMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uPixelRatio: { value: dpr },
+      },
+      vertexShader: `
+        attribute float aSize;
+        attribute float aPhase;
+        uniform float uTime;
+        uniform float uPixelRatio;
+        varying float vAlpha;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mv;
+          vAlpha = 0.45 + 0.55 * sin(uTime * 2.2 + aPhase);
+          gl_PointSize = aSize * uPixelRatio * (11.0 / max(-mv.z, 2.0));
+        }
+      `,
+      fragmentShader: `
+        varying float vAlpha;
+        void main() {
+          float d = length(gl_PointCoord - vec2(0.5));
+          if (d > 0.5) discard;
+          float core = smoothstep(0.5, 0.08, d);
+          vec3 col = mix(vec3(0.55, 0.68, 1.0), vec3(0.96, 0.90, 1.0), core);
+          gl_FragColor = vec4(col, pow(core, 1.5) * vAlpha * 0.85);
+        }
+      `,
+    });
+    const orbitParticles = new THREE.Points(orbitParticlesGeo, orbitParticlesMat);
+    orbitalRig.add(orbitParticles);
+    arcDisposables.push(orbitParticlesGeo, orbitParticlesMat);
     const arcBeacons: Array<{ sprite: THREE.Sprite; unitDir: THREE.Vector3; phase: number }> = [];
     const arcComets: Array<{ sprite: THREE.Sprite; curve: THREE.CatmullRomCurve3; speed: number; phase: number }> = [];
     const arcPulseMaterials: THREE.ShaderMaterial[] = [];
@@ -660,26 +750,26 @@ export function CosmicPlanetCanvas() {
       camera.aspect = aspect;
 
       // Exact panoramic framing:
-      // - Desktop: grand Sellix dome rising cleanly behind hero text (~16% from top)
+      // - Laptop / Desktop: gracefully pulled back so BOTH curved violet rims, orbital rings & starry cosmos shine cleanly!
       // - Mobile portrait: set slightly farther back & neatly positioned in lower half (~84% width)
-      //   so BOTH curved violet glowing edges stay 100% visible below the compact mobile hero!
       const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(18));
       const responsiveZ = isMobilePortrait
         ? Math.min(22.5, Math.max(13.2, (GLOBE_RADIUS * 2.38) / (2 * tanHalfFov * Math.max(aspect, 0.42))))
         : aspect < 1.15
-          ? 11.2
-          : 9.15;
+          ? 13.0
+          : 11.75;
 
       const targetGlobeY = isMobilePortrait ? -2.15 : GLOBE_Y_OFFSET;
       globeRoot.position.y = targetGlobeY;
       haloMesh.position.y = targetGlobeY;
+      orbitalRig.position.y = targetGlobeY;
 
       camera.position.set(0, 0, responsiveZ);
       camera.updateProjectionMatrix();
 
-      // Normalize dot pixel size across camera distances so mobile continents stay razor-sharp!
+      // Normalize dot pixel size across camera distances so laptop & mobile continents stay razor-sharp!
       dotsMat.uniforms.uCameraZ.value = responsiveZ;
-      dotsMat.uniforms.uDotScale.value = isMobilePortrait ? 0.92 : 1.0;
+      dotsMat.uniforms.uDotScale.value = isMobilePortrait ? 0.92 : 0.96;
     };
 
     updateCameraLayout();
@@ -723,11 +813,16 @@ export function CosmicPlanetCanvas() {
     // 5. 60 FPS ANIMATION LOOP
     // ------------------------------------------------------------------
     let rafId = 0;
+    let isPageVisible = !document.hidden;
     const clock = new THREE.Clock();
     const worldDirTmp = new THREE.Vector3();
     const camDirTmp = new THREE.Vector3(0, 0, 1);
 
     const animate = () => {
+      if (!isPageVisible) {
+        rafId = 0;
+        return;
+      }
       rafId = window.requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
 
@@ -737,6 +832,12 @@ export function CosmicPlanetCanvas() {
         drag.velX *= 0.92;
         globeRoot.rotation.x = Math.max(-0.48, Math.min(0.82, globeRoot.rotation.x + drag.velX));
       }
+
+      // Smooth futuristic orbital ring precession & micro-satellite flow
+      orbitalRig.rotation.y = t * 0.095;
+      if (orbitalRings[0]) orbitalRings[0].rotation.z = 0.28 + Math.sin(t * 0.25) * 0.06;
+      if (orbitalRings[1]) orbitalRings[1].rotation.z = -0.34 + Math.cos(t * 0.22) * 0.06;
+      orbitParticlesMat.uniforms.uTime.value = t;
 
       starMat.uniforms.uTime.value = t;
       dotsMat.uniforms.uTime.value = t;
@@ -777,9 +878,17 @@ export function CosmicPlanetCanvas() {
       renderer.render(scene, camera);
     };
 
+    const onVisibilityChange = () => {
+      isPageVisible = !document.hidden;
+      if (isPageVisible && !rafId) {
+        rafId = window.requestAnimationFrame(animate);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
     rafId = window.requestAnimationFrame(animate);
 
     return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.cancelAnimationFrame(rafId);
       window.removeEventListener('resize', updateCameraLayout);
       domEl.removeEventListener('pointerdown', onPointerDown);

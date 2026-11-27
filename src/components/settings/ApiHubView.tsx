@@ -39,9 +39,9 @@ export function ApiHubView({ lang }: ApiHubViewProps) {
   }
 
   return (
-    <div className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]">
+    <div className="min-h-full w-full bg-[#0E1621] text-[#F2F2F5]">
       <form onSubmit={handleSave} className="max-w-[720px] mx-auto min-h-screen border-x border-white/[0.07]">
-        <header className="px-5 py-5 border-b border-white/[0.07] flex items-center justify-between gap-4 sticky top-0 bg-[#0A0A0C]/92 backdrop-blur-md z-20">
+        <header className="px-5 py-5 border-b border-white/[0.07] flex items-center justify-between gap-4 sticky top-0 bg-[#0E1621]/92 backdrop-blur-md z-20">
           <div>
             <h1 className="text-lg font-semibold text-white">API Hub</h1>
             <p className="text-xs text-[#7A7A85] mt-0.5">

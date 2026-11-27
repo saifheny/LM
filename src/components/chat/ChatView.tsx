@@ -39,6 +39,7 @@ import type { CallLaunchRequest } from '../shared/WebRtcCallModal';
 import { SplitComposerOrb } from '../layout/AppShell';
 import { useLayout } from '../../context/LayoutContext';
 import { MessageListSkeleton } from '../shared/EmptyState2026';
+import { MediaCollageGrid, parseMediaUrls } from '../shared/MediaCollageGrid';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
@@ -162,6 +163,7 @@ export function ChatView({
   const messagesCacheRef = useRef<Record<string, ChatMessageItem[]>>({});
   const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
   const [expandedVideoNote, setExpandedVideoNote] = useState<string | null>(null);
+  const [chatLightbox, setChatLightbox] = useState<{ urls: string[]; idx: number } | null>(null);
 
   // In-Place Message Translation (replaces bubble content directly, clears on empty-space click!)
   const [translateMenuMsgId, setTranslateMenuMsgId] = useState<string | null>(null);
@@ -751,17 +753,33 @@ export function ChatView({
   }
 
   async function handleAttachFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
+    const picked = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!f || !activeConvId) return;
+    if (picked.length === 0 || !activeConvId) return;
     try {
+      // Telegram-Style Multi-Photo Collage Album Support (select up to 6 photos at once!)
+      const imageFiles = picked.filter(f => f.type.startsWith('image/')).slice(0, 6);
+      if (imageFiles.length > 1) {
+        const uploaded = await Promise.all(imageFiles.map(f => apiUploadFile(f, 'chat_media')));
+        const urls = uploaded.map(u => u.url);
+        await apiPost(`/api/conversations/${activeConvId}/messages`, {
+          senderId: user.id,
+          content: '',
+          msgType: 'image',
+          mediaUrl: JSON.stringify(urls),
+        });
+        loadMessages(activeConvId);
+        return;
+      }
+
+      const f = picked[0];
       const up = await apiUploadFile(f, 'chat_media');
       const isVideo = up.category === 'video' || f.type.startsWith('video/');
       const isImage = up.category === 'image' || f.type.startsWith('image/');
       const isAudio = up.category === 'audio' || f.type.startsWith('audio/');
       await apiPost(`/api/conversations/${activeConvId}/messages`, {
         senderId: user.id,
-        content: isImage ? 'صورة' : isVideo ? 'فيديو' : isAudio ? 'ملف صوتي' : f.name,
+        content: isImage ? '' : isVideo ? 'فيديو' : isAudio ? 'ملف صوتي' : f.name,
         msgType: isImage ? 'image' : isVideo ? 'video_note' : isAudio ? 'audio' : 'file',
         mediaUrl: up.url,
       });
@@ -895,35 +913,35 @@ export function ChatView({
   const hasText = draft.trim().length > 0;
 
   return (
-    <div className="h-full w-full bg-[#0A0A0C] text-[#F2F2F5] flex overflow-hidden">
-      {/* Left Conversations List — Floating Borderless Controls (ZERO Outer Container Boxes!) */}
+    <div className="h-full w-full bg-[#0E1621] text-[#EEF2F7] flex overflow-hidden">
+      {/* Left Conversations List — Sleek Midnight Slate Sidebar */}
       <aside
         className={`${
           mobileShowList ? 'flex' : 'hidden md:flex'
-        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#0A0A0C] md:border-e md:border-white/[0.06]`}
+        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#131E2B] md:border-e md:border-[#94B3D6]/[0.1]`}
       >
-        <div className="px-3.5 pt-3.5 pb-1 space-y-3">
+        <div className="px-3.5 pt-3.5 pb-1 space-y-2.5">
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-10 rounded-full bg-white/[0.05] backdrop-blur-xl border border-white/[0.09] focus-within:border-[#34D399]/40 px-3.5 flex items-center gap-2 transition-colors">
-              <Search className="w-3.5 h-3.5 text-[#7A7A85]" />
+            <div className="flex-1 h-10 rounded-full bg-[#1B2938] border border-[#94B3D6]/[0.12] focus-within:border-[#7C5CFF]/60 px-3.5 flex items-center gap-2 transition-colors">
+              <Search className="w-3.5 h-3.5 text-[#8DA2BC]" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={lang === 'ar' ? 'بحث في المحادثات...' : 'Search chats...'}
-                className="flex-1 bg-transparent text-xs text-white placeholder:text-[#63636C] outline-none"
+                className="flex-1 bg-transparent text-[13px] text-white placeholder:text-[#7E93AB] outline-none"
               />
             </div>
             <button
               type="button"
               onClick={() => setNewChatOpen(true)}
               title="محادثة جديدة"
-              className="w-10 h-10 rounded-full bg-white/[0.06] hover:bg-[#10B981]/20 border border-white/[0.1] hover:border-[#34D399]/45 text-[#E4E4E7] hover:text-[#6EE7B7] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+              className="w-10 h-10 rounded-full bg-[#1B2938] hover:bg-[#7C5CFF]/25 border border-[#94B3D6]/[0.15] hover:border-[#7C5CFF]/55 text-[#E2EEFF] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
             >
               <Plus className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex items-center gap-3.5 text-xs border-b border-white/[0.06] overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-3.5 text-[12.5px] border-b border-[#94B3D6]/[0.1] overflow-x-auto no-scrollbar">
             {[
               { id: 'all' as const, label: t(lang, 'all') },
               { id: 'personal' as const, label: t(lang, 'chat_personal') },
@@ -936,12 +954,12 @@ export function ChatView({
                 type="button"
                 onClick={() => setFolder(f.id)}
                 className={`pb-2.5 relative transition-colors cursor-pointer shrink-0 ${
-                  folder === f.id ? 'text-white font-semibold' : 'text-[#7A7A85] hover:text-[#D4D4D8]'
+                  folder === f.id ? 'text-white font-semibold' : 'text-[#8DA2BC] hover:text-white'
                 }`}
               >
                 <span>{f.label}</span>
                 {folder === f.id && (
-                  <span className="absolute bottom-0 inset-x-0 h-[2px] rounded-full bg-gradient-to-r from-[#34D399] to-[#10B981]" />
+                  <span className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-gradient-to-r from-[#7C5CFF] to-[#498AF5]" />
                 )}
               </button>
             ))}
@@ -1219,8 +1237,8 @@ export function ChatView({
               )}
             </header>
           ) : (
-            <header className="pointer-events-none absolute top-3 inset-x-3.5 md:inset-x-5 z-20 flex items-center justify-between gap-2">
-              <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#131318]/80 backdrop-blur-xl border border-white/[0.1] min-w-0 shadow-lg">
+            <header className="pointer-events-none absolute top-3 inset-x-3 md:inset-x-5 z-20 flex items-center justify-between gap-2">
+              <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#17212B]/88 backdrop-blur-xl border border-[#94B3D6]/[0.16] min-w-0 shadow-[0_8px_24px_rgba(4,10,18,0.45)]">
                 <button
                   type="button"
                   onClick={() => {
@@ -1274,7 +1292,7 @@ export function ChatView({
               </div>
 
               {/* Clean Header Controls: In-Chat Search + Voice Call ONLY (ZERO Video Call & ZERO Top AI Toggle!) */}
-              <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-full bg-[#131318]/80 backdrop-blur-xl border border-white/[0.1] shadow-lg">
+              <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-full bg-[#17212B]/88 backdrop-blur-xl border border-[#94B3D6]/[0.16] shadow-[0_8px_24px_rgba(4,10,18,0.45)]">
                 <button
                   type="button"
                   onClick={() => {
@@ -1314,11 +1332,11 @@ export function ChatView({
               setMsgSearchQ('');
             }
           }}
-          className="flex-1 overflow-y-auto px-4 pt-20 pb-28 space-y-3 bg-[#0A0A0C]"
+          className="flex-1 overflow-y-auto px-3 sm:px-4 pt-20 pb-28 space-y-2 lm-chat-wallpaper"
         >
           {activeConv?.pinnedMessage && (
-            <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#131318]/80 border border-white/[0.08] flex items-center gap-2 text-[11.5px] text-[#A1A1AA] mb-2">
-              <Pin className="w-3 h-3 text-[#7A7A85] shrink-0" />
+            <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#17212B]/88 backdrop-blur-md border border-[#94B3D6]/[0.15] flex items-center gap-2 text-[11.5px] text-[#B8CAE0] mb-2 shadow-md">
+              <Pin className="w-3 h-3 text-[#7C5CFF] shrink-0" />
               <span className="truncate">{activeConv.pinnedMessage}</span>
             </div>
           )}
@@ -1543,20 +1561,31 @@ export function ChatView({
                           className="w-full h-full object-cover"
                         />
                       </div>
-                    ) : (
+                    ) : (() => {
+                      const imgUrls = msg.msgType === 'image' ? parseMediaUrls(msg.mediaUrl) : [];
+                      const trimmedText = (msg.content || '').trim();
+                      const isPurePhoto =
+                        imgUrls.length > 0 &&
+                        (!trimmedText || trimmedText === 'صورة' || trimmedText === 'Photo') &&
+                        !translated &&
+                        editingMsgId !== msg.id &&
+                        !msg.replyText &&
+                        !msg.isSpoiler;
+
+                      return (
                       <div
                         onClick={e => {
                           e.stopPropagation();
                           setHoveredMsgId(cur => (cur === msg.id ? null : msg.id));
                         }}
-                        className={`px-3.5 py-2.5 text-[14px] leading-relaxed break-words ${
+                        className={`${isPurePhoto ? 'p-1.5 w-[265px] sm:w-[310px]' : 'px-3.5 py-2'} text-[14.5px] leading-[1.55] break-words ${
                           isAi
-                            ? 'rounded-2xl bg-[#15151B] border border-white/[0.14] text-[#F2F2F5]'
+                            ? 'rounded-[18px] bg-[#172434] border border-[#7C5CFF]/30 text-[#EEF2F7] shadow-md'
                             : msg.aiSummoned
-                            ? `rounded-2xl ${isMine ? 'rounded-ee-sm' : 'rounded-es-sm'} border lm-ai-summon-ring text-[#F2F2F5]`
+                            ? `rounded-[18px] ${isMine ? 'rounded-ee-[5px]' : 'rounded-es-[5px]'} border lm-ai-summon-ring text-white`
                             : isMine
-                            ? 'rounded-2xl rounded-ee-sm bg-[#1B1B21] text-[#F2F2F5]'
-                            : 'rounded-2xl rounded-es-sm bg-[#131317] text-[#F2F2F5]'
+                            ? 'rounded-[18px] rounded-ee-[5px] lm-msg-out'
+                            : 'rounded-[18px] rounded-es-[5px] lm-msg-in'
                         }`}
                       >
                         {isAi && (
@@ -1569,7 +1598,9 @@ export function ChatView({
                           <button
                             type="button"
                             onClick={() => onOpenProfile?.(msg.senderId)}
-                            className="mb-1 block text-[11px] font-semibold text-[#34D399] hover:underline cursor-pointer"
+                            className={`mb-1 block text-[11.5px] font-semibold text-[#60A5FA] hover:underline cursor-pointer ${
+                              isPurePhoto ? 'px-2 pt-1' : ''
+                            }`}
                           >
                             {msg.displayName}
                           </button>
@@ -1582,18 +1613,36 @@ export function ChatView({
                         )}
 
                         {msg.replyText && (
-                          <div className="mb-1.5 ps-2.5 border-s-2 border-white/30 text-xs text-[#A1A1AA] line-clamp-1">
+                          <div
+                            className={`mb-1.5 ps-2.5 border-s-2 text-xs line-clamp-1 ${
+                              isMine ? 'border-white/70 text-white/85' : 'border-[#60A5FA]/70 text-[#A9BCD3]'
+                            }`}
+                          >
                             <span className="font-semibold text-white me-1">{msg.replySender}:</span>
                             <span>{msg.replyText}</span>
                           </div>
                         )}
 
-                        {msg.msgType === 'image' && msg.mediaUrl && (
-                          <img src={msg.mediaUrl} alt="" className="rounded-xl max-h-[260px] w-full object-cover mb-2" />
+                        {imgUrls.length > 0 && (
+                          <div className={isPurePhoto ? '' : 'mb-2'}>
+                            <MediaCollageGrid
+                              urls={imgUrls}
+                              compact
+                              onSelect={idx => setChatLightbox({ urls: imgUrls, idx })}
+                              overlayBadge={
+                                isPurePhoto ? (
+                                  <div className="pointer-events-none absolute bottom-2 end-2 px-2 py-0.5 rounded-full bg-[#091018]/65 backdrop-blur-md flex items-center gap-1 text-[10px] font-mono-num text-white/95">
+                                    <span>{msg.createdAt}</span>
+                                    {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#BAE6FD]" strokeWidth={2.2} />}
+                                  </div>
+                                ) : undefined
+                              }
+                            />
+                          </div>
                         )}
 
                         {/* IN-PLACE TRANSLATION: Replaces message text directly! Click empty space anywhere to restore original. */}
-                        {msg.msgType === 'audio' && msg.mediaUrl ? (
+                        {isPurePhoto ? null : msg.msgType === 'audio' && msg.mediaUrl ? (
                           <SmartVoicePill
                             url={msg.mediaUrl}
                             transcript={msg.transcript}
@@ -1606,7 +1655,7 @@ export function ChatView({
                           <button
                             type="button"
                             onClick={() => setRevealedSpoilers(prev => ({ ...prev, [msg.id]: true }))}
-                            className="px-2.5 py-1 rounded bg-white/[0.08] text-xs text-[#A1A1AA] cursor-pointer"
+                            className="px-2.5 py-1 rounded bg-white/[0.12] text-xs text-white/90 cursor-pointer"
                           >
                             محتوى مخفي
                           </button>
@@ -1616,20 +1665,20 @@ export function ChatView({
                               rows={2}
                               value={editingMsgText}
                               onChange={e => setEditingMsgText(e.target.value)}
-                              className="w-full rounded-xl bg-[#0A0A0C] border border-white/[0.15] p-2 text-xs text-white outline-none resize-none"
+                              className="w-full rounded-xl bg-[#0E1621] border border-white/[0.2] p-2 text-xs text-white outline-none resize-none"
                             />
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => setEditingMsgId(null)}
-                                className="px-2.5 py-1 rounded-full bg-white/[0.08] text-[11px] text-[#A1A1AA] hover:text-white cursor-pointer"
+                                className="px-2.5 py-1 rounded-full bg-white/[0.12] text-[11px] text-white/85 hover:text-white cursor-pointer"
                               >
                                 إلغاء
                               </button>
                               <button
                                 type="button"
                                 onClick={() => saveEditedMessage(msg.id)}
-                                className="px-2.5 py-1 rounded-full bg-white text-black text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1 rounded-full bg-white text-[#0E1621] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                               >
                                 <Check className="w-3 h-3" />
                                 <span>حفظ</span>
@@ -1639,7 +1688,7 @@ export function ChatView({
                         ) : (
                           <div>
                             {isAi && !translated ? (
-                              <div className="prose-sm space-y-1.5 text-[#F2F2F5] leading-relaxed">
+                              <div className="prose-sm space-y-1.5 text-[#EEF2F7] leading-relaxed">
                                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_LINK_COMPONENTS}>
                                   {msg.content}
                                 </ReactMarkdown>
@@ -1654,7 +1703,7 @@ export function ChatView({
                               />
                             )}
                             {translated && (
-                              <div className="mt-1 flex items-center gap-1 text-[10px] text-[#8E8E93]">
+                              <div className={`mt-1 flex items-center gap-1 text-[10px] ${isMine ? 'text-white/75' : 'text-[#8DA2BC]'}`}>
                                 <Languages className="w-2.5 h-2.5" />
                                 <span>{translated.langLabel}</span>
                               </div>
@@ -1662,27 +1711,36 @@ export function ChatView({
                           </div>
                         )}
 
-                        {showAutoTranslateChip && (
+                        {!isPurePhoto && showAutoTranslateChip && (
                           <button
                             type="button"
                             onClick={e => {
                               e.stopPropagation();
                               setTranslateMenuMsgId(translateMenuMsgId === msg.id ? null : msg.id);
                             }}
-                            className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-[#8E8E93] hover:text-white cursor-pointer"
+                            className={`mt-1.5 inline-flex items-center gap-1 text-[11px] cursor-pointer ${
+                              isMine ? 'text-white/80 hover:text-white' : 'text-[#8DA2BC] hover:text-white'
+                            }`}
                           >
                             <Languages className="w-3 h-3" />
                             <span>ترجمة</span>
                           </button>
                         )}
 
-                        <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-mono-num text-[#7A7A85]">
-                          {msg.isEdited && <span>معدّلة ·</span>}
-                          <span>{msg.createdAt}</span>
-                          {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#34D399]" strokeWidth={2.2} />}
-                        </div>
+                        {!isPurePhoto && (
+                          <div
+                            className={`mt-1 flex items-center justify-end gap-1 text-[10.5px] font-mono-num ${
+                              isMine ? 'text-white/80' : 'text-[#8DA2BC]'
+                            }`}
+                          >
+                            {msg.isEdited && <span>معدّلة ·</span>}
+                            <span>{msg.createdAt}</span>
+                            {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#E0F2FE]" strokeWidth={2.2} />}
+                          </div>
+                        )}
                       </div>
-                    )}
+                      );
+                    })()}
                   </div>
 
                   {/* Desktop-Only Side Hover Controls (Hidden on mobile so bubble keeps full 82% horizontal width!) */}
@@ -1905,6 +1963,7 @@ export function ChatView({
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,audio/mpeg,audio/wav,audio/ogg,audio/mp4,application/pdf"
                 onChange={handleAttachFile}
                 className="hidden"
@@ -2534,6 +2593,48 @@ export function ChatView({
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Full-Screen Telegram-Style Photo Collage Lightbox */}
+      {chatLightbox && (
+        <div
+          onClick={() => setChatLightbox(null)}
+          className="fixed inset-0 z-[80] bg-[#070C14]/92 backdrop-blur-lg flex flex-col items-center justify-center p-4"
+        >
+          <div className="absolute top-4 end-4 z-10 flex items-center gap-2">
+            {chatLightbox.urls.length > 1 && (
+              <span className="px-3 py-1 rounded-full bg-white/10 text-xs font-mono-num text-white">
+                {chatLightbox.idx + 1} / {chatLightbox.urls.length}
+              </span>
+            )}
+            <CloseOrbButton onClick={() => setChatLightbox(null)} />
+          </div>
+          <img
+            src={chatLightbox.urls[chatLightbox.idx]}
+            alt=""
+            onClick={e => e.stopPropagation()}
+            className="max-h-[82dvh] max-w-[94vw] rounded-2xl object-contain shadow-2xl"
+          />
+          {chatLightbox.urls.length > 1 && (
+            <div
+              onClick={e => e.stopPropagation()}
+              className="mt-4 flex items-center gap-2 overflow-x-auto max-w-full px-2"
+            >
+              {chatLightbox.urls.map((u, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setChatLightbox({ ...chatLightbox, idx: i })}
+                  className={`w-12 h-12 rounded-xl overflow-hidden border-2 shrink-0 cursor-pointer transition-all ${
+                    i === chatLightbox.idx ? 'border-[#7C5CFF] scale-105' : 'border-transparent opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  <img src={u} alt="" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -43,6 +43,7 @@ import 'swiper/css/pagination';
 import { Lang, LicensedMusicTrack, PostCommentItem, PostPoll, ShortVideoItem, SocialPost, StoryItem, UserProfile } from '../../types';
 import { AiSummonBadge, MARKDOWN_LINK_COMPONENTS, RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import { ChromeArrowButton, ObsidianComposerPill } from '../shared/HardwareUI';
+import { MediaCollageGrid } from '../shared/MediaCollageGrid';
 import { SmartVoicePill, LiveVoiceRecorder } from '../shared/VoiceStudio2026';
 import { FacebookReactionButton, REACTION_LIST, resolveReaction } from '../shared/TelegramReactions';
 import { NavAiIcon } from '../shared/Icons2026Pro';
@@ -986,7 +987,7 @@ export function SocialView({
           setRecordingPostId(null);
         }
       }}
-      className="min-h-full w-full max-w-full overflow-x-hidden bg-[#0A0A0C] text-[#F2F2F5]"
+      className="min-h-full w-full max-w-full overflow-x-hidden bg-[#0E1621] text-[#F2F2F5]"
     >
       {/* Seamless Borderless Feed Column (ZERO Side Walls/Borders on Laptop, ZERO Sideways Overflow on Mobile!) */}
       <div className="max-w-[620px] w-full mx-auto min-h-full px-1 sm:px-0 overflow-x-hidden">
@@ -1015,7 +1016,7 @@ export function SocialView({
                     : 'border border-white/[0.22]'
                 }`}
               >
-                <div className="p-[2px] rounded-full bg-[#0A0A0C]">
+                <div className="p-[2px] rounded-full bg-[#0E1621]">
                   <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={50} />
                 </div>
               </button>
@@ -1046,7 +1047,7 @@ export function SocialView({
               className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
             >
               <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#F59E0B] via-[#FB7185] to-[#FF2D55] group-hover:scale-[1.04] transition-transform">
-                <div className="p-[2px] rounded-full bg-[#0A0A0C]">
+                <div className="p-[2px] rounded-full bg-[#0E1621]">
                   <UserAvatar initials={st.avatarInitials} avatarUrl={st.avatarUrl} size={50} />
                 </div>
               </div>
@@ -1367,9 +1368,9 @@ export function SocialView({
           </div>
         )}
 
-        {/* Continuous Borderless Feed */}
+        {/* Continuous Elevated Card Feed */}
         {(!activeHashtag || hashtagFilter !== 'videos') && (
-        <div className="divide-y divide-white/[0.07]">
+        <div className="px-2.5 sm:px-3 py-2.5 space-y-2.5">
           {(focusedPostId && posts.some(p => p.id === focusedPostId)
             ? [
                 ...posts.filter(p => p.id === focusedPostId),
@@ -1389,7 +1390,7 @@ export function SocialView({
             const isPostSensitiveHidden = Boolean(post.isSensitive) && !revealedPosts[post.id];
 
             return (
-              <article key={post.id} className="px-3 sm:px-4 py-4 sm:py-5 max-w-full overflow-x-clip">
+              <article key={post.id} className="lm-feed-card rounded-[20px] px-3.5 sm:px-4 py-3.5 max-w-full overflow-x-clip">
                 {/* X-Style Single-Action Repost Attribution Banner */}
                 {post.repostedBy && (
                   <button
@@ -1427,7 +1428,7 @@ export function SocialView({
                           : ''
                       }`}
                     >
-                      <div className={post.hasActiveStory ? 'p-[1.5px] rounded-full bg-[#0A0A0C]' : ''}>
+                      <div className={post.hasActiveStory ? 'p-[1.5px] rounded-full bg-[#0E1621]' : ''}>
                         <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={40} />
                       </div>
                     </button>
@@ -1647,30 +1648,13 @@ export function SocialView({
                       </div>
                     )}
 
-                    {/* Media: Single-Tap opens Lightbox | Double-Tap triggers Upvote + Pulse | Floating Speaker for Photo Music | Telegram Sensitive Blur */}
+                    {/* Media: Telegram-Grade Seamless Collage Grid | Single-Tap opens Lightbox | Double-Tap triggers Upvote */}
                     {post.mediaUrls.length > 0 && (
-                      <div className="relative mt-3 rounded-2xl overflow-hidden border border-white/[0.08] bg-[#121216]">
-                        {post.mediaUrls.length === 1 ? (
-                          <img
-                            src={post.mediaUrls[0]}
-                            alt=""
-                            onClick={() => handleMediaTap(post, 0)}
-                            className="w-full max-h-[460px] object-cover block cursor-pointer"
-                          />
-                        ) : (
-                          <Swiper modules={[Pagination]} pagination={{ clickable: true }} spaceBetween={0} slidesPerView={1}>
-                            {post.mediaUrls.map((url, idx) => (
-                              <SwiperSlide key={idx}>
-                                <img
-                                  src={url}
-                                  alt=""
-                                  onClick={() => handleMediaTap(post, idx)}
-                                  className="w-full h-[380px] object-cover block cursor-pointer"
-                                />
-                              </SwiperSlide>
-                            ))}
-                          </Swiper>
-                        )}
+                      <div className="relative mt-2.5 rounded-[16px] overflow-hidden border border-[#94B3D6]/[0.12] bg-[#0B121B]">
+                        <MediaCollageGrid
+                          urls={post.mediaUrls}
+                          onSelect={idx => handleMediaTap(post, idx)}
+                        />
 
                         {/* Telegram-Style Animated Particle Sensitive Blur (Auto-Triggered at 3 Reports) */}
                         {isPostSensitiveHidden && (
@@ -2378,7 +2362,7 @@ export function SocialView({
       {composerExpanded && (
         <form
           onSubmit={submitPost}
-          className="fixed inset-0 z-50 bg-[#0A0A0C] flex flex-col justify-between"
+          className="fixed inset-0 z-50 bg-[#0E1621] flex flex-col justify-between"
         >
           {/* Top Bar */}
           <div className="px-5 py-4 border-b border-white/[0.07] flex items-center justify-between max-w-[780px] w-full mx-auto">

@@ -4224,9 +4224,12 @@ function buildDynamicOgMeta(req: express.Request): {
   const origin = `${proto}://${host}`;
   const fullUrl = `${origin}${req.originalUrl}`;
   const toAbs = (p?: string | null) => {
-    if (!p) return `${origin}/lm-icon-512.png`;
-    if (/^https?:\/\//i.test(p)) return p;
-    return `${origin}${p.startsWith('/') ? p : `/${p}`}`;
+    const clean = typeof p === 'string' ? p.trim() : '';
+    if (!clean || clean.startsWith('lm:') || clean.startsWith('data:')) {
+      return `${origin}/lm-icon-512.png`;
+    }
+    if (/^https?:\/\//i.test(clean)) return clean;
+    return `${origin}${clean.startsWith('/') ? clean : `/${clean}`}`;
   };
 
   let title = 'LM';
@@ -4255,7 +4258,9 @@ function buildDynamicOgMeta(req: express.Request): {
   }
 
   const userMatch = req.path.match(/^\/u\/([^/]+)$/);
-  const handle = userMatch ? decodeURIComponent(userMatch[1]) : String(req.query.user || '').trim();
+  const handle = userMatch
+    ? decodeURIComponent(userMatch[1])
+    : String(req.query.user || req.query.u || '').trim();
   if (handle) {
     const clean = handle.replace(/^@/, '').toLowerCase();
     const u = db.prepare('SELECT * FROM users WHERE LOWER(username) = ? OR id = ?').get(clean, handle) as Record<string, unknown> | undefined;
@@ -4264,7 +4269,9 @@ function buildDynamicOgMeta(req: express.Request): {
       const bio = String(u.bio || '').replace(/\s+/g, ' ').trim();
       const loc = u.location ? ` • ${String(u.location)}` : '';
       description = bio ? `${bio.slice(0, 150)}${loc}` : `الملف الشخصي لـ ${String(u.display_name)} على LM`;
-      image = toAbs((u.cover_url as string | null) || (u.avatar_url as string | null));
+      const rawCover = typeof u.cover_url === 'string' && !u.cover_url.startsWith('lm:') ? u.cover_url : null;
+      const rawAvatar = typeof u.avatar_url === 'string' && !u.avatar_url.startsWith('lm:') ? u.avatar_url : null;
+      image = toAbs(rawCover || rawAvatar);
       type = 'profile';
       return { title, description, image, url: fullUrl, type };
     }
@@ -4406,6 +4413,9 @@ if (fs.existsSync(distDir)) {
     <meta property="og:title" content="${escapeHtmlAttr(og.title)}" />
     <meta property="og:description" content="${escapeHtmlAttr(og.description)}" />
     <meta property="og:image" content="${escapeHtmlAttr(og.image)}" />
+    <meta property="og:image:secure_url" content="${escapeHtmlAttr(og.image)}" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
     <meta property="og:url" content="${escapeHtmlAttr(og.url)}" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="${escapeHtmlAttr(og.title)}" />

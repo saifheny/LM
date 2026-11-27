@@ -155,7 +155,7 @@ export function SplitComposerOrb({
             className={`md:hidden w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-all ${
               transparent
                 ? 'bg-black/22 hover:bg-[#14141B]/95 backdrop-blur-md border border-white/[0.18] text-white/85 hover:text-white'
-                : 'bg-[#0B0B0E]/95 backdrop-blur-2xl border border-white/[0.14] text-[#D4D4D8] hover:text-white'
+                : 'bg-[#17212B]/95 backdrop-blur-xl border border-[#94B3D6]/[0.18] text-[#D7E3F0] hover:text-white'
             }`}
           >
             <LayoutGrid className="w-[19px] h-[19px]" strokeWidth={1.9} />
@@ -176,7 +176,7 @@ export function SplitComposerOrb({
             onAttach();
           }}
           title="إرفاق ملف"
-          className="hidden md:flex w-[48px] h-[48px] rounded-full bg-[#14141A]/95 backdrop-blur-xl border border-white/[0.11] text-[#A1A1AA] hover:text-white hover:border-white/25 items-center justify-center cursor-pointer shrink-0 transition-colors"
+          className="hidden md:flex w-[48px] h-[48px] rounded-full bg-[#17212B]/94 backdrop-blur-xl border border-[#94B3D6]/[0.16] text-[#96A7BC] hover:text-white hover:border-[#94B3D6]/30 items-center justify-center cursor-pointer shrink-0 transition-colors"
         >
           <Paperclip className="w-[19px] h-[19px]" strokeWidth={1.85} />
         </button>
@@ -448,12 +448,12 @@ export function AppShell({
   return (
     <div
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
-      className="h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-[#0A0A0C] text-[#F2F2F5] overflow-hidden flex select-none"
+      className="h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-[#0E1621] text-[#EEF2F7] overflow-hidden flex select-none"
     >
-      {/* DESKTOP / LAPTOP FLOATING COLLAPSIBLE SIDEBAR (Instant single-frame switch — ZERO WaveSurfer/Swiper reflow lag!) */}
+      {/* DESKTOP / LAPTOP FLOATING COLLAPSIBLE SIDEBAR (Instant single-frame switch — ZERO reflow lag!) */}
       <aside
         style={{ contain: 'layout style' }}
-        className={`hidden md:flex flex-col justify-between shrink-0 my-2.5 ms-2.5 h-[calc(100%-20px)] rounded-[24px] bg-[#0C0C10]/94 backdrop-blur-xl border border-white/[0.09] shadow-[0_14px_40px_rgba(0,0,0,0.55)] py-3.5 px-2 z-30 overflow-hidden ${
+        className={`hidden md:flex flex-col justify-between shrink-0 my-2.5 ms-2.5 h-[calc(100%-20px)] rounded-[24px] bg-[#15202D]/95 backdrop-blur-xl border border-[#94B3D6]/[0.13] shadow-[0_14px_40px_rgba(4,10,18,0.48)] py-3.5 px-2 z-30 overflow-hidden ${
           sidebarCollapsed ? 'w-[66px]' : 'w-[216px]'
         }`}
       >
@@ -621,7 +621,7 @@ export function AppShell({
         ref={mainRef}
         onScroll={handleMainScroll}
         className={`flex-1 min-w-0 h-full max-w-full relative overflow-x-hidden ${
-          activeTab === 'videos' || activeTab === 'live' ? 'bg-black' : 'bg-[#0A0A0C]'
+          activeTab === 'videos' || activeTab === 'live' ? 'bg-[#070B12]' : 'bg-[#0E1621]'
         } ${
           isFullHeightViewport
             ? 'overflow-hidden'
@@ -657,7 +657,7 @@ export function AppShell({
             exit={{ y: '110%', opacity: 0 }}
             transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             onClick={e => e.stopPropagation()}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-t-[24px] rounded-b-none bg-black/96 backdrop-blur-2xl border-t border-x border-white/[0.12] px-2 pt-2 shadow-[0_-12px_34px_rgba(0,0,0,0.85)]"
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 rounded-t-[24px] rounded-b-none bg-[#15202D]/96 backdrop-blur-xl border-t border-x border-[#94B3D6]/[0.15] px-2 pt-2 shadow-[0_-12px_34px_rgba(4,10,18,0.65)]"
           >
             <div className="flex items-center justify-around gap-0.5 max-w-full">
               {NAV_ITEMS.map(item => {
@@ -746,12 +746,12 @@ export function AppShell({
               exit={{ opacity: 0, y: 18 }}
               transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
               onClick={e => e.stopPropagation()}
-              className="md:hidden fixed inset-0 z-[65] h-[100dvh] bg-[#0A0A0C] text-[#F2F2F5] flex flex-col overflow-hidden text-start"
+              className="md:hidden fixed inset-0 z-[65] h-[100dvh] bg-[#0E1621] text-[#EEF2F7] flex flex-col overflow-hidden text-start"
             >
               {/* Sculpted Top Navigation Header with Back Arrow Orb */}
               <div
                 style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
-                className="px-4 pb-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3 shrink-0 bg-[#0A0A0C]/95 backdrop-blur-xl"
+                className="px-4 pb-3.5 border-b border-[#94B3D6]/[0.12] flex items-center justify-between gap-3 shrink-0 bg-[#15202D]/95 backdrop-blur-xl"
               >
                 <div className="flex items-center gap-3">
                   <motion.button

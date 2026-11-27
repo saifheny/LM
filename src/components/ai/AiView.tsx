@@ -655,7 +655,7 @@ export function AiView({ user, lang }: AiViewProps) {
         setComposerFocused(false);
         setMobileNavExpanded(false);
       }}
-      className="h-full w-full bg-[#0A0A0C] text-[#F2F2F5] relative flex flex-col overflow-hidden"
+      className="h-full w-full bg-[#0E1621] text-[#F2F2F5] relative flex flex-col overflow-hidden"
     >
       {/* FLOATING COMPACT MODEL PILL + SAVED HISTORY TRIGGER (Zero Top Header Bar!) */}
       <div
@@ -786,7 +786,7 @@ export function AiView({ user, lang }: AiViewProps) {
 
                   {browsingListRaw.length > 6 && (
                     <div className="px-1.5">
-                      <div className="h-8 rounded-xl bg-[#0A0A0C] border border-white/[0.08] px-2.5 flex items-center gap-1.5">
+                      <div className="h-8 rounded-xl bg-[#0E1621] border border-white/[0.08] px-2.5 flex items-center gap-1.5">
                         <Search className="w-3 h-3 text-[#7A7A85]" />
                         <input
                           value={modelSearch}
@@ -1391,7 +1391,7 @@ export function AiView({ user, lang }: AiViewProps) {
                 value={apiKeyDraft}
                 onChange={e => setApiKeyDraft(e.target.value)}
                 placeholder={setupCompany.placeholder}
-                className="flex-1 h-11 rounded-full bg-[#0A0A0C] border border-white/[0.12] px-4 text-xs font-mono-num text-white placeholder:text-[#585860] outline-none focus:border-white/30"
+                className="flex-1 h-11 rounded-full bg-[#0E1621] border border-white/[0.12] px-4 text-xs font-mono-num text-white placeholder:text-[#585860] outline-none focus:border-white/30"
               />
               <ChromeArrowButton type="submit" disabled={!apiKeyDraft.trim()} size={42} />
             </div>

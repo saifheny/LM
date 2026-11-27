@@ -276,7 +276,7 @@ export function ProfileView({
 
   if (loading && !profileUser) {
     return (
-      <div className="min-h-full w-full bg-[#0A0A0C] flex items-center justify-center text-xs text-[#7A7A85]">
+      <div className="min-h-full w-full bg-[#0E1621] flex items-center justify-center text-xs text-[#7A7A85]">
         جارٍ تحميل الملف الشخصي...
       </div>
     );
@@ -284,7 +284,7 @@ export function ProfileView({
 
   if (!profileUser) {
     return (
-      <div className="min-h-full w-full bg-[#0A0A0C] flex items-center justify-center text-xs text-[#7A7A85]">
+      <div className="min-h-full w-full bg-[#0E1621] flex items-center justify-center text-xs text-[#7A7A85]">
         لم يتم العثور على هذا الحساب.
       </div>
     );
@@ -297,7 +297,7 @@ export function ProfileView({
     : '';
 
   return (
-    <div className="min-h-full w-full bg-[#0A0A0C] text-[#F2F2F5]">
+    <div className="min-h-full w-full bg-[#0E1621] text-[#F2F2F5]">
       <div className="max-w-[720px] mx-auto pb-28">
         {/* 2026 BORDERLESS FULL-BLEED COVER (ZERO Outer Container Box!) */}
         <div className="relative h-44 sm:h-56 w-full overflow-hidden bg-[#0E0E12]">
@@ -342,7 +342,7 @@ export function ProfileView({
                     : 'border-2 border-white/[0.18]'
                 }`}
               >
-                <div className="p-[2.5px] rounded-full bg-[#0A0A0C]">
+                <div className="p-[2.5px] rounded-full bg-[#0E1621]">
                   <UserAvatar
                     initials={profileUser.avatarInitials}
                     avatarUrl={profileUser.avatarUrl}
@@ -376,7 +376,11 @@ export function ProfileView({
                       title: profileUser.displayName,
                       subtitle: `@${profileUser.username}`,
                       snippet: profileUser.bio || profileUser.location || 'ملف شخصي على منصة LM',
-                      imageUrl: profileUser.coverUrl || profileUser.avatarUrl,
+                      imageUrl:
+                        profileUser.coverUrl ||
+                        (profileUser.avatarUrl && !profileUser.avatarUrl.startsWith('lm:')
+                          ? profileUser.avatarUrl
+                          : null),
                       avatarUrl: profileUser.avatarUrl,
                       avatarInitials: profileUser.avatarInitials,
                       path: `/u/${profileUser.username}`,

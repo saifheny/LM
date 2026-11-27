@@ -127,7 +127,7 @@ export function StudioModalOverlay({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.16 }}
       onClick={onClose}
-      className={`fixed inset-0 ${zClass} bg-black/78 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4`}
+      className={`fixed inset-0 ${zClass} bg-[#060B12]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4`}
     >
       <motion.div
         initial={{ opacity: 0, y: 20, scale: 0.97 }}
@@ -135,7 +135,7 @@ export function StudioModalOverlay({
         exit={{ opacity: 0, y: 14, scale: 0.97 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
         onClick={e => e.stopPropagation()}
-        className="relative w-full sm:max-w-[440px] rounded-t-[30px] sm:rounded-[30px] bg-[#121218]/98 border-t sm:border border-white/[0.14] shadow-[0_32px_90px_rgba(0,0,0,0.85)] overflow-hidden text-start"
+        className="relative w-full sm:max-w-[440px] rounded-t-[28px] sm:rounded-[28px] bg-[#16212E]/98 border-t sm:border border-[#94B3D6]/[0.18] shadow-[0_32px_90px_rgba(0,0,0,0.75)] overflow-hidden text-start"
       >
         <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
         {children}

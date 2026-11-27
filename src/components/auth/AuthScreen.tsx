@@ -130,7 +130,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       style={{
         fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
-      className="relative h-[100dvh] min-h-[100dvh] w-full max-w-[100vw] overflow-hidden bg-[#050409] text-white flex flex-col select-none"
+      className="relative h-[100dvh] min-h-[100dvh] w-full max-w-[100vw] overflow-hidden bg-[#070914] text-white flex flex-col select-none"
     >
       {/* 1:1 Interactive Three.js WebGL Dotted Cosmic Earth Planet with Moving Orbital Comets */}
       <CosmicPlanetCanvas />
@@ -178,8 +178,8 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         </div>
       </header>
 
-      {/* Hero Typography & Morphing CTAs: Cleanly framed in starry sky on mobile right above the planet dome! */}
-      <main className="relative z-20 flex-1 flex flex-col items-center justify-start pt-10 sm:justify-center sm:pt-0 sm:-mt-20 px-5 text-center pointer-events-none">
+      {/* Hero Typography & Morphing CTAs: Cleanly framed in starry sky right above the planet dome! */}
+      <main className="relative z-20 flex-1 flex flex-col items-center justify-start pt-10 sm:justify-center sm:pt-0 sm:-mt-32 px-5 text-center pointer-events-none">
         <div className="max-w-[680px] mx-auto pointer-events-auto">
           <motion.h1
             initial={{ opacity: 0, y: 12 }}
