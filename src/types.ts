@@ -23,6 +23,9 @@ export interface UserProfile {
   coverUrl?: string | null;
   location?: string;
   website?: string;
+  pinnedPostId?: string | null;
+  isPrivate?: boolean;
+  hideOnline?: boolean;
   verified: boolean;
   country: CountryCode;
   demoBalanceEgp: number;
@@ -44,6 +47,7 @@ export interface StoryItem {
   caption: string;
   reactions?: Record<string, number>;
   myReaction?: string | null;
+  viewsCount?: number;
   createdAt: string;
 }
 
@@ -142,6 +146,8 @@ export interface PostCommentItem {
   audioUrl: string | null;
   audioDurationSec: number;
   transcript: string | null;
+  likesCount?: number;
+  likedByMe?: boolean;
   reportsCount?: number;
   isSensitive?: boolean;
   createdAt: string;

@@ -427,9 +427,38 @@ export function initDatabase() {
       status TEXT DEFAULT 'active',
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS story_views (
+      story_id TEXT NOT NULL,
+      viewer_id TEXT NOT NULL,
+      viewed_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (story_id, viewer_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS post_comment_likes (
+      comment_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (comment_id, user_id)
+    );
   `);
 
-  // Safe non-destructive migrations for V15/V19/V20/V21 columns on existing databases
+  // Safe non-destructive migrations for Phase 1 Profile Pinning, Privacy, and V15–V21 columns
+  try {
+    db.exec('ALTER TABLE users ADD COLUMN pinned_post_id TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE users ADD COLUMN hide_online INTEGER DEFAULT 0;');
+  } catch {
+    // column already exists
+  }
   try {
     db.exec('ALTER TABLE video_comments ADD COLUMN is_edited INTEGER DEFAULT 0;');
   } catch {
@@ -689,6 +718,9 @@ export function mapUserRow(row: Record<string, unknown>): UserProfile {
     coverUrl: row.cover_url ? String(row.cover_url) : null,
     location: String(row.location || ''),
     website: String(row.website || ''),
+    pinnedPostId: row.pinned_post_id ? String(row.pinned_post_id) : null,
+    isPrivate: Boolean(row.is_private),
+    hideOnline: Boolean(row.hide_online),
     verified: Boolean(row.verified),
     vipTier: 0,
     prioritySupport: false,

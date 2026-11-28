@@ -19,8 +19,14 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
+  ShieldBan,
   Smartphone,
   KeyRound,
+  Lock,
+  EyeOff,
+  Moon,
+  Sun,
+  Contrast,
 } from 'lucide-react';
 import { Lang, NavTab, NotificationItem, UserProfile } from '../../types';
 import { LmBrandMark, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
@@ -34,7 +40,7 @@ import {
   NavBellIcon,
 } from '../shared/Icons2026Pro';
 import { useLayout } from '../../context/LayoutContext';
-import { apiGet, apiPost } from '../../lib/api';
+import { api, apiGet, apiPost } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
 interface AppShellProps {
@@ -316,6 +322,34 @@ export function AppShell({
   >([]);
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [passwordSavedMsg, setPasswordSavedMsg] = useState('');
+  const [appTheme, setAppTheme] = useState<'dark' | 'oled' | 'light'>(() => {
+    try {
+      const saved = localStorage.getItem('lm_app_theme');
+      if (saved === 'oled' || saved === 'light' || saved === 'dark') return saved;
+    } catch {
+      // ignore
+    }
+    return 'dark';
+  });
+  const [isPrivateAcc, setIsPrivateAcc] = useState(Boolean(user.isPrivate));
+  const [hideOnlineAcc, setHideOnlineAcc] = useState(Boolean(user.hideOnline));
+  const [blockedUsersList, setBlockedUsersList] = useState<
+    Array<{ id: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null }>
+  >([]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = appTheme;
+    try {
+      localStorage.setItem('lm_app_theme', appTheme);
+    } catch {
+      // ignore
+    }
+  }, [appTheme]);
+
+  useEffect(() => {
+    setIsPrivateAcc(Boolean(user.isPrivate));
+    setHideOnlineAcc(Boolean(user.hideOnline));
+  }, [user.id, user.isPrivate, user.hideOnline]);
 
   useEffect(() => {
     if (!accountOpen) return;
@@ -326,7 +360,36 @@ export function AppShell({
     }>('/api/auth/devices')
       .then(r => setTrustedDevices(r.devices || []))
       .catch(() => {});
-  }, [accountOpen]);
+    apiGet<{
+      ok: boolean;
+      blockedUsers: Array<{ id: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null }>;
+    }>(`/api/users/${user.id}/blocks`)
+      .then(r => setBlockedUsersList(r.blockedUsers || []))
+      .catch(() => {});
+  }, [accountOpen, user.id]);
+
+  async function togglePrivacyFlag(field: 'isPrivate' | 'hideOnline', nextVal: boolean) {
+    if (field === 'isPrivate') setIsPrivateAcc(nextVal);
+    else setHideOnlineAcc(nextVal);
+    try {
+      const res = await api<{ ok: boolean; user?: UserProfile }>(`/api/users/${user.id}/privacy`, {
+        method: 'PATCH',
+        body: JSON.stringify({ [field]: nextVal }),
+      });
+      if (res.user) onSwitchUser(res.user);
+    } catch {
+      // revert silently if failed
+    }
+  }
+
+  async function unblockUserFromHub(blockedId: string) {
+    setBlockedUsersList(prev => prev.filter(b => b.id !== blockedId));
+    try {
+      await api(`/api/users/${blockedId}/block?blockerId=${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+    } catch {
+      // ignore
+    }
+  }
 
   async function handleSaveAccountPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -887,6 +950,106 @@ export function AppShell({
                   </button>
                 </div>
 
+                {/* Appearance Theme Selector (Matte Dark | Pure OLED | Crisp Light) */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#8E8E93] px-1">
+                    <Contrast className="w-4 h-4 text-[#25F4EE]" />
+                    <span>{lang === 'en' ? 'Appearance' : 'مظهر المنصة'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'dark' as const, label: lang === 'en' ? 'Matte Dark' : 'داكن مطفي', icon: Moon },
+                      { id: 'oled' as const, label: lang === 'en' ? 'Pure OLED' : 'أسود OLED', icon: Contrast },
+                      { id: 'light' as const, label: lang === 'en' ? 'Light' : 'فاتح أنيق', icon: Sun },
+                    ].map(th => {
+                      const ThIcon = th.icon;
+                      const active = appTheme === th.id;
+                      return (
+                        <button
+                          key={th.id}
+                          type="button"
+                          onClick={() => setAppTheme(th.id)}
+                          className={`py-2.5 px-2 rounded-2xl text-xs font-semibold flex flex-col items-center gap-1.5 cursor-pointer transition-colors ${
+                            active
+                              ? 'bg-[#25F4EE]/18 text-[#25F4EE] border border-[#25F4EE]/45'
+                              : 'bg-white/[0.04] text-[#A1A1AA] border border-white/[0.08] hover:text-white'
+                          }`}
+                        >
+                          <ThIcon className="w-4 h-4" />
+                          <span>{th.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Privacy Controls & Blocked Accounts Manager */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#8E8E93] px-1">
+                    <Lock className="w-4 h-4 text-[#FBBF24]" />
+                    <span>{lang === 'en' ? 'Privacy & Blocked Users' : 'الخصوصية والمحظورون'}</span>
+                  </div>
+                  <div className="rounded-2xl bg-white/[0.03] border border-white/[0.08] divide-y divide-white/[0.06]">
+                    <button
+                      type="button"
+                      onClick={() => togglePrivacyFlag('isPrivate', !isPrivateAcc)}
+                      className="w-full px-3.5 py-3 flex items-center justify-between gap-3 text-xs cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-white font-medium">
+                        <Lock className="w-4 h-4 text-[#FBBF24]" />
+                        <span>{lang === 'en' ? 'Private account' : 'حساب خاص'}</span>
+                      </span>
+                      <span
+                        className={`w-10 h-5 rounded-full transition-colors p-0.5 flex items-center ${
+                          isPrivateAcc ? 'bg-[#25F4EE] justify-end' : 'bg-white/[0.15] justify-start'
+                        }`}
+                      >
+                        <span className="w-4 h-4 rounded-full bg-white block shadow" />
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => togglePrivacyFlag('hideOnline', !hideOnlineAcc)}
+                      className="w-full px-3.5 py-3 flex items-center justify-between gap-3 text-xs cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-white font-medium">
+                        <EyeOff className="w-4 h-4 text-[#A1A1AA]" />
+                        <span>{lang === 'en' ? 'Hide online status' : 'إخفاء حالة متصل الآن'}</span>
+                      </span>
+                      <span
+                        className={`w-10 h-5 rounded-full transition-colors p-0.5 flex items-center ${
+                          hideOnlineAcc ? 'bg-[#25F4EE] justify-end' : 'bg-white/[0.15] justify-start'
+                        }`}
+                      >
+                        <span className="w-4 h-4 rounded-full bg-white block shadow" />
+                      </span>
+                    </button>
+                    {blockedUsersList.length > 0 && (
+                      <div className="p-3 space-y-2">
+                        <div className="text-[11px] font-semibold text-[#FDA4AF] flex items-center gap-1.5">
+                          <ShieldBan className="w-3.5 h-3.5" />
+                          <span>{lang === 'en' ? `Blocked (${blockedUsersList.length})` : `المحظورون (${blockedUsersList.length})`}</span>
+                        </div>
+                        {blockedUsersList.map(bu => (
+                          <div key={bu.id} className="flex items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <UserAvatar initials={bu.avatarInitials} avatarUrl={bu.avatarUrl} size={26} />
+                              <span className="text-white truncate">{bu.displayName}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => unblockUserFromHub(bu.id)}
+                              className="px-2.5 py-1 rounded-full bg-white/[0.08] hover:bg-white/[0.16] text-[11px] text-[#25F4EE] font-semibold cursor-pointer shrink-0"
+                            >
+                              {lang === 'en' ? 'Unblock' : 'فك الحظر'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Trusted Device Binding & Account Protection (ZERO unauthorized switching into other people's accounts!) */}
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 text-xs font-semibold text-[#8E8E93] px-1">
@@ -1041,6 +1204,73 @@ export function AppShell({
                         <Download className="w-3.5 h-3.5" />
                         <span>{t(lang, 'install_app')}</span>
                       </button>
+                    )}
+                  </div>
+
+                  {/* Desktop Appearance + Privacy Quick Strip */}
+                  <div className="px-4 py-3 border-b border-white/[0.08] space-y-2.5">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { id: 'dark' as const, label: lang === 'en' ? 'Dark' : 'داكن' },
+                        { id: 'oled' as const, label: 'OLED' },
+                        { id: 'light' as const, label: lang === 'en' ? 'Light' : 'فاتح' },
+                      ].map(th => (
+                        <button
+                          key={th.id}
+                          type="button"
+                          onClick={() => setAppTheme(th.id)}
+                          className={`py-1.5 rounded-xl text-[11px] font-semibold cursor-pointer transition-colors ${
+                            appTheme === th.id
+                              ? 'bg-[#25F4EE] text-black'
+                              : 'bg-white/[0.06] text-[#C4C4CC] hover:text-white'
+                          }`}
+                        >
+                          {th.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => togglePrivacyFlag('isPrivate', !isPrivateAcc)}
+                        className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                          isPrivateAcc ? 'bg-[#FBBF24]/18 text-[#FDE68A]' : 'bg-white/[0.05] text-[#A1A1AA] hover:text-white'
+                        }`}
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>{isPrivateAcc ? 'حساب خاص ✓' : 'حساب عام'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => togglePrivacyFlag('hideOnline', !hideOnlineAcc)}
+                        className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                          hideOnlineAcc ? 'bg-[#25F4EE]/18 text-[#25F4EE]' : 'bg-white/[0.05] text-[#A1A1AA] hover:text-white'
+                        }`}
+                      >
+                        <EyeOff className="w-3.5 h-3.5" />
+                        <span>{hideOnlineAcc ? 'الظهور مخفي ✓' : 'متصل ظاهر'}</span>
+                      </button>
+                    </div>
+
+                    {blockedUsersList.length > 0 && (
+                      <div className="pt-1 space-y-1.5 max-h-24 overflow-y-auto">
+                        {blockedUsersList.map(bu => (
+                          <div key={bu.id} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="text-[#FDA4AF] truncate flex items-center gap-1.5">
+                              <ShieldBan className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{bu.displayName}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => unblockUserFromHub(bu.id)}
+                              className="text-[#25F4EE] hover:underline font-semibold cursor-pointer shrink-0"
+                            >
+                              فك الحظر
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
 

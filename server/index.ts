@@ -1261,6 +1261,54 @@ app.get('/api/users/:id/profile', (req, res) => {
     };
   });
 
+  const likedPostRows = db.prepare(`
+    SELECT p.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified, pr.reaction as my_rx
+    FROM post_reactions pr
+    JOIN posts p ON pr.post_id = p.id
+    JOIN users u ON p.user_id = u.id
+    WHERE pr.user_id = ? ORDER BY pr.rowid DESC LIMIT 50
+  `).all(targetId) as Array<Record<string, unknown>>;
+
+  const likedPosts = likedPostRows.map(r => {
+    let mediaUrls: string[] = [];
+    try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
+    if (mediaUrls.length === 0 && r.media_url) mediaUrls = [String(r.media_url)];
+    return {
+      id: r.id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      username: r.username,
+      avatarColor: r.avatar_color,
+      avatarInitials: r.avatar_initials,
+      avatarUrl: r.avatar_url,
+      verified: Boolean(r.verified),
+      topic: r.topic || 'عام',
+      content: r.content,
+      mediaUrl: r.media_url,
+      mediaUrls,
+      musicUrl: r.music_url ? String(r.music_url) : null,
+      musicTitle: r.music_title ? String(r.music_title) : null,
+      location: r.location || 'القاهرة',
+      poll: null,
+      score: Number(r.score ?? r.likes_count ?? 0),
+      myVote: 1,
+      reactions: {},
+      myReaction: String(r.my_rx || 'love'),
+      likesCount: Number(r.likes_count || 0),
+      commentsCount: Number(r.comments_count || 0),
+      sharesCount: Number(r.shares_count || 0),
+      likedByMe: true,
+      savedByMe: false,
+      isEdited: Boolean(r.is_edited),
+      createdAt: r.created_at,
+    };
+  });
+
+  // Hoist user's pinned post cleanly to #1 on their Profile!
+  const sortedPosts = user.pinnedPostId
+    ? [...posts.filter((p: Record<string, unknown>) => p.id === user.pinnedPostId && !p.repostedBy), ...posts.filter((p: Record<string, unknown>) => !(p.id === user.pinnedPostId && !p.repostedBy))]
+    : posts;
+
   const followersList = (db.prepare(`
     SELECT u.* FROM user_follows f JOIN users u ON f.follower_id = u.id
     WHERE f.following_id = ? LIMIT 40
@@ -1273,7 +1321,32 @@ app.get('/api/users/:id/profile', (req, res) => {
 
   const hasActiveStory = getActiveStoryUserSet().has(targetId);
 
-  res.json({ ok: true, user, isFollowing, blockedByMe, hasActiveStory, posts, videos, savedPosts, savedVideos, followersList, followingList });
+  res.json({ ok: true, user, isFollowing, blockedByMe, hasActiveStory, posts: sortedPosts, videos, savedPosts, savedVideos, likedPosts, followersList, followingList });
+});
+
+app.post('/api/users/:id/pin-post', (req, res) => {
+  const userId = req.params.id;
+  const { postId } = req.body as { postId?: string | null };
+  const u = getUserOrNull(userId);
+  if (!u) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+  const nextPin = postId && u.pinnedPostId !== postId ? postId : null;
+  if (nextPin) {
+    const owned = db.prepare('SELECT 1 FROM posts WHERE id = ? AND user_id = ?').get(nextPin, userId);
+    if (!owned) return res.status(403).json({ ok: false, error: 'يمكنك تثبيت منشوراتك فقط.' });
+  }
+  db.prepare('UPDATE users SET pinned_post_id = ? WHERE id = ?').run(nextPin, userId);
+  res.json({ ok: true, pinnedPostId: nextPin, user: getUserOrNull(userId) });
+});
+
+app.patch('/api/users/:id/privacy', (req, res) => {
+  const userId = req.params.id;
+  const { isPrivate, hideOnline } = req.body as { isPrivate?: boolean; hideOnline?: boolean };
+  const u = getUserOrNull(userId);
+  if (!u) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+  const nextPrivate = typeof isPrivate === 'boolean' ? (isPrivate ? 1 : 0) : (u.isPrivate ? 1 : 0);
+  const nextHideOnline = typeof hideOnline === 'boolean' ? (hideOnline ? 1 : 0) : (u.hideOnline ? 1 : 0);
+  db.prepare('UPDATE users SET is_private = ?, hide_online = ? WHERE id = ?').run(nextPrivate, nextHideOnline, userId);
+  res.json({ ok: true, user: getUserOrNull(userId) });
 });
 
 app.patch('/api/users/:id', (req, res) => {
@@ -1763,6 +1836,15 @@ app.get('/api/stories', (req, res) => {
     if (viewerId && rx.user_id === viewerId) myStoryRx.set(rx.story_id, rx.reaction);
   }
 
+  const storyViewCounts = new Map<string, number>();
+  const svRows = db.prepare('SELECT story_id, COUNT(*) as cnt FROM story_views GROUP BY story_id').all() as Array<{
+    story_id: string;
+    cnt: number;
+  }>;
+  for (const sv of svRows) {
+    storyViewCounts.set(String(sv.story_id), Number(sv.cnt || 0));
+  }
+
   res.json({
     ok: true,
     myActiveStory,
@@ -1778,7 +1860,49 @@ app.get('/api/stories', (req, res) => {
       caption: r.caption,
       reactions: rxByStory.get(String(r.id)) || {},
       myReaction: myStoryRx.get(String(r.id)) || null,
+      viewsCount: storyViewCounts.get(String(r.id)) || 0,
       createdAt: r.created_at,
+    })),
+  });
+});
+
+app.post('/api/stories/:id/view', (req, res) => {
+  const storyId = req.params.id;
+  const { viewerId } = req.body as { viewerId?: string };
+  if (!viewerId) return res.status(400).json({ ok: false });
+  const story = db.prepare('SELECT user_id FROM stories WHERE id = ?').get(storyId) as { user_id: string } | undefined;
+  if (!story) return res.status(404).json({ ok: false });
+  if (story.user_id !== viewerId) {
+    db.prepare('INSERT OR IGNORE INTO story_views (story_id, viewer_id) VALUES (?, ?)').run(storyId, viewerId);
+  }
+  const cntRow = db.prepare('SELECT COUNT(*) as c FROM story_views WHERE story_id = ?').get(storyId) as { c: number };
+  res.json({ ok: true, viewsCount: Number(cntRow?.c || 0) });
+});
+
+app.get('/api/stories/:id/viewers', (req, res) => {
+  const storyId = req.params.id;
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified, sv.viewed_at,
+           sr.reaction
+    FROM story_views sv
+    JOIN users u ON sv.viewer_id = u.id
+    LEFT JOIN story_reactions sr ON sr.story_id = sv.story_id AND sr.user_id = sv.viewer_id
+    WHERE sv.story_id = ?
+    ORDER BY sv.viewed_at DESC
+    LIMIT 80
+  `).all(storyId) as Array<Record<string, unknown>>;
+  res.json({
+    ok: true,
+    viewers: rows.map(r => ({
+      id: String(r.id),
+      username: String(r.username || ''),
+      displayName: String(r.display_name || 'مستخدم'),
+      avatarColor: String(r.avatar_color || '#27272A'),
+      avatarInitials: String(r.avatar_initials || 'LM'),
+      avatarUrl: r.avatar_url ? String(r.avatar_url) : null,
+      verified: Boolean(r.verified),
+      reaction: r.reaction ? String(r.reaction) : null,
+      viewedAt: String(r.viewed_at || ''),
     })),
   });
 });
@@ -2399,19 +2523,78 @@ app.post('/api/posts/:id/repost', (req, res) => {
   });
 });
 
+app.get('/api/posts/:id/reactions', (req, res) => {
+  const postId = req.params.id;
+  const rows = db.prepare(`
+    SELECT pr.reaction, u.id, u.username, u.display_name, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
+    FROM post_reactions pr
+    JOIN users u ON pr.user_id = u.id
+    WHERE pr.post_id = ?
+    ORDER BY pr.rowid DESC
+    LIMIT 100
+  `).all(postId) as Array<Record<string, unknown>>;
+  res.json({
+    ok: true,
+    reactors: rows.map(r => ({
+      userId: String(r.id),
+      username: String(r.username || ''),
+      displayName: String(r.display_name || 'مستخدم'),
+      avatarColor: String(r.avatar_color || '#27272A'),
+      avatarInitials: String(r.avatar_initials || 'LM'),
+      avatarUrl: r.avatar_url ? String(r.avatar_url) : null,
+      verified: Boolean(r.verified),
+      reaction: String(r.reaction || 'like'),
+    })),
+  });
+});
+
+app.post('/api/post-comments/:id/like', (req, res) => {
+  const commentId = req.params.id;
+  const { userId } = req.body as { userId?: string };
+  if (!userId) return res.status(400).json({ ok: false });
+  const existing = db.prepare('SELECT 1 FROM post_comment_likes WHERE comment_id = ? AND user_id = ?').get(commentId, userId);
+  let liked = false;
+  if (existing) {
+    db.prepare('DELETE FROM post_comment_likes WHERE comment_id = ? AND user_id = ?').run(commentId, userId);
+    liked = false;
+  } else {
+    db.prepare('INSERT OR IGNORE INTO post_comment_likes (comment_id, user_id) VALUES (?, ?)').run(commentId, userId);
+    liked = true;
+  }
+  const cntRow = db.prepare('SELECT COUNT(*) as c FROM post_comment_likes WHERE comment_id = ?').get(commentId) as { c: number };
+  res.json({ ok: true, liked, likesCount: Number(cntRow?.c || 0) });
+});
+
 app.get('/api/posts/:id/comments', (req, res) => {
+  const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
     SELECT c.*, u.display_name, u.username, u.avatar_color, u.avatar_initials, u.avatar_url, u.verified
     FROM post_comments c LEFT JOIN users u ON c.user_id = u.id
     WHERE c.post_id = ? ORDER BY c.rowid ASC
   `).all(req.params.id) as Array<Record<string, unknown>>;
 
+  const commentIds = rows.map(r => String(r.id));
+  const likeCountMap = new Map<string, number>();
+  const likedByMeSet = new Set<string>();
+  if (commentIds.length > 0) {
+    const ph = commentIds.map(() => '?').join(',');
+    const lRows = db.prepare(`SELECT comment_id, user_id FROM post_comment_likes WHERE comment_id IN (${ph})`).all(...commentIds) as Array<{
+      comment_id: string;
+      user_id: string;
+    }>;
+    for (const lr of lRows) {
+      likeCountMap.set(lr.comment_id, (likeCountMap.get(lr.comment_id) || 0) + 1);
+      if (viewerId && lr.user_id === viewerId) likedByMeSet.add(lr.comment_id);
+    }
+  }
+
   const commentReports = getReportCountsMap('post_comment');
   res.json({
     ok: true,
     comments: rows.map(r => {
       const isAi = r.user_id === 'lm_ai';
-      const rCnt = commentReports.get(String(r.id)) || 0;
+      const cid = String(r.id);
+      const rCnt = commentReports.get(cid) || 0;
       return {
         id: r.id,
         postId: r.post_id,
@@ -2429,8 +2612,10 @@ app.get('/api/posts/:id/comments', (req, res) => {
         audioUrl: r.audio_url ? String(r.audio_url) : null,
         audioDurationSec: Number(r.audio_duration_sec || 6),
         transcript: r.transcript ? String(r.transcript) : null,
+        likesCount: likeCountMap.get(cid) || 0,
+        likedByMe: likedByMeSet.has(cid),
         reportsCount: rCnt,
-        isSensitive: rCnt > 0 && isContentSensitive('post_comment', String(r.id), rCnt),
+        isSensitive: rCnt > 0 && isContentSensitive('post_comment', cid, rCnt),
         createdAt: r.created_at,
       };
     }),

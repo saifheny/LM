@@ -491,6 +491,10 @@ export function App() {
                 setFocusedPostId(postId);
                 setActiveTab('social');
               }}
+              onOpenVideo={vidId => {
+                setFocusedVideoId(vidId);
+                setActiveTab('videos');
+              }}
               onOpenVideos={() => setActiveTab('videos')}
             />
           )}

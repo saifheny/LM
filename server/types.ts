@@ -36,6 +36,9 @@ export interface UserProfile {
   coverUrl?: string | null;
   location?: string;
   website?: string;
+  pinnedPostId?: string | null;
+  isPrivate?: boolean;
+  hideOnline?: boolean;
   verified: boolean;
   vipTier: VipTier;
   prioritySupport: boolean;

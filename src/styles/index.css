@@ -273,3 +273,65 @@ body,
   color: #FFFFFF;
   text-decoration-color: #FFFFFF;
 }
+
+/* ============================================================
+   LM APPEARANCE THEMES: MATTE DARK (default) | PURE OLED | CRISP LIGHT
+   ============================================================ */
+html[data-theme='oled'],
+html[data-theme='oled'] body,
+html[data-theme='oled'] #root,
+html[data-theme='oled'] .bg-\[\#121212\] {
+  background-color: #000000 !important;
+}
+
+html[data-theme='oled'] .bg-\[\#181920\],
+html[data-theme='oled'] .bg-\[\#161823\] {
+  background-color: #09090C !important;
+}
+
+html[data-theme='light'],
+html[data-theme='light'] body,
+html[data-theme='light'] #root {
+  background-color: #F4F5F7;
+  color: #111318;
+}
+
+html[data-theme='light'] .bg-\[\#121212\] {
+  background-color: #F4F5F7 !important;
+  color: #111318 !important;
+}
+
+html[data-theme='light'] .bg-\[\#121212\]\/97,
+html[data-theme='light'] .bg-\[\#121212\]\/88 {
+  background-color: rgba(244, 245, 247, 0.94) !important;
+}
+
+html[data-theme='light'] .text-white,
+html[data-theme='light'] .text-\[\#F1F1F2\],
+html[data-theme='light'] .text-\[\#F2F2F5\] {
+  color: #111318;
+}
+
+/* Keep crisp white text inside dark video/live stages & colored buttons even in Light Theme */
+html[data-theme='light'] .bg-black *,
+html[data-theme='light'] .bg-\[\#FE2C55\],
+html[data-theme='light'] .bg-\[\#FE2C55\] *,
+html[data-theme='light'] .lm-msg-out,
+html[data-theme='light'] .lm-msg-out * {
+  color: #FFFFFF;
+}
+
+html[data-theme='light'] .bg-\[\#181920\],
+html[data-theme='light'] .bg-\[\#191A22\],
+html[data-theme='light'] .bg-\[\#1E1F28\],
+html[data-theme='light'] .bg-\[\#14151A\] {
+  background-color: #FFFFFF !important;
+  color: #111318 !important;
+  border-color: rgba(17, 19, 24, 0.1) !important;
+}
+
+html[data-theme='light'] .border-white\/\[0\.08\],
+html[data-theme='light'] .border-white\/\[0\.07\],
+html[data-theme='light'] .divide-white\/\[0\.08\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(17, 19, 24, 0.09) !important;
+}

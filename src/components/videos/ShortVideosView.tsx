@@ -34,6 +34,10 @@ import {
   Hash,
   Monitor,
   Smartphone,
+  Timer,
+  Eye,
+  Maximize2,
+  Sliders,
 } from 'lucide-react';
 
 import { ConversationItem, Lang, ShortVideoItem, UserProfile, VideoCommentItem } from '../../types';
@@ -277,12 +281,20 @@ export function ShortVideosView({
   const [sentToIds, setSentToIds] = useState<Record<string, boolean>>({});
   const [shareToast, setShareToast] = useState('');
 
+  // TikTok-Grade Clear Display Mode + Interactive Audio Page Sheet
+  const [clearDisplayMode, setClearDisplayMode] = useState(false);
+  const [audioSheetTitle, setAudioSheetTitle] = useState<string | null>(null);
+
   // Full-Screen 2-Step TikTok Creator Studio (Step 1: Camera + Gallery Picker -> Step 2: Unified Caption Publish Screen)
   const [uploadOpen, setUploadOpen] = useState(false);
   const [studioStep, setStudioStep] = useState<'capture' | 'publish'>('capture');
   const [studioDurationSec, setStudioDurationSec] = useState<15 | 60 | 180>(60);
   const [studioOrientation, setStudioOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
+  const [studioCountdownSec, setStudioCountdownSec] = useState<0 | 3 | 10>(0);
+  const [countdownLeft, setCountdownLeft] = useState<number>(0);
+  const [studioFilter, setStudioFilter] = useState<'normal' | 'cinema' | 'warm' | 'bw'>('normal');
+  const countdownTimerRef = useRef<number | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [isRecordingClip, setIsRecordingClip] = useState(false);
@@ -305,6 +317,11 @@ export function ShortVideosView({
   const posterFileRef = useRef<HTMLInputElement | null>(null);
 
   const stopStudioCamera = useCallback(() => {
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setCountdownLeft(0);
     if (recordTimerRef.current) {
       window.clearInterval(recordTimerRef.current);
       recordTimerRef.current = null;
@@ -929,19 +946,7 @@ export function ShortVideosView({
     await processSelectedVideoFile(f);
   }
 
-  function toggleStudioRecording() {
-    if (isRecordingClip) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      if (recordTimerRef.current) {
-        window.clearInterval(recordTimerRef.current);
-        recordTimerRef.current = null;
-      }
-      setIsRecordingClip(false);
-      return;
-    }
-
+  function beginStudioRecordingNow() {
     const stream = studioStreamRef.current;
     if (!stream || typeof MediaRecorder === 'undefined') {
       fileRef.current?.click();
@@ -990,6 +995,49 @@ export function ShortVideosView({
     } catch {
       fileRef.current?.click();
     }
+  }
+
+  function toggleStudioRecording() {
+    if (countdownLeft > 0) {
+      if (countdownTimerRef.current) {
+        window.clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+      setCountdownLeft(0);
+      return;
+    }
+    if (isRecordingClip) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (recordTimerRef.current) {
+        window.clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      setIsRecordingClip(false);
+      return;
+    }
+
+    if (studioCountdownSec > 0) {
+      let rem = studioCountdownSec;
+      setCountdownLeft(rem);
+      countdownTimerRef.current = window.setInterval(() => {
+        rem -= 1;
+        if (rem <= 0) {
+          if (countdownTimerRef.current) {
+            window.clearInterval(countdownTimerRef.current);
+            countdownTimerRef.current = null;
+          }
+          setCountdownLeft(0);
+          beginStudioRecordingNow();
+        } else {
+          setCountdownLeft(rem);
+        }
+      }, 1000);
+      return;
+    }
+
+    beginStudioRecordingNow();
   }
 
   async function handleManualPosterFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1251,7 +1299,8 @@ export function ShortVideosView({
 
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
 
-                  {/* Bottom Metadata: Positioned cleanly above the visible video scrubber lane! */}
+                  {/* Bottom Metadata: Hidden cleanly in Clear Display Mode! */}
+                  {!clearDisplayMode && (
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
@@ -1348,13 +1397,34 @@ export function ShortVideosView({
                       );
                     })()}
 
-                    <div className="flex items-center gap-2 text-xs text-white/85 pt-0.5 max-w-full justify-start">
+                    <button
+                      type="button"
+                      onClick={() => setAudioSheetTitle(v.audioTitle || 'الصوت الأصلي')}
+                      className="flex items-center gap-2 text-xs text-white/90 hover:text-[#25F4EE] pt-0.5 max-w-full justify-start cursor-pointer transition-colors"
+                    >
                       <Music2 className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate">{v.audioTitle}</span>
-                    </div>
+                    </button>
                   </div>
+                  )}
+
+                  {/* Minimal Restore Pill when Clear Display Mode is active */}
+                  {clearDisplayMode && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setClearDisplayMode(false);
+                      }}
+                      className="absolute end-3.5 bottom-16 z-30 h-9 px-3.5 rounded-full bg-black/55 backdrop-blur-md border border-white/20 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer hover:bg-black/75"
+                    >
+                      <Eye className="w-4 h-4 text-[#25F4EE]" />
+                      <span>إظهار الواجهة</span>
+                    </button>
+                  )}
 
                   {/* Right Action Rail: Uniform Crisp TikTok Icons Positioned Above Scrubber Lane */}
+                  {!clearDisplayMode && (
                   <div
                     onClick={e => e.stopPropagation()}
                     onPointerDown={e => e.stopPropagation()}
@@ -1434,10 +1504,25 @@ export function ShortVideosView({
                       />
                     )}
 
-                    <div className="w-10 h-10 rounded-full bg-[#1C1D24] border border-white/25 flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setClearDisplayMode(true)}
+                      title="وضع الشاشة الصافية"
+                      className="flex flex-col items-center gap-0.5 text-white/85 hover:text-white cursor-pointer active:scale-95 transition-transform"
+                    >
+                      <Maximize2 className="w-5 h-5" strokeWidth={2} />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAudioSheetTitle(v.audioTitle || 'الصوت الأصلي')}
+                      title={v.audioTitle || 'صفحة الصوت'}
+                      className="w-10 h-10 rounded-full bg-[#1C1D24] border border-white/25 hover:border-[#25F4EE] flex items-center justify-center cursor-pointer transition-colors"
+                    >
                       <Music2 className="w-4 h-4 text-white" />
-                    </div>
+                    </button>
                   </div>
+                  )}
 
                   {/* Always-Visible Advanced Video Progress Scrubber (Cleanly lifted ABOVE bottom dock & safe-area!) */}
                   {idx === activeIndex && (
@@ -2229,12 +2314,22 @@ export function ShortVideosView({
           {studioStep === 'capture' ? (
             /* STEP 1: Full-Screen TikTok Camera + Gallery Studio */
             <div className="relative flex-1 w-full max-w-[540px] mx-auto bg-black flex flex-col overflow-hidden">
-              {/* Live Camera Feed: Natural Un-Zoomed Mobile/Laptop Framing (NEVER crops/zooms onto the user's face!) */}
+              {/* Live Camera Feed: Natural Un-Zoomed Framing + Live Visual Filters */}
               <video
                 ref={studioVideoPreviewRef}
                 autoPlay
                 muted
                 playsInline
+                style={{
+                  filter:
+                    studioFilter === 'cinema'
+                      ? 'contrast(1.14) saturate(1.22)'
+                      : studioFilter === 'warm'
+                        ? 'sepia(0.24) saturate(1.28) brightness(1.04)'
+                        : studioFilter === 'bw'
+                          ? 'grayscale(1) contrast(1.18)'
+                          : 'none',
+                }}
                 onLoadedMetadata={e => {
                   const vw = e.currentTarget.videoWidth;
                   const vh = e.currentTarget.videoHeight;
@@ -2244,6 +2339,15 @@ export function ShortVideosView({
                   studioOrientation === 'landscape' || studioCameraIsWide ? 'object-contain' : 'object-cover'
                 } ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''} ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
               />
+
+              {/* Animated Centered 3-2-1 Countdown Overlay Before Recording Starts */}
+              {countdownLeft > 0 && (
+                <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/25">
+                  <div className="w-28 h-28 rounded-full bg-black/65 backdrop-blur-md border-2 border-[#25F4EE] text-white text-5xl font-extrabold font-mono-num flex items-center justify-center animate-pulse">
+                    {countdownLeft}
+                  </div>
+                </div>
+              )}
 
               {/* Clean Fallback Canvas if Camera isn't active */}
               {!cameraReady && (
@@ -2332,6 +2436,49 @@ export function ShortVideosView({
                 style={{ paddingBottom: 'max(28px, calc(env(safe-area-inset-bottom) + 18px))' }}
                 className="relative z-20 px-6 pt-6 bg-gradient-to-t from-black/90 via-black/45 to-transparent space-y-5"
               >
+                {/* Countdown Timer & Live Camera Filters Bar */}
+                {!isRecordingClip && (
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStudioCountdownSec(c => (c === 0 ? 3 : c === 3 ? 10 : 0))
+                      }
+                      className={`h-8 px-3 rounded-full text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        studioCountdownSec > 0
+                          ? 'bg-[#25F4EE] text-black'
+                          : 'bg-white/[0.1] text-white/85 hover:bg-white/[0.18]'
+                      }`}
+                    >
+                      <Timer className="w-3.5 h-3.5" />
+                      <span>{studioCountdownSec > 0 ? `مؤقت ${studioCountdownSec}s` : 'مؤقت: إيقاف'}</span>
+                    </button>
+
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                      <Sliders className="w-3.5 h-3.5 text-white/60 shrink-0" />
+                      {[
+                        { id: 'normal' as const, label: 'عادي' },
+                        { id: 'cinema' as const, label: 'سينمائي' },
+                        { id: 'warm' as const, label: 'دافئ' },
+                        { id: 'bw' as const, label: 'أبيض وأسود' },
+                      ].map(flt => (
+                        <button
+                          key={flt.id}
+                          type="button"
+                          onClick={() => setStudioFilter(flt.id)}
+                          className={`h-7 px-2.5 rounded-full text-[11px] font-medium cursor-pointer shrink-0 transition-colors ${
+                            studioFilter === flt.id
+                              ? 'bg-white text-black font-bold'
+                              : 'bg-white/[0.1] text-white/80 hover:text-white'
+                          }`}
+                        >
+                          {flt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Duration Selector */}
                 <div className="flex items-center justify-center gap-6 text-xs font-bold">
                   {([15, 60, 180] as const).map(sec => (
@@ -2647,6 +2794,80 @@ export function ShortVideosView({
             </div>
           </form>
         </StudioModalOverlay>
+      )}
+
+      {/* Interactive Audio Page Bottom Sheet (Shows all Pulse videos sharing this sound + "Use This Sound") */}
+      {audioSheetTitle && (
+        <div
+          onClick={() => setAudioSheetTitle(null)}
+          className="fixed inset-0 z-[84] bg-black/68 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ paddingBottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
+            className="w-full sm:max-w-[440px] max-h-[75vh] rounded-t-[26px] sm:rounded-[26px] bg-[#161820] border-t sm:border border-white/[0.1] flex flex-col overflow-hidden"
+          >
+            <div className="px-4 pt-3 pb-3.5 border-b border-white/[0.08] space-y-3 shrink-0">
+              <div className="w-10 h-1 rounded-full bg-white/25 mx-auto sm:hidden" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-12 h-12 rounded-2xl bg-[#222531] border border-white/[0.1] flex items-center justify-center text-[#25F4EE] shrink-0">
+                    <Music2 className="w-6 h-6" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-white truncate">{audioSheetTitle}</div>
+                    <div className="text-[11.5px] text-[#8E8E93] font-mono-num">
+                      {videos.filter(v => (v.audioTitle || 'الصوت الأصلي') === audioSheetTitle).length} فيديو نبض
+                    </div>
+                  </div>
+                </div>
+                <CloseOrbButton size="sm" onClick={() => setAudioSheetTitle(null)} />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAudioSheetTitle(null);
+                  setStudioStep('capture');
+                  setUploadOpen(true);
+                }}
+                className="w-full h-10 rounded-xl bg-[#FE2C55] hover:bg-[#EA284E] text-xs font-bold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                <Camera className="w-4 h-4" />
+                <span>استخدم هذا الصوت في فيديو جديد</span>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 grid grid-cols-3 gap-2">
+              {videos
+                .filter(v => (v.audioTitle || 'الصوت الأصلي') === audioSheetTitle)
+                .map(vid => (
+                  <button
+                    key={vid.id}
+                    type="button"
+                    onClick={() => {
+                      const targetIdx = orderedVideos.findIndex(item => item.id === vid.id);
+                      setAudioSheetTitle(null);
+                      if (targetIdx >= 0) {
+                        setActiveIndex(targetIdx);
+                        swiperRef.current?.slideTo(targetIdx, 0);
+                      }
+                    }}
+                    className="relative aspect-[9/14] rounded-xl overflow-hidden bg-black cursor-pointer group text-start"
+                  >
+                    {vid.posterUrl ? (
+                      <img src={vid.posterUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                    ) : (
+                      <video src={vid.videoUrl || ''} muted className="w-full h-full object-cover" />
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 p-1.5 bg-gradient-to-t from-black/85 to-transparent text-[10px] font-mono-num text-white flex items-center gap-1">
+                      <span>▶ {compactNum(vid.viewsCount)}</span>
+                    </div>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Smooth Scrollable Bottom Language Sheet for Pulse Comment Translation */}

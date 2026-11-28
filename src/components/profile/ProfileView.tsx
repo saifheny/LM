@@ -4,9 +4,14 @@ import {
   Bookmark,
   Check,
   Globe,
+  Grid,
+  Heart,
+  Lock,
   MapPin,
   MessageCircle,
+  Pin,
   Play,
+  QrCode,
   Repeat2,
   Share2,
   ShieldBan,
@@ -17,6 +22,7 @@ import {
 import { Lang, ShortVideoItem, SocialPost, UserProfile } from '../../types';
 import { RichMessageText, UserAvatar, VerifiedIcon } from '../shared/LmBrandMark';
 import type { SharePayload } from '../shared/ShareSheetModal';
+import { ProfileQrModal } from './ProfileQrModal';
 import { ChromeArrowButton } from '../shared/HardwareUI';
 import {
   CoverCanvasIcon,
@@ -44,6 +50,7 @@ interface ProfileViewProps {
   onOpenHashtag?: (tag: string) => void;
   onShare?: (payload: SharePayload) => void;
   onOpenPostComments?: (postId: string) => void;
+  onOpenVideo?: (videoId: string) => void;
   onOpenVideos: () => void;
 }
 
@@ -64,6 +71,7 @@ export function ProfileView({
   onOpenHashtag,
   onShare,
   onOpenPostComments,
+  onOpenVideo,
   onOpenVideos,
 }: ProfileViewProps) {
   const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
@@ -75,11 +83,15 @@ export function ProfileView({
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
   const [savedPosts, setSavedPosts] = useState<SocialPost[]>([]);
   const [savedVideos, setSavedVideos] = useState<ShortVideoItem[]>([]);
+  const [likedPosts, setLikedPosts] = useState<SocialPost[]>([]);
   const [savedFilter, setSavedFilter] = useState<'all' | 'posts' | 'videos'>('all');
   const [followersList, setFollowersList] = useState<UserProfile[]>([]);
   const [followingList, setFollowingList] = useState<UserProfile[]>([]);
-  const [tab, setTab] = useState<'posts' | 'videos' | 'saved'>('posts');
+  const [tab, setTab] = useState<'posts' | 'videos' | 'media' | 'likes' | 'saved'>('posts');
   const [loading, setLoading] = useState(true);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [stickyHeaderVisible, setStickyHeaderVisible] = useState(false);
+  const coverSentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Interactive Followers / Following Directory Sheet
   const [peopleSheet, setPeopleSheet] = useState<'followers' | 'following' | null>(null);
@@ -126,6 +138,7 @@ export function ProfileView({
         videos: ShortVideoItem[];
         savedPosts?: SocialPost[];
         savedVideos?: ShortVideoItem[];
+        likedPosts?: SocialPost[];
         followersList?: UserProfile[];
         followingList?: UserProfile[];
       }>(`/api/users/${profileUserId}/profile?viewerId=${currentUser.id}`);
@@ -137,6 +150,7 @@ export function ProfileView({
       setVideos(res.videos);
       setSavedPosts(res.savedPosts || []);
       setSavedVideos(res.savedVideos || []);
+      setLikedPosts(res.likedPosts || []);
       setFollowersList(res.followersList || []);
       setFollowingList(res.followingList || []);
     } catch (err) {
@@ -167,6 +181,36 @@ export function ProfileView({
     setTab('posts');
     loadProfile();
   }, [loadProfile]);
+
+  useEffect(() => {
+    const el = coverSentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver(
+      entries => {
+        setStickyHeaderVisible(!entries[0]?.isIntersecting);
+      },
+      { threshold: 0.05 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [profileUser?.id]);
+
+  async function togglePinPost(postId: string) {
+    if (!isMe || !profileUser) return;
+    try {
+      const res = await apiPost<{ ok: boolean; pinnedPostId: string | null; user: UserProfile }>(
+        `/api/users/${currentUser.id}/pin-post`,
+        { postId }
+      );
+      if (res.user) {
+        setProfileUser(res.user);
+        onProfileUpdated(res.user);
+      }
+      await loadProfile();
+    } catch {
+      // ignore
+    }
+  }
 
   function openEditStudio() {
     if (!profileUser) return;
@@ -361,8 +405,32 @@ export function ProfileView({
 
   if (loading && !profileUser) {
     return (
-      <div className="min-h-full w-full bg-[#121212] flex items-center justify-center text-xs text-[#7A7A85]">
-        جارٍ تحميل الملف الشخصي...
+      <div className="min-h-full w-full bg-[#121212] text-[#F2F2F5]">
+        <div className="max-w-[720px] mx-auto pb-28 animate-pulse">
+          <div className="h-44 sm:h-56 w-full bg-white/[0.05]" />
+          <div className="px-4 sm:px-6 -mt-12 space-y-5">
+            <div className="flex items-end justify-between">
+              <div className="w-24 h-24 rounded-full bg-[#1E1F28] border-4 border-[#121212]" />
+              <div className="flex gap-2">
+                <div className="w-10 h-10 rounded-full bg-white/[0.06]" />
+                <div className="w-28 h-10 rounded-xl bg-white/[0.06]" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="h-6 w-44 rounded-lg bg-white/[0.08]" />
+              <div className="h-3.5 w-64 rounded-lg bg-white/[0.05]" />
+            </div>
+            <div className="flex gap-8">
+              <div className="h-5 w-16 rounded-lg bg-white/[0.06]" />
+              <div className="h-5 w-16 rounded-lg bg-white/[0.06]" />
+              <div className="h-5 w-16 rounded-lg bg-white/[0.06]" />
+            </div>
+            <div className="space-y-4 pt-4">
+              <div className="h-28 rounded-2xl bg-white/[0.04]" />
+              <div className="h-44 rounded-2xl bg-white/[0.04]" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -396,10 +464,50 @@ export function ProfileView({
     : '';
 
   return (
-    <div className="min-h-full w-full bg-[#121212] text-[#F2F2F5]">
+    <div className="min-h-full w-full bg-[#121212] text-[#F2F2F5] relative">
+      {/* Sticky Scroll-Reveal Compact Profile Header (Appears smoothly once scrolled past Cover!) */}
+      {stickyHeaderVisible && (
+        <div
+          style={{ paddingTop: 'max(10px, env(safe-area-inset-top))' }}
+          className="sticky top-0 z-30 bg-[#121212]/88 backdrop-blur-xl px-4 sm:px-6 pb-2.5"
+        >
+          <div className="max-w-[720px] mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <UserAvatar initials={profileUser.avatarInitials} avatarUrl={profileUser.avatarUrl} size={32} />
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-white flex items-center gap-1 truncate">
+                  <span className="truncate">{profileUser.displayName}</span>
+                  {profileUser.verified && <VerifiedIcon />}
+                </div>
+                <div className="text-[11px] text-[#8E8E93] font-mono-num truncate">@{profileUser.username}</div>
+              </div>
+            </div>
+            {isMe ? (
+              <button
+                type="button"
+                onClick={openEditStudio}
+                className="h-8 px-3.5 rounded-full bg-white/[0.09] hover:bg-white/[0.15] text-xs font-semibold text-white cursor-pointer shrink-0"
+              >
+                {lang === 'ar' ? 'تعديل' : 'Edit'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={toggleFollow}
+                className={`h-8 px-4 rounded-full text-xs font-bold cursor-pointer shrink-0 ${
+                  isFollowing ? 'bg-white/[0.1] text-white' : 'bg-[#FE2C55] text-white'
+                }`}
+              >
+                {isFollowing ? (lang === 'ar' ? 'متابَع' : 'Following') : lang === 'ar' ? 'متابعة' : 'Follow'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="max-w-[720px] mx-auto pb-28">
         {/* 2026 BORDERLESS FULL-BLEED COVER (ZERO Outer Container Box!) */}
-        <div className="relative h-44 sm:h-56 w-full overflow-hidden bg-[#0E0E12]">
+        <div ref={coverSentinelRef} className="relative h-44 sm:h-56 w-full overflow-hidden bg-[#0E0E12]">
           {profileUser.coverUrl ? (
             <img
               src={profileUser.coverUrl}
@@ -463,7 +571,15 @@ export function ProfileView({
               )}
             </div>
 
-            <div className="flex items-center gap-2.5 pb-1">
+            <div className="flex items-center gap-2 pb-1">
+              <button
+                type="button"
+                onClick={() => setQrOpen(true)}
+                title={lang === 'ar' ? 'بطاقة QR للحساب' : 'Profile QR'}
+                className="w-10 h-10 rounded-full bg-[#1E1F28] hover:bg-[#272936] text-[#25F4EE] flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <QrCode className="w-5 h-5" strokeWidth={1.9} />
+              </button>
               {onShare && (
                 <button
                   type="button"
@@ -544,6 +660,12 @@ export function ProfileView({
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">{profileUser.displayName}</h1>
               {profileUser.verified && <VerifiedIcon />}
+              {profileUser.isPrivate && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.08] text-[10.5px] text-[#C4C4CC]">
+                  <Lock className="w-3 h-3" />
+                  <span>{lang === 'ar' ? 'حساب خاص' : 'Private'}</span>
+                </span>
+              )}
               <span className="text-xs text-[#8E8E93] font-mono-num">@{profileUser.username}</span>
             </div>
 
@@ -654,6 +776,34 @@ export function ProfileView({
               )}
             </button>
 
+            <button
+              type="button"
+              onClick={() => setTab('media')}
+              className={`pb-3 text-[13px] font-semibold flex items-center gap-2 cursor-pointer transition-colors relative shrink-0 ${
+                tab === 'media' ? 'text-white' : 'text-[#8E8E93] hover:text-white'
+              }`}
+            >
+              <Grid className={`w-4 h-4 ${tab === 'media' ? 'text-[#FBBF24]' : ''}`} />
+              <span>{lang === 'ar' ? 'الوسائط' : 'Media'}</span>
+              {tab === 'media' && (
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-[#FBBF24]" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTab('likes')}
+              className={`pb-3 text-[13px] font-semibold flex items-center gap-2 cursor-pointer transition-colors relative shrink-0 ${
+                tab === 'likes' ? 'text-white' : 'text-[#8E8E93] hover:text-white'
+              }`}
+            >
+              <Heart className={`w-4 h-4 ${tab === 'likes' ? 'text-[#FE2C55] fill-current' : ''}`} />
+              <span>{lang === 'ar' ? `الإعجابات (${likedPosts.length})` : `Likes (${likedPosts.length})`}</span>
+              {tab === 'likes' && (
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-[#FE2C55]" />
+              )}
+            </button>
+
             {isMe && (
               <button
                 type="button"
@@ -686,11 +836,20 @@ export function ProfileView({
               posts.map(post => {
                 const isRepostItem = Boolean(post.repostedBy);
                 const isOwnOriginal = post.userId === currentUser.id;
+                const isPinnedPost = Boolean(profileUser.pinnedPostId && profileUser.pinnedPostId === post.id && !isRepostItem);
                 return (
                 <article
                   key={`${post.id}_${isRepostItem ? 'rp' : 'orig'}`}
                   className="py-5 space-y-3"
                 >
+                  {/* Pinned Post Attribution */}
+                  {isPinnedPost && (
+                    <div className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-[#25F4EE]">
+                      <Pin className="w-3.5 h-3.5" />
+                      <span>{lang === 'en' ? 'Pinned Post' : 'منشور مثبّت'}</span>
+                    </div>
+                  )}
+
                   {/* X-Style Repost Header */}
                   {isRepostItem && post.repostedBy && (
                     <div className="flex items-center justify-between gap-2 text-[11.5px] font-medium text-[#8E8E93]">
@@ -741,6 +900,20 @@ export function ProfileView({
                       <ActionMenuOrb
                         editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
                         removeLabel={lang === 'en' ? 'Delete post' : 'حذف المنشور'}
+                        extraItems={[
+                          {
+                            id: 'pin_post',
+                            label: isPinnedPost
+                              ? lang === 'en'
+                                ? 'Unpin from profile'
+                                : 'إلغاء التثبيت'
+                              : lang === 'en'
+                                ? 'Pin to top of profile'
+                                : 'تثبيت في أعلى الملف',
+                            icon: <Pin className="w-4 h-4 text-[#25F4EE]" />,
+                            onClick: () => togglePinPost(post.id),
+                          },
+                        ]}
                         onEdit={() => {
                           setEditingPostId(post.id);
                           setEditingPostText(post.content);
@@ -903,7 +1076,7 @@ export function ProfileView({
               videos.map(v => (
                 <div
                   key={v.id}
-                  onClick={onOpenVideos}
+                  onClick={() => (onOpenVideo ? onOpenVideo(v.id) : onOpenVideos())}
                   className="group relative aspect-[9/14] rounded-2xl overflow-hidden bg-[#121217] border border-white/[0.09] text-start cursor-pointer"
                 >
                   {v.posterUrl ? (
@@ -937,6 +1110,69 @@ export function ProfileView({
                     </div>
                   </div>
                 </div>
+              ))
+            )}
+          </div>
+        ) : tab === 'media' ? (
+          /* Instagram-Style 3-Column Square Photo Gallery */
+          (() => {
+            const mediaItems = posts.flatMap(p =>
+              p.mediaUrls.map((url, idx) => ({ postId: p.id, url, key: `${p.id}_${idx}` }))
+            );
+            return mediaItems.length === 0 ? (
+              <div className="py-16 text-center text-xs text-[#7A7A85]">
+                {lang === 'en' ? 'No photos yet' : 'لا توجد صور منشورة بعد'}
+              </div>
+            ) : (
+              <div className="mt-4 grid grid-cols-3 gap-1.5 sm:gap-2">
+                {mediaItems.map(item => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => onOpenPostComments?.(item.postId)}
+                    className="group relative aspect-square rounded-xl overflow-hidden bg-[#181920] cursor-pointer"
+                  >
+                    <img
+                      src={item.url}
+                      alt=""
+                      loading="lazy"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  </button>
+                ))}
+              </div>
+            );
+          })()
+        ) : tab === 'likes' ? (
+          <div className="mt-3 divide-y divide-white/[0.08]">
+            {likedPosts.length === 0 ? (
+              <div className="py-16 text-center text-xs text-[#7A7A85]">
+                {lang === 'en' ? 'No liked posts yet' : 'لا توجد منشورات معجَب بها بعد'}
+              </div>
+            ) : (
+              likedPosts.map(post => (
+                <article
+                  key={`liked_${post.id}`}
+                  onClick={() => onOpenPostComments?.(post.id)}
+                  className="py-4 space-y-2.5 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className="flex items-center gap-2 text-xs">
+                    <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={28} />
+                    <span className="font-semibold text-white">{post.displayName}</span>
+                    {post.verified && <VerifiedIcon />}
+                    <span className="text-[#8E8E93] font-mono-num">@{post.username} · {post.createdAt}</span>
+                  </div>
+                  {post.content && (
+                    <div className="text-[14px] text-[#E4E4E7] leading-relaxed line-clamp-4">
+                      <RichMessageText text={post.content} lang={lang} />
+                    </div>
+                  )}
+                  {post.mediaUrls.length > 0 && (
+                    <div className="rounded-2xl overflow-hidden">
+                      <MediaCollageGrid urls={post.mediaUrls} onSelect={() => onOpenPostComments?.(post.id)} />
+                    </div>
+                  )}
+                </article>
               ))
             )}
           </div>
@@ -1042,7 +1278,7 @@ export function ProfileView({
                       {savedVideos.map(v => (
                         <div
                           key={v.id}
-                          onClick={onOpenVideos}
+                          onClick={() => (onOpenVideo ? onOpenVideo(v.id) : onOpenVideos())}
                           className="group relative aspect-[9/14] rounded-2xl overflow-hidden bg-[#121217] border border-white/[0.09] text-start cursor-pointer"
                         >
                           {v.posterUrl ? (
@@ -1349,6 +1585,7 @@ export function ProfileView({
           </motion.div>
         )}
       </AnimatePresence>
+      <ProfileQrModal open={qrOpen} user={profileUser} lang={lang} onClose={() => setQrOpen(false)} />
     </div>
   );
 }

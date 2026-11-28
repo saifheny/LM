@@ -35,6 +35,10 @@ import {
   Square,
   Link2,
   Quote,
+  Heart,
+  Eye,
+  ExternalLink,
+  ArrowUp,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Swiper, SwiperSlide } from 'swiper/react';
@@ -192,6 +196,28 @@ export function SocialView({
 
   // Session-Only Newly Published Post Hoisting (Shows brand-new post #1 right in front of you until you leave/reload!)
   const [sessionNewPostIds, setSessionNewPostIds] = useState<string[]>([]);
+  const [feedMode, setFeedMode] = useState<'for_you' | 'following' | 'top'>('for_you');
+  const [followingIdSet, setFollowingIdSet] = useState<Set<string>>(() => new Set());
+  const [hasPendingNewPosts, setHasPendingNewPosts] = useState(false);
+
+  // Facebook-Style Post Reactions Breakdown Sheet
+  const [reactorsSheetPost, setReactorsSheetPost] = useState<SocialPost | null>(null);
+  const [reactorsList, setReactorsList] = useState<
+    Array<{ userId: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null; verified: boolean; reaction: string }>
+  >([]);
+  const [reactorsFilter, setReactorsFilter] = useState<string>('all');
+  const [loadingReactors, setLoadingReactors] = useState(false);
+
+  // Comment Sort Mode in Post Detail
+  const [commentSort, setCommentSort] = useState<'latest' | 'top'>('latest');
+
+  // Upgraded Instagram-Grade Stories Progress, Hold-to-Pause & Viewers Sheet
+  const [storyProgressPct, setStoryProgressPct] = useState(0);
+  const [storyPaused, setStoryPaused] = useState(false);
+  const [storyViewersOpen, setStoryViewersOpen] = useState(false);
+  const [storyViewers, setStoryViewers] = useState<
+    Array<{ id: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null; verified: boolean; reaction: string | null; viewedAt: string }>
+  >([]);
 
   // Facebook-Style Dedicated Post Detail Page (Post on TOP + Full Comments BELOW!)
   const [detailPostId, setDetailPostId] = useState<string | null>(focusedPostId || null);
@@ -300,8 +326,124 @@ export function SocialView({
   }, []);
 
   useEffect(() => {
+    apiGet<{ ok: boolean; followingList?: UserProfile[] }>(`/api/users/${user.id}/profile?viewerId=${user.id}`)
+      .then(r => setFollowingIdSet(new Set((r.followingList || []).map(u => u.id))))
+      .catch(() => {});
+  }, [user.id]);
+
+  // Story View Tracking + Automatic 6-Second Smooth Progress Bar + Auto-Advance!
+  useEffect(() => {
+    if (!activeStory) {
+      setStoryProgressPct(0);
+      setStoryPaused(false);
+      setStoryViewersOpen(false);
+      return;
+    }
+    setStoryProgressPct(0);
+    // Record unique view on backend
+    apiPost<{ ok: boolean; viewsCount?: number }>(`/api/stories/${activeStory.id}/view`, { viewerId: user.id })
+      .then(res => {
+        if (typeof res.viewsCount === 'number') {
+          setStories(prev => prev.map(s => (s.id === activeStory.id ? { ...s, viewsCount: res.viewsCount } : s)));
+          setActiveStory(cur => (cur && cur.id === activeStory.id ? { ...cur, viewsCount: res.viewsCount } : cur));
+        }
+      })
+      .catch(() => {});
+  }, [activeStory?.id, user.id]);
+
+  useEffect(() => {
+    if (!activeStory || storyPaused || storyViewersOpen) return;
+    const durationMs = 6000;
+    const stepMs = 60;
+    const timer = window.setInterval(() => {
+      setStoryProgressPct(prev => {
+        const next = prev + (stepMs / durationMs) * 100;
+        if (next >= 100) {
+          const idx = stories.findIndex(s => s.id === activeStory.id);
+          if (idx >= 0 && idx < stories.length - 1) {
+            setActiveStory(stories[idx + 1]);
+            return 0;
+          }
+          setActiveStory(null);
+          return 100;
+        }
+        return next;
+      });
+    }, stepMs);
+    return () => window.clearInterval(timer);
+  }, [activeStory, storyPaused, storyViewersOpen, stories]);
+
+  async function openStoryViewers(storyId: string) {
+    setStoryViewersOpen(true);
+    setStoryPaused(true);
+    try {
+      const res = await apiGet<{
+        ok: boolean;
+        viewers: Array<{ id: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null; verified: boolean; reaction: string | null; viewedAt: string }>;
+      }>(`/api/stories/${storyId}/viewers`);
+      setStoryViewers(res.viewers || []);
+    } catch {
+      setStoryViewers([]);
+    }
+  }
+
+  async function openReactorsSheet(post: SocialPost) {
+    setReactorsSheetPost(post);
+    setReactorsFilter('all');
+    setLoadingReactors(true);
+    try {
+      const res = await apiGet<{
+        ok: boolean;
+        reactors: Array<{ userId: string; username: string; displayName: string; avatarInitials: string; avatarUrl: string | null; verified: boolean; reaction: string }>;
+      }>(`/api/posts/${post.id}/reactions`);
+      setReactorsList(res.reactors || []);
+    } catch {
+      setReactorsList([]);
+    } finally {
+      setLoadingReactors(false);
+    }
+  }
+
+  async function togglePostCommentLike(postId: string, commentId: string) {
+    setCommentsByPost(prev => ({
+      ...prev,
+      [postId]: (prev[postId] || []).map(c =>
+        c.id === commentId
+          ? {
+              ...c,
+              likedByMe: !c.likedByMe,
+              likesCount: Math.max(0, (c.likesCount || 0) + (c.likedByMe ? -1 : 1)),
+            }
+          : c
+      ),
+    }));
+    try {
+      const res = await apiPost<{ ok: boolean; liked: boolean; likesCount: number }>(`/api/post-comments/${commentId}/like`, {
+        userId: user.id,
+      });
+      setCommentsByPost(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map(c =>
+          c.id === commentId ? { ...c, likedByMe: res.liked, likesCount: res.likesCount } : c
+        ),
+      }));
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
     if (!lastWsEvent) return;
-    if (lastWsEvent.event === 'social:new_post' || lastWsEvent.event === 'story:new') {
+    if (lastWsEvent.event === 'social:new_post') {
+      const p = lastWsEvent.payload as { userId?: string; deleted?: boolean };
+      if (p?.deleted || p?.userId === user.id) {
+        loadFeed();
+      } else {
+        setHasPendingNewPosts(true);
+      }
+      return;
+    }
+    if (lastWsEvent.event === 'story:new') {
       loadFeed();
       return;
     }
@@ -962,12 +1104,14 @@ export function SocialView({
   const loadCommentsForPost = useCallback(async (postId: string) => {
     setLoadingCommentsByPost(prev => ({ ...prev, [postId]: true }));
     try {
-      const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(`/api/posts/${postId}/comments`);
+      const res = await apiGet<{ ok: boolean; comments: PostCommentItem[] }>(
+        `/api/posts/${postId}/comments?userId=${encodeURIComponent(user.id)}`
+      );
       setCommentsByPost(prev => ({ ...prev, [postId]: res.comments }));
     } finally {
       setLoadingCommentsByPost(prev => ({ ...prev, [postId]: false }));
     }
-  }, []);
+  }, [user.id]);
 
   const openPostDetail = useCallback(
     (postId: string) => {
@@ -1473,17 +1617,67 @@ export function SocialView({
           </div>
         )}
 
+        {/* Floating Top Feed Tabs: لك | المتابَعون | الأكثر تفاعلًا + New Posts Pill */}
+        {!activeHashtag && (
+          <div className="px-4 pt-2 pb-1 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-5">
+              {[
+                { id: 'for_you' as const, ar: 'لك', en: 'For You' },
+                { id: 'following' as const, ar: 'المتابَعون', en: 'Following' },
+                { id: 'top' as const, ar: 'الأكثر تفاعلًا', en: 'Trending' },
+              ].map(tab => {
+                const active = feedMode === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setFeedMode(tab.id)}
+                    className={`pb-2 text-[13.5px] font-bold relative cursor-pointer transition-colors ${
+                      active ? 'text-white' : 'text-[#7A7A85] hover:text-white/85'
+                    }`}
+                  >
+                    <span>{lang === 'ar' ? tab.ar : tab.en}</span>
+                    {active && <span className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-[#FE2C55]" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {hasPendingNewPosts && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setHasPendingNewPosts(false);
+                  await loadFeed();
+                }}
+                className="px-3 py-1 rounded-full bg-[#25F4EE] text-black text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer hover:opacity-90 transition-opacity"
+              >
+                <ArrowUp className="w-3 h-3" strokeWidth={2.6} />
+                <span>{lang === 'ar' ? 'منشورات جديدة' : 'New posts'}</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Open Borderless Feed (ZERO Post Boxes — Session-newly-published posts hoisted #1 right in front of you!) */}
         {(!activeHashtag || hashtagFilter !== 'videos') && (
         <div className="divide-y divide-white/[0.08]">
           {(() => {
-            let list = posts;
+            let list = [...posts];
+            if (!activeHashtag) {
+              if (feedMode === 'following') {
+                const fl = list.filter(p => p.userId === user.id || followingIdSet.has(p.userId));
+                list = fl.length > 0 ? fl : list;
+              } else if (feedMode === 'top') {
+                list.sort((a, b) => b.score + b.commentsCount * 2 - (a.score + a.commentsCount * 2));
+              }
+            }
             if (sessionNewPostIds.length > 0) {
               const pinnedSet = new Set(sessionNewPostIds);
               const pinned = sessionNewPostIds
-                .map(id => posts.find(p => p.id === id))
+                .map(id => list.find(p => p.id === id))
                 .filter((p): p is SocialPost => Boolean(p));
-              list = [...pinned, ...posts.filter(p => !pinnedSet.has(p.id))];
+              list = [...pinned, ...list.filter(p => !pinnedSet.has(p.id))];
             }
             if (focusedPostId && list.some(p => p.id === focusedPostId)) {
               list = [...list.filter(p => p.id === focusedPostId), ...list.filter(p => p.id !== focusedPostId)];
@@ -1833,16 +2027,66 @@ export function SocialView({
                       </div>
                     )}
 
+                    {/* Rich Link Preview Card inside Community Posts when external URL is shared */}
+                    {(() => {
+                      if (!post.content || post.mediaUrls.length > 0) return null;
+                      const urlMatch = post.content.match(/\bhttps?:\/\/[^\s<>"{}|\\^`[\]]+/i);
+                      if (!urlMatch) return null;
+                      const rawUrl = urlMatch[0].replace(/[.,!?;:)\]]+$/, '');
+                      let host = '';
+                      let pathLabel = '';
+                      try {
+                        const u = new URL(rawUrl);
+                        host = u.hostname.replace(/^www\./, '');
+                        pathLabel = `${u.pathname}${u.search}`.replace(/\/$/, '') || host;
+                      } catch {
+                        return null;
+                      }
+                      return (
+                        <a
+                          href={rawUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          dir="ltr"
+                          className="mt-2.5 rounded-2xl bg-[#181A22] border border-white/[0.08] hover:border-[#38BDF8]/45 px-3.5 py-2.5 flex items-center justify-between gap-3 transition-colors"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-[#38BDF8] truncate">{host}</div>
+                            <div className="text-[11.5px] text-[#A6A7B2] truncate mt-0.5">{pathLabel}</div>
+                          </div>
+                          <span className="w-8 h-8 rounded-xl bg-[#38BDF8]/15 text-[#38BDF8] flex items-center justify-center shrink-0">
+                            <ExternalLink className="w-4 h-4" />
+                          </span>
+                        </a>
+                      );
+                    })()}
+
                     {/* Action Row — Enlarged, Evenly Spaced, ZERO Overlap on Mobile or Laptop! */}
                     <div className="mt-3.5 flex items-center justify-between gap-3 text-[#A6A7B2] min-w-0">
                       <div className="flex items-center gap-5 sm:gap-6 min-w-0 flex-wrap">
-                        <FacebookReactionButton
-                          reactions={post.reactions}
-                          myReaction={post.myReaction}
-                          totalCount={post.score}
-                          onReact={rxId => handlePostReact(post.id, rxId)}
-                          lang={lang}
-                        />
+                        <div className="inline-flex items-center gap-1">
+                          <FacebookReactionButton
+                            reactions={post.reactions}
+                            myReaction={post.myReaction}
+                            totalCount={post.score}
+                            onReact={rxId => handlePostReact(post.id, rxId)}
+                            lang={lang}
+                          />
+                          {post.score > 0 && (
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                openReactorsSheet(post);
+                              }}
+                              title={lang === 'ar' ? 'عرض المتفاعلين' : 'View reactions'}
+                              className="px-1.5 py-0.5 rounded-full hover:bg-white/[0.08] text-[11px] text-[#8E8E93] hover:text-white cursor-pointer transition-colors"
+                            >
+                              •••
+                            </button>
+                          )}
+                        </div>
 
                         <button
                           type="button"
@@ -2609,13 +2853,32 @@ export function SocialView({
                       </div>
                     </article>
 
-                    {/* COMMENTS SECTION HEADER */}
-                    <div className="flex items-center justify-between px-1 pt-1">
+                    {/* COMMENTS SECTION HEADER + Sort Filter (الأحدث / الأكثر تفاعلًا) */}
+                    <div className="flex items-center justify-between px-1 pt-1 gap-2">
                       <div className="flex items-center gap-2 text-[13.5px] font-bold text-white">
                         <span>{lang === 'en' ? 'Comments' : 'التعليقات'}</span>
-                        <span className="px-2 py-0.5 rounded-full bg-[#1C2A3B] text-[11px] font-mono-num text-[#A8C5E8]">
+                        <span className="px-2 py-0.5 rounded-full bg-white/[0.08] text-[11px] font-mono-num text-[#D4D4D8]">
                           {dComments.length}
                         </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {[
+                          { id: 'latest' as const, label: lang === 'en' ? 'Latest' : 'الأحدث' },
+                          { id: 'top' as const, label: lang === 'en' ? 'Top' : 'الأكثر إعجابًا' },
+                        ].map(s => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setCommentSort(s.id)}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-colors ${
+                              commentSort === s.id
+                                ? 'bg-white text-black'
+                                : 'bg-white/[0.06] text-[#A6A7B2] hover:text-white'
+                            }`}
+                          >
+                            {s.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
@@ -2633,7 +2896,10 @@ export function SocialView({
                           />
                         </div>
                       ) : (
-                        dRootComments.map(c => {
+                        (commentSort === 'top'
+                          ? [...dRootComments].sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0))
+                          : dRootComments
+                        ).map(c => {
                           const replies = getDReplies(c.id);
                           return (
                             <div key={c.id} className="py-3.5 space-y-2.5">
@@ -2724,6 +2990,16 @@ export function SocialView({
                                   </div>
 
                                   <div className="mt-2 px-1 flex items-center gap-4 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => togglePostCommentLike(dPost.id, c.id)}
+                                      className={`inline-flex items-center gap-1.5 text-[12.5px] font-medium cursor-pointer py-0.5 transition-colors ${
+                                        c.likedByMe ? 'text-[#FE2C55]' : 'text-[#A6A7B2] hover:text-white'
+                                      }`}
+                                    >
+                                      <Heart className={`w-4 h-4 ${c.likedByMe ? 'fill-current' : ''}`} />
+                                      {(c.likesCount || 0) > 0 && <span className="font-mono-num">{c.likesCount}</span>}
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -3212,13 +3488,62 @@ export function SocialView({
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="relative w-full max-w-[420px] h-[86vh] rounded-[30px] overflow-hidden border border-white/[0.14] bg-black shadow-[0_32px_90px_rgba(0,0,0,0.9)]"
+            onPointerDown={() => setStoryPaused(true)}
+            onPointerUp={() => setStoryPaused(false)}
+            onPointerCancel={() => setStoryPaused(false)}
+            className="relative w-full max-w-[420px] h-[86vh] rounded-[30px] overflow-hidden border border-white/[0.14] bg-black shadow-[0_32px_90px_rgba(0,0,0,0.9)] select-none"
           >
             {isVideoMediaUrl(activeStory.mediaUrl) ? (
               <video src={activeStory.mediaUrl} autoPlay loop playsInline className="w-full h-full object-cover" />
             ) : (
               <img src={activeStory.mediaUrl} alt="" className="w-full h-full object-cover" />
             )}
+
+            {/* Tap Left/Right Invisible Zones to Navigate Previous/Next Story Like Instagram! */}
+            {stories.length > 1 && (
+              <div className="absolute inset-x-0 top-16 bottom-36 z-10 flex">
+                <button
+                  type="button"
+                  aria-label="القصة السابقة"
+                  onClick={e => {
+                    e.stopPropagation();
+                    const idx = stories.findIndex(s => s.id === activeStory.id);
+                    if (idx > 0) setActiveStory(stories[idx - 1]);
+                    else setStoryProgressPct(0);
+                  }}
+                  className="w-1/3 h-full bg-transparent cursor-pointer"
+                />
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  aria-label="القصة التالية"
+                  onClick={e => {
+                    e.stopPropagation();
+                    const idx = stories.findIndex(s => s.id === activeStory.id);
+                    if (idx >= 0 && idx < stories.length - 1) setActiveStory(stories[idx + 1]);
+                    else setActiveStory(null);
+                  }}
+                  className="w-1/3 h-full bg-transparent cursor-pointer"
+                />
+              </div>
+            )}
+
+            {/* Multi-Segment Auto-Advancing Progress Bars at Top */}
+            <div className="pointer-events-none absolute inset-x-3 top-2.5 z-30 flex items-center gap-1">
+              {(() => {
+                const activeIdx = stories.findIndex(s => s.id === activeStory.id);
+                return stories.map((st, idx) => (
+                  <div key={st.id} className="flex-1 h-[2.5px] rounded-full bg-white/30 overflow-hidden">
+                    <div
+                      style={{
+                        width: idx < activeIdx ? '100%' : idx === activeIdx ? `${storyProgressPct}%` : '0%',
+                      }}
+                      className="h-full bg-white rounded-full transition-[width] duration-75 linear"
+                    />
+                  </div>
+                ));
+              })()}
+            </div>
 
             {/* Floating Story Reaction Burst Animation */}
             {storyBurstRx && (
@@ -3234,7 +3559,7 @@ export function SocialView({
             )}
 
             {/* Top Header */}
-            <div className="absolute inset-x-0 top-0 z-20 p-4 bg-gradient-to-b from-black/82 via-black/35 to-transparent flex items-center justify-between gap-2">
+            <div className="absolute inset-x-0 top-3 z-20 p-4 bg-gradient-to-b from-black/82 via-black/35 to-transparent flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -3247,14 +3572,29 @@ export function SocialView({
                 <UserAvatar initials={activeStory.avatarInitials} avatarUrl={activeStory.avatarUrl} size={34} />
                 <div className="text-start">
                   <div className="text-xs font-semibold text-white group-hover:underline">{activeStory.displayName}</div>
-                  <div className="text-[10px] text-white/65">{activeStory.createdAt}</div>
+                  <div className="text-[10px] text-white/65">
+                    {activeStory.createdAt} {storyPaused ? '· متوقف مؤقتًا' : ''}
+                  </div>
                 </div>
               </button>
               <div className="flex items-center gap-2">
                 {activeStory.userId === user.id && (
-                  <div className="px-2.5 py-1 rounded-full bg-black/65 border border-white/15">
-                    <QuickRemovePill onRemove={() => deleteStory(activeStory.id)} />
-                  </div>
+                  <>
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        openStoryViewers(activeStory.id);
+                      }}
+                      className="px-2.5 py-1 rounded-full bg-black/65 border border-white/15 text-[11px] font-semibold text-white inline-flex items-center gap-1 cursor-pointer hover:bg-white/15"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-[#25F4EE]" />
+                      <span className="font-mono-num">{activeStory.viewsCount || 0}</span>
+                    </button>
+                    <div className="px-2.5 py-1 rounded-full bg-black/65 border border-white/15">
+                      <QuickRemovePill onRemove={() => deleteStory(activeStory.id)} />
+                    </div>
+                  </>
                 )}
                 <CloseOrbButton
                   onClick={() => {
@@ -3265,6 +3605,66 @@ export function SocialView({
                 />
               </div>
             </div>
+
+            {/* Own Story Viewers Bottom Sheet Overlay */}
+            {storyViewersOpen && (
+              <div
+                onClick={e => {
+                  e.stopPropagation();
+                  setStoryViewersOpen(false);
+                  setStoryPaused(false);
+                }}
+                className="absolute inset-0 z-40 bg-black/65 flex items-end"
+              >
+                <div
+                  onClick={e => e.stopPropagation()}
+                  className="w-full max-h-[58%] rounded-t-[26px] bg-[#161820] border-t border-white/[0.12] flex flex-col overflow-hidden"
+                >
+                  <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-white">
+                      <Eye className="w-4 h-4 text-[#25F4EE]" />
+                      <span>المشاهدون ({storyViewers.length})</span>
+                    </div>
+                    <CloseOrbButton
+                      size="xs"
+                      onClick={() => {
+                        setStoryViewersOpen(false);
+                        setStoryPaused(false);
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
+                    {storyViewers.length === 0 ? (
+                      <div className="py-10 text-center text-xs text-[#8E8E93]">لا توجد مشاهدات مسجّلة بعد</div>
+                    ) : (
+                      storyViewers.map(vw => (
+                        <button
+                          key={vw.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveStory(null);
+                            onOpenProfile?.(vw.id);
+                          }}
+                          className="w-full px-4 py-3 flex items-center justify-between gap-2 hover:bg-white/[0.05] text-start cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <UserAvatar initials={vw.avatarInitials} avatarUrl={vw.avatarUrl} size={34} />
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                                <span>{vw.displayName}</span>
+                                {vw.verified && <VerifiedIcon />}
+                              </div>
+                              <div className="text-[10.5px] text-[#8E8E93] font-mono-num">@{vw.username}</div>
+                            </div>
+                          </div>
+                          {vw.reaction && <span className="shrink-0">{resolveReaction(vw.reaction).renderIcon(20)}</span>}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Bottom Interactive Stage: Caption + Sculpted Reaction Strip + Direct DM Reply Composer */}
             <div className="absolute inset-x-0 bottom-0 z-20 p-4 pt-12 bg-gradient-to-t from-black/95 via-black/75 to-transparent space-y-3">
@@ -3848,6 +4248,90 @@ export function SocialView({
             </div>
           </div>
         </form>
+      )}
+
+      {/* Facebook-Style Post Reactions Breakdown Sheet */}
+      {reactorsSheetPost && (
+        <div
+          onClick={() => setReactorsSheetPost(null)}
+          className="fixed inset-0 z-[84] bg-black/65 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:p-4"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ paddingBottom: 'max(18px, calc(env(safe-area-inset-bottom) + 10px))' }}
+            className="w-full sm:max-w-[420px] max-h-[70vh] rounded-t-[26px] sm:rounded-[26px] bg-[#171920] border-t sm:border border-white/[0.1] flex flex-col overflow-hidden"
+          >
+            <div className="px-4 pt-3 pb-2.5 border-b border-white/[0.08] space-y-2.5 shrink-0">
+              <div className="w-10 h-1 rounded-full bg-white/25 mx-auto sm:hidden" />
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-white">
+                  {lang === 'en' ? 'Reactions' : `المتفاعلون (${reactorsList.length})`}
+                </span>
+                <CloseOrbButton size="sm" onClick={() => setReactorsSheetPost(null)} />
+              </div>
+
+              {/* Reaction Filter Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => setReactorsFilter('all')}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold cursor-pointer shrink-0 ${
+                    reactorsFilter === 'all' ? 'bg-white text-black' : 'bg-white/[0.06] text-[#A6A7B2] hover:text-white'
+                  }`}
+                >
+                  الكل ({reactorsList.length})
+                </button>
+                {Array.from(new Set(reactorsList.map(r => r.reaction))).map(rxId => (
+                  <button
+                    key={rxId}
+                    type="button"
+                    onClick={() => setReactorsFilter(rxId)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 cursor-pointer shrink-0 ${
+                      reactorsFilter === rxId ? 'bg-white text-black' : 'bg-white/[0.06] text-[#E4E4E7] hover:bg-white/[0.12]'
+                    }`}
+                  >
+                    {resolveReaction(rxId).renderIcon(16)}
+                    <span className="font-mono-num">{reactorsList.filter(r => r.reaction === rxId).length}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
+              {loadingReactors ? (
+                <div className="py-10 text-center text-xs text-[#8E8E93]">جارٍ التحميل...</div>
+              ) : reactorsList.length === 0 ? (
+                <div className="py-10 text-center text-xs text-[#8E8E93]">لا توجد تفاعلات بعد</div>
+              ) : (
+                reactorsList
+                  .filter(r => reactorsFilter === 'all' || r.reaction === reactorsFilter)
+                  .map(r => (
+                    <button
+                      key={`${r.userId}_${r.reaction}`}
+                      type="button"
+                      onClick={() => {
+                        setReactorsSheetPost(null);
+                        onOpenProfile?.(r.userId);
+                      }}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-white/[0.05] text-start cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <UserAvatar initials={r.avatarInitials} avatarUrl={r.avatarUrl} size={36} />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                            <span>{r.displayName}</span>
+                            {r.verified && <VerifiedIcon />}
+                          </div>
+                          <div className="text-[11px] text-[#8E8E93] font-mono-num truncate">@{r.username}</div>
+                        </div>
+                      </div>
+                      <span className="shrink-0">{resolveReaction(r.reaction).renderIcon(22)}</span>
+                    </button>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Smooth Scrollable Bottom Language Sheet for Comment Translation */}
