@@ -2174,7 +2174,11 @@ app.delete('/api/posts/:id', (req, res) => {
   const row = db.prepare('SELECT user_id FROM posts WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
   if (!row) return res.status(404).json({ ok: false, error: 'المنشور غير موجود.' });
   if (userId && row.user_id !== userId) return res.status(403).json({ ok: false, error: 'لا يمكنك حذف منشور شخص آخر.' });
-  db.prepare('DELETE FROM post_saves WHERE post_id = ?').run(req.params.id);
+  try { db.prepare('DELETE FROM post_saves WHERE post_id = ?').run(req.params.id); } catch { /* ignore */ }
+  try { db.prepare('DELETE FROM post_reposts WHERE post_id = ?').run(req.params.id); } catch { /* ignore */ }
+  try { db.prepare('DELETE FROM post_votes WHERE post_id = ?').run(req.params.id); } catch { /* ignore */ }
+  try { db.prepare('DELETE FROM post_comments WHERE post_id = ?').run(req.params.id); } catch { /* ignore */ }
+  try { db.prepare('UPDATE posts SET quoted_post_id = NULL WHERE quoted_post_id = ?').run(req.params.id); } catch { /* ignore */ }
   db.prepare('DELETE FROM posts WHERE id = ?').run(req.params.id);
   broadcast('social:new_post', { id: req.params.id, deleted: true });
   res.json({ ok: true });

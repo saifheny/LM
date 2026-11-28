@@ -450,11 +450,11 @@ export function AppShell({
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
       className="h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-[#121212] text-[#F1F1F2] overflow-hidden flex select-none"
     >
-      {/* DESKTOP / LAPTOP CLEAN MATTE SIDEBAR (ZERO glow, ZERO floating clutter!) */}
+      {/* DESKTOP / LAPTOP SEAMLESS INTEGRATED SIDEBAR (Blends organically into #121212 canvas — ZERO boxed wall!) */}
       <aside
         style={{ contain: 'layout style' }}
-        className={`hidden md:flex flex-col justify-between shrink-0 h-full bg-[#161823] border-e border-white/[0.08] py-4 px-2.5 z-30 overflow-hidden ${
-          sidebarCollapsed ? 'w-[68px]' : 'w-[220px]'
+        className={`hidden md:flex flex-col justify-between shrink-0 h-full bg-[#121212] py-5 px-3 z-30 overflow-hidden transition-[width] duration-200 ${
+          sidebarCollapsed ? 'w-[72px]' : 'w-[224px]'
         }`}
       >
         <div className="space-y-4">

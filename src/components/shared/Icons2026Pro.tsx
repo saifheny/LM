@@ -309,75 +309,133 @@ export function TelegramVideoNoteIcon({ className = 'w-[19px] h-[19px]' }: { cla
   );
 }
 
-/** Authentic Vector Platform Share Icons (ZERO Emojis!) */
+/** Flagship 2026 Multi-Layer Full-Bleed Vector Social Brand Medallions (ZERO Flat Generic Icons!) */
 export const SharePlatformIcons = {
   copy: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <linearGradient id="sp_copy_bg" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#2A2D38" />
+          <stop offset="100%" stopColor="#161820" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_copy_bg)" />
+      <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="23.25" stroke="#FFFFFF" strokeOpacity="0.14" strokeWidth="1.5" />
       <path
-        d="M10 13.5a4.5 4.5 0 0 0 6.36.32l2.32-2.32a4.5 4.5 0 0 0-6.36-6.36L11 6.45"
-        stroke="#FFFFFF"
-        strokeWidth="2"
+        d="M21 26.5a5.5 5.5 0 0 0 7.78.38l3.1-3.1a5.5 5.5 0 0 0-7.78-7.78l-1.65 1.65"
+        stroke="#25F4EE"
+        strokeWidth="2.6"
         strokeLinecap="round"
       />
       <path
-        d="M14 10.5a4.5 4.5 0 0 0-6.36-.32l-2.32 2.32a4.5 4.5 0 0 0 6.36 6.36L13 17.55"
+        d="M27 21.5a5.5 5.5 0 0 0-7.78-.38l-3.1 3.1a5.5 5.5 0 0 0 7.78 7.78l1.65-1.65"
         stroke="#FFFFFF"
-        strokeWidth="2"
+        strokeWidth="2.6"
         strokeLinecap="round"
       />
     </svg>
   ),
   whatsapp: (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <linearGradient id="sp_wa_bg" x1="8" y1="4" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#42E66F" />
+          <stop offset="55%" stopColor="#25D366" />
+          <stop offset="100%" stopColor="#129E48" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_wa_bg)" />
       <path
-        d="M12 2.5A9.4 9.4 0 0 0 3.9 16.7L2.6 21.4L7.5 20.1A9.4 9.4 0 1 0 12 2.5Z"
+        d="M24.08 11.5C17.2 11.5 11.6 17.02 11.6 23.82C11.6 26.15 12.26 28.34 13.42 30.2L11.75 36.25L18.02 34.62C19.82 35.6 21.88 36.14 24.08 36.14C30.96 36.14 36.56 30.62 36.56 23.82C36.56 17.02 30.96 11.5 24.08 11.5Z"
         stroke="#FFFFFF"
-        strokeWidth="1.8"
+        strokeWidth="2.35"
         strokeLinejoin="round"
       />
       <path
-        d="M9.4 8.5C9.1 8.5 8.6 8.9 8.5 9.5C8.3 10.6 9 12.2 10.4 13.6C11.8 15 13.4 15.7 14.5 15.5C15.1 15.4 15.5 14.9 15.5 14.6L15.7 13.6C15.7 13.3 15.5 13.1 15.2 13L13.9 12.4C13.6 12.3 13.3 12.4 13.1 12.6L12.6 13.2C11.9 12.9 11.1 12.1 10.8 11.4L11.4 10.9C11.6 10.7 11.7 10.4 11.6 10.1L11 8.8C10.9 8.6 10.7 8.5 10.4 8.5H9.4Z"
+        d="M20.32 18.6C19.98 18.6 19.44 18.74 19.06 19.16C18.62 19.64 17.56 20.62 17.56 22.64C17.56 24.66 19.04 26.6 19.24 26.88C19.44 27.16 22.1 31.34 26.22 33.02C29.66 34.42 30.36 34.14 31.1 34.06C31.84 33.98 33.5 33.08 33.84 32.12C34.18 31.16 34.18 30.34 34.08 30.16C33.98 29.98 33.7 29.88 33.28 29.68C32.86 29.48 30.82 28.48 30.44 28.34C30.06 28.2 29.78 28.14 29.5 28.56C29.22 28.98 28.42 29.9 28.18 30.18C27.94 30.46 27.7 30.5 27.28 30.3C26.86 30.1 25.52 29.66 23.94 28.26C22.7 27.16 21.86 25.8 21.62 25.38C21.38 24.96 21.6 24.74 21.8 24.54C22 24.34 22.22 24.04 22.42 23.8C22.62 23.56 22.7 23.38 22.84 23.1C22.98 22.82 22.9 22.58 22.8 22.38C22.7 22.18 21.88 20.14 21.52 19.32C21.2 18.62 20.86 18.62 20.32 18.6Z"
         fill="#FFFFFF"
       />
     </svg>
   ),
   telegram: (
-    <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <linearGradient id="sp_tg_bg" x1="24" y1="0" x2="24" y2="48" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#37AEE2" />
+          <stop offset="100%" stopColor="#1E96C8" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_tg_bg)" />
       <path
-        d="M20.6 4.6L3.4 11.2C2.6 11.5 2.7 12.6 3.5 12.9L7.9 14.2L17.4 8.3L10.3 15L10 19.3C10.6 19.3 10.9 19 11.3 18.6L13.5 16.5L17.6 19.5C18.3 19.9 19 19.6 19.2 18.7L21.8 5.9C22 4.9 21.4 4.3 20.6 4.6Z"
+        d="M34.8 14.3L11.6 23.25C10.55 23.66 10.6 25.14 11.68 25.48L17.4 27.28L30.85 18.85C31.35 18.54 31.82 19.2 31.38 19.6L20.52 29.42L20.1 34.95C20.1 35.62 20.9 35.95 21.38 35.48L24.78 32.18L30.52 36.42C31.46 37.1 32.8 36.58 33.05 35.44L36.55 15.95C36.8 14.62 35.96 13.85 34.8 14.3Z"
         fill="#FFFFFF"
       />
+      <path d="M17.4 27.28L20.1 34.95L20.52 29.42L31.38 19.6L17.4 27.28Z" fill="#D2E8F5" />
     </svg>
   ),
   instagram: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-      <rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="#FFFFFF" strokeWidth="1.9" />
-      <circle cx="12" cy="12" r="3.9" stroke="#FFFFFF" strokeWidth="1.9" />
-      <circle cx="17.2" cy="6.8" r="1.1" fill="#FFFFFF" />
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <radialGradient id="sp_ig_bg" cx="14" cy="42" r="46" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#FFDD55" />
+          <stop offset="30%" stopColor="#FF543E" />
+          <stop offset="65%" stopColor="#C837AB" />
+          <stop offset="100%" stopColor="#5851DB" />
+        </radialGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_ig_bg)" />
+      <rect x="13" y="13" width="22" height="22" rx="6.5" stroke="#FFFFFF" strokeWidth="2.4" />
+      <circle cx="24" cy="24" r="5.4" stroke="#FFFFFF" strokeWidth="2.4" />
+      <circle cx="30.6" cy="17.4" r="1.5" fill="#FFFFFF" />
     </svg>
   ),
   x: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <linearGradient id="sp_x_bg" x1="6" y1="6" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#1E2028" />
+          <stop offset="100%" stopColor="#090A0D" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_x_bg)" />
+      <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="23.25" stroke="#FFFFFF" strokeOpacity="0.18" strokeWidth="1.5" />
       <path
-        d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+        d="M29.9 14.5H33.55L25.55 23.62L34.95 36H27.58L21.82 28.48L15.22 36H11.56L20.12 26.22L11.1 14.5H18.66L23.86 21.38L29.9 14.5ZM28.62 33.82H30.65L17.52 16.56H15.35L28.62 33.82Z"
         fill="#FFFFFF"
       />
     </svg>
   ),
   facebook: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <linearGradient id="sp_fb_bg" x1="24" y1="0" x2="24" y2="48" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#1E88FF" />
+          <stop offset="100%" stopColor="#0D5BDD" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_fb_bg)" />
       <path
-        d="M14 13.5H16.5L17.5 9.5H14V7.5C14 6.47 14 5.5 16 5.5H17.5V2.14C17.17 2.1 15.94 2 14.64 2C11.93 2 10 3.66 10 6.7V9.5H7V13.5H10V22H14V13.5Z"
+        d="M26.5 39V26.5H30.7L31.4 21.6H26.5V18.5C26.5 17.08 26.9 16.12 28.95 16.12H31.5V11.75C31.05 11.68 29.52 11.55 27.75 11.55C24.02 11.55 21.5 13.82 21.5 17.98V21.6H17.3V26.5H21.5V39H26.5Z"
         fill="#FFFFFF"
       />
     </svg>
   ),
   sms: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <svg viewBox="0 0 48 48" className="w-full h-full" fill="none">
+      <defs>
+        <linearGradient id="sp_sms_bg" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#34D399" />
+          <stop offset="100%" stopColor="#059669" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="24" fill="url(#sp_sms_bg)" />
       <path
-        d="M12 3.5C6.8 3.5 3 7 3 11.4C3 13.8 4.2 16 6.1 17.5L4.8 20.6L8.7 19.3C9.7 19.6 10.8 19.8 12 19.8C17.2 19.8 21 16.3 21 11.4C21 7 17.2 3.5 12 3.5Z"
+        d="M24 13C16.8 13 11.5 17.7 11.5 23.6C11.5 26.8 13.15 29.65 15.75 31.6L14 35.8L19.45 34.05C20.88 34.45 22.4 34.7 24 34.7C31.2 34.7 36.5 30 36.5 23.6C36.5 17.7 31.2 13 24 13Z"
         fill="#FFFFFF"
       />
+      <circle cx="19.5" cy="23.8" r="1.75" fill="#059669" />
+      <circle cx="24" cy="23.8" r="1.75" fill="#059669" />
+      <circle cx="28.5" cy="23.8" r="1.75" fill="#059669" />
     </svg>
   ),
 };

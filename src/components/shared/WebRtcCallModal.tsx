@@ -127,6 +127,10 @@ export function WebRtcCallController({
   const roomCodeRef = useRef<string | null>(null);
   const callDbIdRef = useRef<string | null>(null);
   const isHostRef = useRef(true);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const handledRequestRef = useRef<CallLaunchRequest | null>(null);
+  const ringTimerRef = useRef<number | null>(null);
   const peerTargetRef = useRef<{ userId?: string | null; clientId?: string | null }>({});
   const incomingOfferRef = useRef<IncomingOfferPayload | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -179,6 +183,11 @@ export function WebRtcCallController({
       roomCodeRef.current = null;
       callDbIdRef.current = null;
       peerTargetRef.current = {};
+      handledRequestRef.current = null;
+      if (ringTimerRef.current) {
+        window.clearInterval(ringTimerRef.current);
+        ringTimerRef.current = null;
+      }
 
       setPhase('idle');
       setActiveCallDbId(null);
@@ -305,10 +314,15 @@ export function WebRtcCallController({
     [currentUser, acquireAudio, lang]
   );
 
-  // React to outgoingRequest from ChatView or /call/:code deep-link!
+  // React ONCE cleanly to each outgoingRequest from ChatView or /call/:code deep-link!
+  // (Uses phaseRef + handledRequestRef so setPhase('ringing_out') NEVER cancels the in-flight call startup!)
   useEffect(() => {
-    if (!outgoingRequest || phase !== 'idle') return;
-    let cancelled = false;
+    if (!outgoingRequest) {
+      handledRequestRef.current = null;
+      return;
+    }
+    if (handledRequestRef.current === outgoingRequest || phaseRef.current !== 'idle') return;
+    handledRequestRef.current = outgoingRequest;
 
     // Case 1: Joining an existing voice call room by roomCode (from link or Calls tab)
     if (outgoingRequest.joinRoomCode) {
@@ -317,7 +331,7 @@ export function WebRtcCallController({
           const res = await apiGet<{ ok: boolean; call: VoiceCallLogItem }>(
             `/api/calls/${encodeURIComponent(outgoingRequest.joinRoomCode!)}`
           );
-          if (cancelled) return;
+          if (handledRequestRef.current !== outgoingRequest) return;
           const call = res.call;
           if (!call || call.status === 'ended') {
             setCallTitle(call?.title || (lang === 'en' ? 'Voice Call' : 'مكالمة صوتية'));
@@ -361,16 +375,14 @@ export function WebRtcCallController({
           }
           await joinActiveRoomMedia(call, amHost);
         } catch {
-          if (!cancelled) {
+          if (handledRequestRef.current === outgoingRequest) {
             setCallTitle(lang === 'en' ? 'Voice Call' : 'مكالمة صوتية');
             setStatusText(lang === 'en' ? 'Voice call room not found.' : 'تعذر العثور على غرفة المكالمة.');
             setPhase('denied');
           }
         }
       })();
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
     // Case 2: Starting a Group or Community Voice Call -> Full-Screen Pre-Call Setup!
@@ -438,7 +450,7 @@ export function WebRtcCallController({
       } catch {
         // fallback ephemeral id
       }
-      if (cancelled) return;
+      if (handledRequestRef.current !== outgoingRequest) return;
 
       const cid = createdCall?.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const rCode = createdCall?.roomCode || `lm-${cid.slice(-8)}`;
@@ -450,11 +462,18 @@ export function WebRtcCallController({
       peerTargetRef.current = { userId: outgoingRequest.targetUserId || null, clientId: null };
 
       const stream = await acquireAudio();
-      if (cancelled) {
+      if (handledRequestRef.current !== outgoingRequest) {
         stream?.getTracks().forEach(tr => tr.stop());
         return;
       }
       localStreamRef.current = stream;
+      if (!stream) {
+        flashNotice(
+          lang === 'en'
+            ? 'Microphone unavailable — check browser permission or HTTPS'
+            : 'الميكروفون غير متاح — تأكد من إذن الميكروفون أو فتح الموقع عبر HTTPS'
+        );
+      }
 
       const pc = createPeerConnection(cid);
       stream?.getTracks().forEach(track => pc.addTrack(track, stream));
@@ -463,26 +482,31 @@ export function WebRtcCallController({
       try {
         const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
         await pc.setLocalDescription(offer);
-        sendWsSignal('rtc:call:offer', {
-          callId: cid,
-          roomCode: rCode,
-          sdp: offer,
-          targetUserId: outgoingRequest.targetUserId || undefined,
-          fromUserId: currentUser.id,
-          callerName: currentUser.displayName,
-          callerInitials: currentUser.avatarInitials,
-          callerAvatarUrl: currentUser.avatarUrl,
-        });
-        setStatusText(lang === 'en' ? 'Ringing...' : 'في انتظار رد الطرف الآخر...');
+        const sendOffer = () => {
+          sendWsSignal('rtc:call:offer', {
+            callId: cid,
+            roomCode: rCode,
+            sdp: offer,
+            targetUserId: outgoingRequest.targetUserId || undefined,
+            fromUserId: currentUser.id,
+            callerName: currentUser.displayName,
+            callerInitials: currentUser.avatarInitials,
+            callerAvatarUrl: currentUser.avatarUrl,
+          });
+        };
+        sendOffer();
+        // Re-send offer once after 2.5s in case callee tab was still reconnecting WebSocket
+        window.setTimeout(() => {
+          if (callIdRef.current === cid && phaseRef.current === 'ringing_out') {
+            sendOffer();
+          }
+        }, 2500);
+        setStatusText(lang === 'en' ? 'Ringing...' : 'يرن الآن... في انتظار رد الطرف الآخر');
       } catch {
         setStatusText(lang === 'en' ? 'Could not start call' : 'تعذر بدء الاتصال الصوتي');
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [outgoingRequest, phase, currentUser, acquireAudio, createPeerConnection, attachAudio, joinActiveRoomMedia, lang]);
+  }, [outgoingRequest, currentUser, acquireAudio, createPeerConnection, attachAudio, joinActiveRoomMedia, flashNotice, lang]);
 
   // Launch Group / Community Voice Room from Setup Screen
   async function launchGroupVoiceRoom(e: React.FormEvent) {

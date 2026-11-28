@@ -140,11 +140,14 @@ export function SocialView({
   const [playingPostMusicId, setPlayingPostMusicId] = useState<string | null>(null);
   const [libRecording, setLibRecording] = useState(false);
   const [libRecordSec, setLibRecordSec] = useState(0);
+  const [libRecBars, setLibRecBars] = useState<number[]>(() => Array(18).fill(18));
   const customAudioRef = useRef<HTMLInputElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const postMusicAudioRef = useRef<HTMLAudioElement | null>(null);
   const libRecRef = useRef<MediaRecorder | null>(null);
   const libStreamRef = useRef<MediaStream | null>(null);
+  const libAudioCtxRef = useRef<AudioContext | null>(null);
+  const libRafRef = useRef<number>(0);
   const libChunksRef = useRef<Blob[]>([]);
   const libTimerRef = useRef<number | null>(null);
   const libSecRef = useRef(0);
@@ -459,7 +462,8 @@ export function SocialView({
         kind: 'upload',
         durationSec: 30,
       });
-      await loadMusicLibrary();
+      // Instant local state update (ZERO redundant library roundtrip delay!)
+      setMusicLibrary(prev => [saved.track, ...prev.filter(tr => tr.id !== saved.track.id)]);
       setSelectedMusic({ url: saved.track.url, title: saved.track.title });
       setMusicMoodFilter('mine');
       stopPreviewMusic();
@@ -471,11 +475,23 @@ export function SocialView({
     }
   }
 
+  function cleanupLibAudioAnalyser() {
+    if (libRafRef.current) {
+      cancelAnimationFrame(libRafRef.current);
+      libRafRef.current = 0;
+    }
+    if (libAudioCtxRef.current) {
+      libAudioCtxRef.current.close().catch(() => {});
+      libAudioCtxRef.current = null;
+    }
+  }
+
   function cancelLibVoiceRec() {
     if (libTimerRef.current) {
       window.clearInterval(libTimerRef.current);
       libTimerRef.current = null;
     }
+    cleanupLibAudioAnalyser();
     try {
       if (libRecRef.current && libRecRef.current.state !== 'inactive') {
         libRecRef.current.onstop = null;
@@ -491,6 +507,7 @@ export function SocialView({
     libSecRef.current = 0;
     setLibRecording(false);
     setLibRecordSec(0);
+    setLibRecBars(Array(18).fill(18));
   }
 
   function stopLibVoiceRec() {
@@ -498,8 +515,10 @@ export function SocialView({
       window.clearInterval(libTimerRef.current);
       libTimerRef.current = null;
     }
+    cleanupLibAudioAnalyser();
     try {
       if (libRecRef.current && libRecRef.current.state !== 'inactive') {
+        try { libRecRef.current.requestData(); } catch { /* ignore */ }
         libRecRef.current.stop();
       }
     } catch {
@@ -511,29 +530,35 @@ export function SocialView({
     if (libRecording || uploadingCustomAudio) return;
     stopPreviewMusic();
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       libStreamRef.current = stream;
       libChunksRef.current = [];
       libSecRef.current = 0;
       setLibRecordSec(0);
+      setLibRecBars(Array(18).fill(18));
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
           ? 'audio/webm'
-          : '';
+          : MediaRecorder.isTypeSupported('audio/mp4')
+            ? 'audio/mp4'
+            : '';
       const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       libRecRef.current = mr;
       mr.ondataavailable = ev => {
         if (ev.data.size > 0) libChunksRef.current.push(ev.data);
       };
       mr.onstop = async () => {
-        const finalSec = Math.max(1, Math.min(60, libSecRef.current || 1));
+        const finalSec = Math.max(1, Math.min(60, Math.round(libSecRef.current) || 1));
+        cleanupLibAudioAnalyser();
         stream.getTracks().forEach(tr => tr.stop());
         libStreamRef.current = null;
         setLibRecording(false);
         const blob = new Blob(libChunksRef.current, { type: mr.mimeType || 'audio/webm' });
         libChunksRef.current = [];
-        if (blob.size < 400) return;
+        if (blob.size < 250) return;
         setUploadingCustomAudio(true);
         try {
           const ext = (mr.mimeType || '').includes('mp4') ? 'm4a' : (mr.mimeType || '').includes('ogg') ? 'ogg' : 'webm';
@@ -545,7 +570,7 @@ export function SocialView({
             kind: 'voice',
             durationSec: finalSec,
           });
-          await loadMusicLibrary();
+          setMusicLibrary(prev => [saved.track, ...prev.filter(tr => tr.id !== saved.track.id)]);
           setSelectedMusic({ url: saved.track.url, title: saved.track.title });
           setMusicMoodFilter('mine');
         } catch (err) {
@@ -555,15 +580,48 @@ export function SocialView({
           setLibRecordSec(0);
         }
       };
-      mr.start(250);
+      mr.start(100);
       setLibRecording(true);
+      const startedAt = Date.now();
       libTimerRef.current = window.setInterval(() => {
-        libSecRef.current += 1;
-        setLibRecordSec(libSecRef.current);
-        if (libSecRef.current >= 60) {
+        const sec = (Date.now() - startedAt) / 1000;
+        libSecRef.current = sec;
+        setLibRecordSec(Math.floor(sec));
+        if (sec >= 60) {
           stopLibVoiceRec();
         }
-      }, 1000);
+      }, 200);
+
+      // Live Web Audio RMS waveform meter so recording feels immediate and tactile!
+      try {
+        const ctx = new AudioContext();
+        libAudioCtxRef.current = ctx;
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+        let lastTick = 0;
+        const pump = (now: number) => {
+          if (!libAudioCtxRef.current) return;
+          if (now - lastTick >= 70) {
+            lastTick = now;
+            analyser.getByteTimeDomainData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = (data[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / data.length);
+            const h = Math.max(16, Math.min(100, Math.round(16 + Math.pow(Math.max(0, rms - 0.008) * 4.5, 0.72) * 84)));
+            setLibRecBars(prev => [...prev.slice(1), h]);
+          }
+          libRafRef.current = requestAnimationFrame(pump);
+        };
+        libRafRef.current = requestAnimationFrame(pump);
+      } catch {
+        // ignore visualizer failure
+      }
     } catch {
       notifyUploadError(new Error(lang === 'en' ? 'Microphone access denied.' : 'يرجى السماح بالوصول للميكروفون للتسجيل الصوتي.'));
     }
@@ -658,7 +716,7 @@ export function SocialView({
 
   async function submitPost(e: React.FormEvent) {
     e.preventDefault();
-    if (!draft.trim() && uploadedMediaUrls.length === 0) return;
+    if (!draft.trim() && uploadedMediaUrls.length === 0 && !selectedMusic) return;
     setPublishing(true);
     try {
       const validPoll =
@@ -668,7 +726,7 @@ export function SocialView({
 
       const created = await apiPost<{ ok: boolean; id?: string }>('/api/posts', {
         userId: user.id,
-        content: draft.trim() || pollQuestion.trim(),
+        content: draft.trim() || pollQuestion.trim() || '',
         mediaUrls: uploadedMediaUrls,
         poll: validPoll,
         musicUrl: selectedMusic?.url || null,
@@ -835,9 +893,19 @@ export function SocialView({
     if (!quotingPost || publishingQuote) return;
     setPublishingQuote(true);
     try {
+      const trimmed = quoteDraft.trim();
+      if (!trimmed) {
+        // Direct Repost when user didn't add custom thoughts
+        if (!quotingPost.repostedByMe) {
+          await handleRepost(quotingPost.id);
+        }
+        setQuotingPost(null);
+        setQuoteDraft('');
+        return;
+      }
       const created = await apiPost<{ ok: boolean; id?: string }>('/api/posts', {
         userId: user.id,
-        content: quoteDraft.trim() || (lang === 'en' ? 'Shared this post' : 'مشاركة هذا المنشور'),
+        content: trimmed,
         quotedPostId: quotingPost.id,
       });
       if (created?.id) {
@@ -884,6 +952,10 @@ export function SocialView({
   async function deletePost(postId: string) {
     await api(`/api/posts/${postId}?userId=${user.id}`, { method: 'DELETE' });
     setPosts(prev => prev.filter(p => p.id !== postId));
+    setSessionNewPostIds(prev => prev.filter(id => id !== postId));
+    if (detailPostId === postId) {
+      closePostDetail();
+    }
   }
 
   async function deleteComment(postId: string, commentId: string) {
@@ -1384,7 +1456,7 @@ export function SocialView({
                 type="submit"
                 variant="luminous"
                 loading={publishing}
-                disabled={!draft.trim() && uploadedMediaUrls.length === 0}
+                disabled={!draft.trim() && uploadedMediaUrls.length === 0 && !selectedMusic}
                 label={lang === 'ar' ? 'نشر' : 'Post'}
                 loadingLabel="جارٍ النشر..."
               />
@@ -1549,7 +1621,7 @@ export function SocialView({
                         {post.userId === user.id && (
                           <ActionMenuOrb
                             editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
-                            removeLabel={lang === 'en' ? 'Remove post' : 'إزالة المنشور'}
+                            removeLabel={lang === 'en' ? 'Delete post' : 'حذف المنشور'}
                             onEdit={() => {
                               setEditingPostId(post.id);
                               setEditingPostText(post.content);
@@ -1616,30 +1688,17 @@ export function SocialView({
                       )
                     )}
 
-                    {/* Standalone Music Player Bar for Text-Only Posts with Attached Music */}
+                    {/* Voice-Note-Style Interactive Audio Player for Text+Audio Posts (Play/Pause, Scrub, -5s/+5s, Speed 0.5x–2x!) */}
                     {post.musicUrl && post.mediaUrls.length === 0 && (
-                      <div className="mt-2.5 px-3 py-2 rounded-2xl bg-[#14141B] border border-white/[0.1] flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Music className={`w-4 h-4 shrink-0 ${isPostMusicPlaying ? 'text-[#34D399] animate-pulse' : 'text-[#A1A1AA]'}`} />
-                          <span className="text-xs font-medium text-[#E4E4E7] truncate">
-                            {post.musicTitle || 'موسيقى مرفقة'}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation();
-                            togglePostMusic(post.id, post.musicUrl!);
-                          }}
-                          title={isPostMusicPlaying ? 'كتم الصوت' : 'تشغيل الموسيقى'}
-                          className={`w-8 h-8 rounded-full border flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
-                            isPostMusicPlaying
-                              ? 'bg-[#34D399]/20 border-[#34D399]/50 text-[#6EE7B7]'
-                              : 'bg-white/[0.07] border-white/[0.15] text-white hover:bg-white/[0.14]'
-                          }`}
-                        >
-                          {isPostMusicPlaying ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                        </button>
+                      <div
+                        onClick={e => e.stopPropagation()}
+                        className="mt-2.5 p-3 rounded-2xl bg-[#191A22]"
+                      >
+                        <SmartVoicePill
+                          url={post.musicUrl}
+                          title={post.musicTitle || (lang === 'en' ? 'Audio Post' : 'مقطع صوتي')}
+                          showSkipButtons
+                        />
                       </div>
                     )}
 
@@ -1806,63 +1865,22 @@ export function SocialView({
                           <span className="font-mono-num">{formatCount(post.commentsCount)}</span>
                         </button>
 
-                        {/* 2026 Upgraded Repost & Quote Repost Trigger */}
-                        <div className="relative" onClick={e => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setRepostMenuPostId(cur => (cur === post.id ? null : post.id))
-                            }
-                            title={lang === 'en' ? 'Repost or Quote' : 'إعادة نشر أو اقتباس'}
-                            className={`flex items-center gap-2 text-[13px] transition-colors cursor-pointer py-1 ${
-                              post.repostedByMe ? 'text-[#25F4EE] font-semibold' : 'hover:text-white'
-                            }`}
-                          >
-                            <Repeat2 className="w-5 h-5" strokeWidth={post.repostedByMe ? 2.2 : 1.85} />
-                            <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
-                          </button>
-
-                          {repostMenuPostId === post.id && (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.92, y: 6 }}
-                              animate={{ opacity: 1, scale: 1, y: 0 }}
-                              transition={{ type: 'spring', stiffness: 460, damping: 28 }}
-                              className="absolute bottom-full start-0 mb-2 z-40 min-w-[180px] p-1.5 rounded-2xl bg-[#15151C]/98 backdrop-blur-2xl border border-white/[0.14] shadow-[0_14px_40px_rgba(0,0,0,0.75)] space-y-1"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRepostMenuPostId(null);
-                                  handleRepost(post.id);
-                                }}
-                                className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs font-medium text-white cursor-pointer text-start transition-colors"
-                              >
-                                <Repeat2 className={`w-4 h-4 shrink-0 ${post.repostedByMe ? 'text-[#FB7185]' : 'text-[#34D399]'}`} />
-                                <span>
-                                  {post.repostedByMe
-                                    ? lang === 'en'
-                                      ? 'Undo repost'
-                                      : 'إلغاء إعادة النشر'
-                                    : lang === 'en'
-                                      ? 'Repost'
-                                      : 'إعادة نشر'}
-                                </span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRepostMenuPostId(null);
-                                  setQuotingPost(post);
-                                  setQuoteDraft('');
-                                }}
-                                className="w-full px-3 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-2.5 text-xs font-medium text-white cursor-pointer text-start transition-colors"
-                              >
-                                <Quote className="w-4 h-4 shrink-0 text-[#FBBF24]" />
-                                <span>{lang === 'en' ? 'Quote post' : 'اقتباس المنشور برأيك'}</span>
-                              </button>
-                            </motion.div>
-                          )}
-                        </div>
+                        {/* Direct Full-Page Repost & Quote Composer Trigger (NO 2-item popup!) */}
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setQuotingPost(post);
+                            setQuoteDraft('');
+                          }}
+                          title={lang === 'en' ? 'Repost' : 'إعادة النشر'}
+                          className={`flex items-center gap-2 text-[13px] transition-colors cursor-pointer py-1 ${
+                            post.repostedByMe ? 'text-[#25F4EE] font-semibold' : 'hover:text-white'
+                          }`}
+                        >
+                          <Repeat2 className="w-5 h-5" strokeWidth={post.repostedByMe ? 2.2 : 1.85} />
+                          <span className="font-mono-num">{formatCount(post.sharesCount)}</span>
+                        </button>
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
@@ -2010,63 +2028,63 @@ export function SocialView({
                                         }));
                                         if (c.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
                                       }}
-                                      className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-white cursor-pointer"
-                                    >
-                                      <CornerDownLeft className="w-3 h-3" />
-                                      <span>{t(lang, 'reply')}</span>
-                                    </button>
+                                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-white cursor-pointer py-0.5"
+                                      >
+                                        <CornerDownLeft className="w-4 h-4" />
+                                        <span>{t(lang, 'reply')}</span>
+                                      </button>
 
-                                    {!c.audioUrl && c.content.trim() && (
-                                      <div className="relative">
+                                      {!c.audioUrl && c.content.trim() && (
+                                        <div className="relative">
+                                          <button
+                                            type="button"
+                                            disabled={translatingCommentId === c.id}
+                                            onClick={() =>
+                                              setCommentLangMenuId(cur => (cur === c.id ? null : c.id))
+                                            }
+                                            className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer disabled:opacity-50 py-0.5"
+                                          >
+                                            <Languages className="w-4 h-4" />
+                                            <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                                          </button>
+                                          {commentLangMenuId === c.id && (
+                                            <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
+                                              {COMMENT_TRANSLATE_LANGS.map(lg => (
+                                                <button
+                                                  key={lg.code}
+                                                  type="button"
+                                                  onClick={() => translateCommentText(c.id, c.content, lg.code)}
+                                                  className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
+                                                >
+                                                  {lg.label}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {c.userId === user.id && (
+                                        <QuickRemovePill onRemove={() => deleteComment(post.id, c.id)} />
+                                      )}
+
+                                      {/* Report strictly LAST & hidden on own comments */}
+                                      {!c.isAi && c.userId !== user.id && (
                                         <button
                                           type="button"
-                                          disabled={translatingCommentId === c.id}
                                           onClick={() =>
-                                            setCommentLangMenuId(cur => (cur === c.id ? null : c.id))
+                                            setReportRequest({
+                                              targetType: 'post_comment',
+                                              targetId: c.id,
+                                              label: lang === 'en' ? 'this comment' : 'هذا التعليق',
+                                            })
                                           }
-                                          className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#34D399] cursor-pointer disabled:opacity-50"
+                                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#FB7185] cursor-pointer py-0.5"
                                         >
-                                          <Languages className="w-3 h-3" />
-                                          <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                                          <Flag className="w-3.5 h-3.5" />
+                                          <span>{t(lang, 'report')}</span>
                                         </button>
-                                        {commentLangMenuId === c.id && (
-                                          <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
-                                            {COMMENT_TRANSLATE_LANGS.map(lg => (
-                                              <button
-                                                key={lg.code}
-                                                type="button"
-                                                onClick={() => translateCommentText(c.id, c.content, lg.code)}
-                                                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
-                                              >
-                                                {lg.label}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {c.userId === user.id && (
-                                      <QuickRemovePill onRemove={() => deleteComment(post.id, c.id)} />
-                                    )}
-
-                                    {/* Report strictly LAST & hidden on own comments */}
-                                    {!c.isAi && c.userId !== user.id && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setReportRequest({
-                                            targetType: 'post_comment',
-                                            targetId: c.id,
-                                            label: lang === 'en' ? 'this comment' : 'هذا التعليق',
-                                          })
-                                        }
-                                        className="inline-flex items-center gap-1 text-[11px] text-[#7A7A85] hover:text-[#FB7185] cursor-pointer"
-                                      >
-                                        <Flag className="w-2.5 h-2.5" />
-                                        <span>{t(lang, 'report')}</span>
-                                      </button>
-                                    )}
+                                      )}
                                   </div>
                                 </div>
                               </div>
@@ -2170,78 +2188,78 @@ export function SocialView({
                                           </div>
                                         )}
 
-                                        <div className="mt-1 flex items-center gap-3 flex-wrap">
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setReplyParentByPost(prev => ({
-                                                ...prev,
-                                                [post.id]: {
-                                                  id: rep.id,
-                                                  name: rep.displayName,
-                                                  snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
-                                                  isAi: Boolean(rep.isAi),
-                                                },
-                                              }));
-                                              if (rep.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
-                                            }}
-                                            className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-white cursor-pointer"
-                                          >
-                                            <CornerDownLeft className="w-2.5 h-2.5" />
-                                            <span>{rep.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
-                                          </button>
-
-                                          {!rep.audioUrl && rep.content.trim() && (
-                                            <div className="relative">
-                                              <button
-                                                type="button"
-                                                disabled={translatingCommentId === rep.id}
-                                                onClick={() =>
-                                                  setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))
-                                                }
-                                                className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-[#34D399] cursor-pointer disabled:opacity-50"
-                                              >
-                                                <Languages className="w-2.5 h-2.5" />
-                                                <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
-                                              </button>
-                                              {commentLangMenuId === rep.id && (
-                                                <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
-                                                  {COMMENT_TRANSLATE_LANGS.map(lg => (
-                                                    <button
-                                                      key={lg.code}
-                                                      type="button"
-                                                      onClick={() => translateCommentText(rep.id, rep.content, lg.code)}
-                                                      className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
-                                                    >
-                                                      {lg.label}
-                                                    </button>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-
-                                          {rep.userId === user.id && (
-                                            <QuickRemovePill onRemove={() => deleteComment(post.id, rep.id)} />
-                                          )}
-
-                                          {!rep.isAi && rep.userId !== user.id && (
+                                          <div className="mt-1.5 flex items-center gap-4 flex-wrap">
                                             <button
                                               type="button"
-                                              onClick={() =>
-                                                setReportRequest({
-                                                  targetType: 'post_comment',
-                                                  targetId: rep.id,
-                                                  label: lang === 'en' ? 'this reply' : 'هذا الرد',
-                                                })
-                                              }
-                                              className="inline-flex items-center gap-1 text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] cursor-pointer"
+                                              onClick={() => {
+                                                setReplyParentByPost(prev => ({
+                                                  ...prev,
+                                                  [post.id]: {
+                                                    id: rep.id,
+                                                    name: rep.displayName,
+                                                    snippet: rep.audioUrl ? (rep.transcript || 'رسالة صوتية') : rep.content.slice(0, 56),
+                                                    isAi: Boolean(rep.isAi),
+                                                  },
+                                                }));
+                                                if (rep.isAi) setReplyAiModeByPost(prev => ({ ...prev, [post.id]: true }));
+                                              }}
+                                              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-white cursor-pointer py-0.5"
                                             >
-                                              <Flag className="w-2.5 h-2.5" />
-                                              <span>{t(lang, 'report')}</span>
+                                              <CornerDownLeft className="w-3.5 h-3.5" />
+                                              <span>{rep.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
                                             </button>
-                                          )}
-                                        </div>
+
+                                            {!rep.audioUrl && rep.content.trim() && (
+                                              <div className="relative">
+                                                <button
+                                                  type="button"
+                                                  disabled={translatingCommentId === rep.id}
+                                                  onClick={() =>
+                                                    setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))
+                                                  }
+                                                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer disabled:opacity-50 py-0.5"
+                                                >
+                                                  <Languages className="w-3.5 h-3.5" />
+                                                  <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
+                                                </button>
+                                                {commentLangMenuId === rep.id && (
+                                                  <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
+                                                    {COMMENT_TRANSLATE_LANGS.map(lg => (
+                                                      <button
+                                                        key={lg.code}
+                                                        type="button"
+                                                        onClick={() => translateCommentText(rep.id, rep.content, lg.code)}
+                                                        className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
+                                                      >
+                                                        {lg.label}
+                                                      </button>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+
+                                            {rep.userId === user.id && (
+                                              <QuickRemovePill onRemove={() => deleteComment(post.id, rep.id)} />
+                                            )}
+
+                                            {!rep.isAi && rep.userId !== user.id && (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setReportRequest({
+                                                    targetType: 'post_comment',
+                                                    targetId: rep.id,
+                                                    label: lang === 'en' ? 'this reply' : 'هذا الرد',
+                                                  })
+                                                }
+                                                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-[#FB7185] cursor-pointer py-0.5"
+                                              >
+                                                <Flag className="w-3.5 h-3.5" />
+                                                <span>{t(lang, 'report')}</span>
+                                              </button>
+                                            )}
+                                          </div>
                                       </div>
                                     </div>
                                   ))}
@@ -2372,10 +2390,10 @@ export function SocialView({
             onClick={e => e.stopPropagation()}
             className="fixed inset-0 z-[55] bg-[#121212] text-[#EEF2F7] flex flex-col overflow-hidden"
           >
-            {/* Open Borderless Top Navigation Bar (ZERO Boxed Containers!) */}
+            {/* Floating Borderless Top Navigation Bar (ZERO surrounding borders/frames!) */}
             <header
               style={{ paddingTop: 'max(12px, calc(env(safe-area-inset-top) + 6px))' }}
-              className="shrink-0 bg-[#121212] border-b border-white/[0.08] px-3.5 sm:px-5 pb-3"
+              className="shrink-0 bg-[#121212]/88 backdrop-blur-xl px-3.5 sm:px-5 pb-2.5"
             >
               <div className="max-w-[660px] mx-auto flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
@@ -2405,31 +2423,45 @@ export function SocialView({
                   </div>
                 </div>
 
-                {dPost && onShare && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onShare({
-                        kind: 'post',
-                        targetId: dPost.id,
-                        title: dPost.displayName,
-                        subtitle: `@${dPost.username}`,
-                        snippet: dPost.content || 'منشور على منصة LM',
-                        imageUrl: dPost.mediaUrls[0] || null,
-                        avatarUrl: dPost.avatarUrl,
-                        avatarInitials: dPost.avatarInitials,
-                        path: `/post/${dPost.id}`,
-                        onShared: nextCount => {
-                          setPosts(prev => prev.map(p => (p.id === dPost.id ? { ...p, sharesCount: nextCount } : p)));
-                        },
-                      })
-                    }
-                    title={lang === 'en' ? 'Share' : 'مشاركة'}
-                    className="w-10 h-10 rounded-full text-[#D4D4D8] hover:text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
-                  >
-                    <Share2 className="w-5 h-5" />
-                  </button>
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  {dPost && onShare && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onShare({
+                          kind: 'post',
+                          targetId: dPost.id,
+                          title: dPost.displayName,
+                          subtitle: `@${dPost.username}`,
+                          snippet: dPost.content || 'منشور على منصة LM',
+                          imageUrl: dPost.mediaUrls[0] || null,
+                          avatarUrl: dPost.avatarUrl,
+                          avatarInitials: dPost.avatarInitials,
+                          path: `/post/${dPost.id}`,
+                          onShared: nextCount => {
+                            setPosts(prev => prev.map(p => (p.id === dPost.id ? { ...p, sharesCount: nextCount } : p)));
+                          },
+                        })
+                      }
+                      title={lang === 'en' ? 'Share' : 'مشاركة'}
+                      className="w-10 h-10 rounded-full text-[#D4D4D8] hover:text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                    >
+                      <Share2 className="w-5 h-5" />
+                    </button>
+                  )}
+                  {dPost && dPost.userId === user.id && (
+                    <ActionMenuOrb
+                      editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
+                      removeLabel={lang === 'en' ? 'Delete post' : 'حذف المنشور'}
+                      onEdit={() => {
+                        setEditingPostId(dPost.id);
+                        setEditingPostText(dPost.content);
+                        closePostDetail();
+                      }}
+                      onRemove={() => deletePost(dPost.id)}
+                    />
+                  )}
+                </div>
               </div>
             </header>
 
@@ -2496,20 +2528,12 @@ export function SocialView({
                       )}
 
                       {dPost.musicUrl && dPost.mediaUrls.length === 0 && (
-                        <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl bg-[#101925] border border-[#94B3D6]/[0.14]">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <Music className={`w-4 h-4 shrink-0 ${dMusicPlaying ? 'text-[#34D399]' : 'text-[#A8C5E8]'}`} />
-                            <span className="text-xs font-medium text-white truncate">
-                              {dPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'موسيقى مرفقة')}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => togglePostMusic(dPost.id, dPost.musicUrl!)}
-                            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer shrink-0"
-                          >
-                            {dMusicPlaying ? <Volume2 className="w-4 h-4 text-[#34D399]" /> : <VolumeX className="w-4 h-4" />}
-                          </button>
+                        <div className="p-3 rounded-2xl bg-[#191A22]">
+                          <SmartVoicePill
+                            url={dPost.musicUrl}
+                            title={dPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
+                            showSkipButtons
+                          />
                         </div>
                       )}
 
@@ -2614,12 +2638,15 @@ export function SocialView({
 
                           <button
                             type="button"
-                            onClick={() => handleRepost(dPost.id)}
-                            className={`flex items-center gap-1.5 text-xs cursor-pointer transition-colors ${
-                              dPost.repostedByMe ? 'text-[#34D399] font-semibold' : 'hover:text-white'
+                            onClick={() => {
+                              setQuotingPost(dPost);
+                              setQuoteDraft('');
+                            }}
+                            className={`flex items-center gap-1.5 text-[13px] cursor-pointer transition-colors ${
+                              dPost.repostedByMe ? 'text-[#25F4EE] font-semibold' : 'hover:text-white'
                             }`}
                           >
-                            <Repeat2 className="w-4 h-4" />
+                            <Repeat2 className="w-5 h-5" />
                             <span className="font-mono-num">{formatCount(dPost.sharesCount)}</span>
                           </button>
                         </div>
@@ -2740,7 +2767,7 @@ export function SocialView({
                                     )}
                                   </div>
 
-                                  <div className="mt-1.5 px-2 flex items-center gap-3.5 flex-wrap">
+                                  <div className="mt-2 px-1 flex items-center gap-4 flex-wrap">
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -2755,9 +2782,9 @@ export function SocialView({
                                         }));
                                         if (c.isAi) setReplyAiModeByPost(prev => ({ ...prev, [dPost.id]: true }));
                                       }}
-                                      className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[#8DA2BC] hover:text-white cursor-pointer"
+                                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-white cursor-pointer py-0.5"
                                     >
-                                      <CornerDownLeft className="w-3 h-3" />
+                                      <CornerDownLeft className="w-4 h-4" />
                                       <span>{t(lang, 'reply')}</span>
                                     </button>
 
@@ -2767,19 +2794,19 @@ export function SocialView({
                                           type="button"
                                           disabled={translatingCommentId === c.id}
                                           onClick={() => setCommentLangMenuId(cur => (cur === c.id ? null : c.id))}
-                                          className="inline-flex items-center gap-1 text-[11.5px] text-[#8DA2BC] hover:text-[#34D399] cursor-pointer"
+                                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer py-0.5"
                                         >
-                                          <Languages className="w-3 h-3" />
+                                          <Languages className="w-4 h-4" />
                                           <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
                                         </button>
                                         {commentLangMenuId === c.id && (
-                                          <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#1C2A3B] border border-[#94B3D6]/20 shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                          <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#191B24] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
                                             {COMMENT_TRANSLATE_LANGS.map(lg => (
                                               <button
                                                 key={lg.code}
                                                 type="button"
                                                 onClick={() => translateCommentText(c.id, c.content, lg.code)}
-                                                className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.18] text-[10.5px] text-white cursor-pointer"
+                                                className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.18] text-[11px] text-white cursor-pointer"
                                               >
                                                 {lg.label}
                                               </button>
@@ -2803,9 +2830,9 @@ export function SocialView({
                                             label: lang === 'en' ? 'this comment' : 'هذا التعليق',
                                           })
                                         }
-                                        className="inline-flex items-center gap-1 text-[11.5px] text-[#8DA2BC] hover:text-[#FB7185] cursor-pointer"
+                                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#FB7185] cursor-pointer py-0.5"
                                       >
-                                        <Flag className="w-2.5 h-2.5" />
+                                        <Flag className="w-3.5 h-3.5" />
                                         <span>{t(lang, 'report')}</span>
                                       </button>
                                     )}
@@ -2838,7 +2865,7 @@ export function SocialView({
                                                 </div>
                                               )}
                                             </div>
-                                            <div className="mt-1 px-2 flex items-center gap-3">
+                                            <div className="mt-1.5 px-1 flex items-center gap-4">
                                               <button
                                                 type="button"
                                                 onClick={() => {
@@ -2852,9 +2879,10 @@ export function SocialView({
                                                     },
                                                   }));
                                                 }}
-                                                className="text-[11px] text-[#8DA2BC] hover:text-white cursor-pointer"
+                                                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-white cursor-pointer py-0.5"
                                               >
-                                                {t(lang, 'reply')}
+                                                <CornerDownLeft className="w-3.5 h-3.5" />
+                                                <span>{t(lang, 'reply')}</span>
                                               </button>
                                               {rep.userId === user.id && (
                                                 <QuickRemovePill onRemove={() => deleteComment(dPost.id, rep.id)} />
@@ -2977,10 +3005,10 @@ export function SocialView({
           onSubmit={submitPost}
           className="fixed inset-0 z-50 bg-[#121212] flex flex-col justify-between"
         >
-          {/* Open Clean Top Bar */}
+          {/* Floating Borderless Top Bar */}
           <div
             style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
-            className="px-4 sm:px-5 pb-3.5 border-b border-white/[0.08] flex items-center justify-between max-w-[780px] w-full mx-auto"
+            className="px-4 sm:px-5 pb-3 flex items-center justify-between max-w-[780px] w-full mx-auto"
           >
             <div className="flex items-center gap-3">
               <button
@@ -2999,7 +3027,7 @@ export function SocialView({
 
             <button
               type="submit"
-              disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0)}
+              disabled={publishing || (!draft.trim() && uploadedMediaUrls.length === 0 && !selectedMusic)}
               className="h-9 px-5 rounded-full bg-[#FE2C55] hover:bg-[#E5254B] text-white text-xs font-bold cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
             >
               {publishing ? 'جارٍ النشر...' : 'نشر'}
@@ -3486,58 +3514,70 @@ export function SocialView({
             </div>
 
             <div className="p-4 space-y-3 overflow-y-auto">
-              {/* Studio Capture Strip: Record 60s Voice OR Upload Audio File */}
+              {/* Studio Capture Strip: Sleek Non-Red Live Cyan Voice Recorder OR Fast Audio File Upload */}
               {libRecording ? (
-                <div className="p-3 rounded-2xl bg-[#EF4444]/10 border border-[#FB7185]/35 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#FB7185] animate-pulse shrink-0" />
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-white truncate">
-                        {user.displayName} · LM
-                      </div>
-                      <div className="text-[11px] font-mono-num text-[#FDA4AF]">
-                        {formatDurationMMSS(libRecordSec)} / 1:00
+                <div className="p-3.5 rounded-2xl bg-[#191C26] border border-[#25F4EE]/35 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#25F4EE] animate-pulse shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-white truncate">
+                          {user.displayName} · LM
+                        </div>
+                        <div className="text-[11px] font-mono-num text-[#25F4EE]">
+                          {formatDurationMMSS(libRecordSec)} / 1:00
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={cancelLibVoiceRec}
+                        className="px-3 py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-[#D4D4D8] cursor-pointer"
+                      >
+                        {t(lang, 'cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={stopLibVoiceRec}
+                        className="px-3.5 py-1.5 rounded-full bg-[#25F4EE] text-black text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:opacity-90"
+                      >
+                        <Square className="w-3 h-3 fill-current" />
+                        <span>{lang === 'en' ? 'Save Audio' : 'حفظ الصوت'}</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={cancelLibVoiceRec}
-                      className="px-3 py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-[#D4D4D8] cursor-pointer"
-                    >
-                      {t(lang, 'cancel')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={stopLibVoiceRec}
-                      className="px-3.5 py-1.5 rounded-full bg-white text-black text-[11px] font-bold flex items-center gap-1.5 cursor-pointer hover:opacity-90"
-                    >
-                      <Square className="w-3 h-3 fill-current" />
-                      <span>{lang === 'en' ? 'Save Audio' : 'حفظ الصوت'}</span>
-                    </button>
+                  {/* Live Real-Time Cyan Voice Waveform */}
+                  <div className="h-7 flex items-center justify-center gap-[3px] px-1">
+                    {libRecBars.map((h, i) => (
+                      <span
+                        key={i}
+                        style={{ height: `${h}%` }}
+                        className="flex-1 max-w-[8px] rounded-full bg-[#25F4EE]/85 transition-[height] duration-75"
+                      />
+                    ))}
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     disabled={uploadingCustomAudio}
                     onClick={startLibVoiceRec}
-                    className="px-3 py-2.5 rounded-2xl border border-white/[0.12] hover:border-[#FBBF24]/50 bg-[#0D0D12] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-45"
+                    className="px-3 py-3 rounded-2xl border border-white/[0.12] hover:border-[#25F4EE]/55 bg-[#181A22] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-45"
                   >
-                    <Mic className="w-4 h-4 text-[#FBBF24] shrink-0" />
+                    <Mic className="w-4 h-4 text-[#25F4EE] shrink-0" />
                     <span className="truncate">{t(lang, 'record_voice_1m')}</span>
                   </button>
                   <button
                     type="button"
                     disabled={uploadingCustomAudio}
                     onClick={() => customAudioRef.current?.click()}
-                    className="px-3 py-2.5 rounded-2xl border border-dashed border-white/[0.18] hover:border-[#34D399]/60 bg-[#0D0D12] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-45"
+                    className="px-3 py-3 rounded-2xl border border-dashed border-white/[0.18] hover:border-[#34D399]/60 bg-[#181A22] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-45"
                   >
                     <Upload className="w-4 h-4 text-[#34D399] shrink-0" />
                     <span className="truncate">
-                      {uploadingCustomAudio ? (lang === 'en' ? 'Uploading...' : 'جارٍ الرفع...') : t(lang, 'upload_audio')}
+                      {uploadingCustomAudio ? (lang === 'en' ? 'Uploading...' : 'جارٍ الحفظ السريع...') : t(lang, 'upload_audio')}
                     </span>
                   </button>
                 </div>
@@ -3695,68 +3735,151 @@ export function SocialView({
         </StudioModalOverlay>
       )}
 
-      {/* 2026 Quote Repost Studio Modal */}
+      {/* FULL-PAGE REPOST & QUOTE COMPOSER PAGE ("شارك لحظة أو اكتب أفكارك" + Full Original Post & Real Stats Below!) */}
       {quotingPost && (
-        <StudioModalOverlay zClass="z-[78]" onClose={() => setQuotingPost(null)}>
-          <form onSubmit={submitQuotePost} className="p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
-              <div className="flex items-center gap-2 text-sm font-bold text-white">
-                <Quote className="w-4 h-4 text-[#FBBF24]" />
-                <span>{lang === 'en' ? 'Quote Post' : 'اقتباس المنشور برأيك'}</span>
-              </div>
-              <CloseOrbButton onClick={() => setQuotingPost(null)} />
-            </div>
-
-            <div className="flex items-start gap-3">
-              <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={36} />
-              <textarea
-                autoFocus
-                rows={3}
-                value={quoteDraft}
-                onChange={e => setQuoteDraft(e.target.value)}
-                placeholder={lang === 'en' ? 'Add your thoughts on this post...' : 'أضف تعليقك أو رأيك على هذا المنشور...'}
-                className="flex-1 bg-transparent resize-none text-sm text-white placeholder:text-[#63636C] outline-none leading-relaxed"
-              />
-            </div>
-
-            {/* Embedded Original Post Preview */}
-            <div className="rounded-2xl bg-[#0B0B0F] border border-white/[0.1] p-3 space-y-2">
-              <div className="flex items-center gap-2 text-xs">
-                <UserAvatar initials={quotingPost.avatarInitials} avatarUrl={quotingPost.avatarUrl} size={22} />
-                <span className="font-semibold text-white truncate">{quotingPost.displayName}</span>
-                {quotingPost.verified && <VerifiedIcon />}
-                <span className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{quotingPost.username}</span>
-              </div>
-              {quotingPost.content && (
-                <p className="text-xs text-[#C4C4CC] line-clamp-3 leading-relaxed">{quotingPost.content}</p>
-              )}
-              {quotingPost.mediaUrls[0] && (
-                <img
-                  src={quotingPost.mediaUrls[0]}
-                  alt=""
-                  className="w-full max-h-[150px] rounded-xl object-cover border border-white/[0.08]"
-                />
-              )}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-1">
+        <form
+          onSubmit={submitQuotePost}
+          onClick={e => e.stopPropagation()}
+          className="fixed inset-0 z-[78] bg-[#121212] text-[#F1F1F2] flex flex-col overflow-hidden"
+        >
+          {/* Floating Borderless Top Header */}
+          <header
+            style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
+            className="shrink-0 px-4 sm:px-6 pb-3 flex items-center justify-between max-w-[760px] w-full mx-auto"
+          >
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
                 onClick={() => setQuotingPost(null)}
-                className="h-9 px-4 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-xs text-[#C4C4CC] hover:text-white cursor-pointer"
+                aria-label={t(lang, 'back')}
+                className="w-10 h-10 rounded-full text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
               >
-                {t(lang, 'cancel')}
+                {lang === 'en' ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
               </button>
-              <PublishActionButton
-                type="submit"
-                variant="luminous"
-                loading={publishingQuote}
-                label={lang === 'en' ? 'Post Quote' : 'نشر الاقتباس'}
-                loadingLabel={t(lang, 'posting')}
-              />
+              <div className="min-w-0">
+                <div className="text-[15px] font-bold text-white truncate">
+                  {lang === 'en' ? 'Repost' : 'إعادة النشر'}
+                </div>
+                <div className="text-[11px] text-[#8E8E93] truncate">
+                  {lang === 'en' ? 'Write your thoughts or publish directly' : 'اكتب أفكارك واقتباسك أو انشر مباشرة'}
+                </div>
+              </div>
             </div>
-          </form>
-        </StudioModalOverlay>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {quotingPost.repostedByMe && !quoteDraft.trim() && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleRepost(quotingPost.id);
+                    setQuotingPost(null);
+                  }}
+                  className="h-9 px-3.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] text-xs font-semibold text-[#FDA4AF] cursor-pointer transition-colors"
+                >
+                  {lang === 'en' ? 'Undo Repost' : 'إلغاء الإعادة'}
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={publishingQuote}
+                className="h-9 px-5 rounded-full bg-[#FE2C55] hover:bg-[#E5254B] text-white text-xs font-bold cursor-pointer disabled:opacity-40 transition-colors"
+              >
+                {publishingQuote
+                  ? lang === 'en'
+                    ? 'Publishing...'
+                    : 'جارٍ النشر...'
+                  : quoteDraft.trim()
+                    ? lang === 'en'
+                      ? 'Publish'
+                      : 'نشر الاقتباس'
+                    : lang === 'en'
+                      ? 'Repost Now'
+                      : 'نشر'}
+              </button>
+            </div>
+          </header>
+
+          {/* Open Spacious Composer + Full Original Post with Likes, Comments & Shares Below */}
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-3 pb-24 max-w-[760px] w-full mx-auto space-y-6">
+            {/* User Quote / Moment Writing Area */}
+            <div className="flex items-start gap-3">
+              <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={42} />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-white mb-1">{user.displayName}</div>
+                <textarea
+                  autoFocus
+                  rows={4}
+                  value={quoteDraft}
+                  onChange={e => setQuoteDraft(e.target.value)}
+                  placeholder={
+                    lang === 'en'
+                      ? 'Share a moment or write your thoughts on this post... (optional)'
+                      : 'شارك اللحظة أو اكتب أفكارك واقتباسك هنا... (اختياري)'
+                  }
+                  className="w-full min-h-[120px] bg-transparent resize-none text-[17px] leading-[1.75] text-[#F1F1F2] placeholder:text-[#6E707D] outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Full Original Post Preview Below — Exact Layout + Likes, Comments & Reposts Counts! */}
+            <div className="rounded-3xl bg-[#181920] border border-white/[0.09] p-4 sm:p-5 space-y-3.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <UserAvatar initials={quotingPost.avatarInitials} avatarUrl={quotingPost.avatarUrl} size={38} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-sm font-bold text-white truncate">
+                    <span className="truncate">{quotingPost.displayName}</span>
+                    {quotingPost.verified && <VerifiedIcon />}
+                  </div>
+                  <div className="text-[11.5px] text-[#8E8E93] font-mono-num truncate">
+                    @{quotingPost.username} · {quotingPost.createdAt}
+                  </div>
+                </div>
+              </div>
+
+              {quotingPost.content && (
+                <div className="text-[14.5px] text-[#E8E8EE] leading-[1.65] whitespace-pre-wrap break-words">
+                  <RichMessageText text={quotingPost.content} maxChars={600} lang={lang} />
+                </div>
+              )}
+
+              {quotingPost.musicUrl && quotingPost.mediaUrls.length === 0 && (
+                <div className="p-2.5 rounded-2xl bg-[#121319]">
+                  <SmartVoicePill
+                    url={quotingPost.musicUrl}
+                    title={quotingPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
+                    showSkipButtons
+                    compact
+                  />
+                </div>
+              )}
+
+              {quotingPost.mediaUrls.length > 0 && (
+                <div className="rounded-2xl overflow-hidden border border-white/[0.08]">
+                  <MediaCollageGrid urls={quotingPost.mediaUrls} onSelect={() => {}} />
+                </div>
+              )}
+
+              {/* Exact Original Post Metrics Bar (Likes + Comments + Reposts/Shares) */}
+              <div className="pt-3 border-t border-white/[0.08] flex items-center gap-6 text-xs text-[#A6A7B2] flex-wrap">
+                <span className="inline-flex items-center gap-1.5">
+                  {resolveReaction(quotingPost.myReaction || 'love').renderIcon(16)}
+                  <span className="font-mono-num font-semibold text-white">{formatCount(quotingPost.score)}</span>
+                  <span>{lang === 'en' ? 'Likes' : 'إعجاب'}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <MessageCircle className="w-4 h-4 text-[#A6A7B2]" />
+                  <span className="font-mono-num font-semibold text-white">{formatCount(quotingPost.commentsCount)}</span>
+                  <span>{lang === 'en' ? 'Comments' : 'تعليق'}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Repeat2 className="w-4 h-4 text-[#25F4EE]" />
+                  <span className="font-mono-num font-semibold text-white">{formatCount(quotingPost.sharesCount)}</span>
+                  <span>{lang === 'en' ? 'Reposts' : 'إعادة نشر'}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </form>
       )}
 
       {/* Universal Discreet Content Reporting Sheet/Modal */}

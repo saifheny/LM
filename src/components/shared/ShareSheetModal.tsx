@@ -33,9 +33,36 @@ function isUsableImageUrl(u?: string | null): u is string {
   return Boolean(u && typeof u === 'string' && !u.startsWith('lm:') && u.trim().length > 0);
 }
 
+function wrapCanvasText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number
+): string[] {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && cur) {
+      lines.push(cur);
+      cur = w;
+      if (lines.length >= maxLines) break;
+    } else {
+      cur = test;
+    }
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, -1).trimEnd()}…`;
+  }
+  return lines;
+}
+
 /**
- * Generates a crisp 1080x560 PNG Share Card on the fly so even guest accounts
- * or users without custom photos can always share a real high-res image card!
+ * Generates a Museum-Grade 1200x675 Architectural Editorial Magazine Share Card PNG:
+ * - Matte architectural obsidian stock with fine micro-grain & hairline geometry (ZERO AI-slop purple/blue glows!)
+ * - Proper RTL Arabic typography, crisp wrapped editorial headline & pull-quote, studio-framed media card!
  */
 async function generateShareCardPng(opts: {
   title: string;
@@ -47,64 +74,110 @@ async function generateShareCardPng(opts: {
   initials?: string;
 }): Promise<File | null> {
   try {
-    const W = 1080;
-    const H = 560;
+    const W = 1200;
+    const H = 675;
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    // Rich midnight navy cosmic gradient background
-    const bg = ctx.createLinearGradient(0, 0, W, H);
-    bg.addColorStop(0, '#0E1621');
-    bg.addColorStop(0.55, '#172334');
-    bg.addColorStop(1, '#1B1D36');
-    ctx.fillStyle = bg;
+    const hasArabic = /[\u0600-\u06FF]/.test(`${opts.title} ${opts.snippet || ''} ${opts.badge}`);
+
+    // 1. Matte Editorial Architectural Obsidian Paper Stock (ZERO neon AI-slop blobs!)
+    const baseGrad = ctx.createLinearGradient(0, 0, W, H);
+    baseGrad.addColorStop(0, '#101114');
+    baseGrad.addColorStop(0.55, '#0C0D10');
+    baseGrad.addColorStop(1, '#141519');
+    ctx.fillStyle = baseGrad;
     ctx.fillRect(0, 0, W, H);
 
-    // Subtle cosmic violet + sky-blue atmospheric glows
-    const g1 = ctx.createRadialGradient(W * 0.82, H * 0.2, 20, W * 0.82, H * 0.2, 360);
-    g1.addColorStop(0, 'rgba(124, 92, 255, 0.38)');
-    g1.addColorStop(1, 'rgba(124, 92, 255, 0)');
-    ctx.fillStyle = g1;
+    // Subtle warm spotlight from top-right architectural studio keylight (ultra-refined neutral ivory, 6% opacity)
+    const keyLight = ctx.createRadialGradient(W * 0.85, H * 0.14, 10, W * 0.85, H * 0.14, 520);
+    keyLight.addColorStop(0, 'rgba(255, 250, 240, 0.065)');
+    keyLight.addColorStop(1, 'rgba(255, 250, 240, 0)');
+    ctx.fillStyle = keyLight;
     ctx.fillRect(0, 0, W, H);
 
-    const g2 = ctx.createRadialGradient(W * 0.16, H * 0.88, 20, W * 0.16, H * 0.88, 320);
-    g2.addColorStop(0, 'rgba(73, 138, 245, 0.28)');
-    g2.addColorStop(1, 'rgba(73, 138, 245, 0)');
-    ctx.fillStyle = g2;
-    ctx.fillRect(0, 0, W, H);
+    // 2. Ultra-fine Architectural Blueprint Grid Lines (barely-there Swiss typography discipline)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.032)';
+    ctx.lineWidth = 1;
+    for (let x = 64; x < W; x += 64) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+    }
+    for (let y = 64; y < H; y += 64) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
 
-    // Outer glass card frame
-    ctx.strokeStyle = 'rgba(148, 179, 214, 0.22)';
-    ctx.lineWidth = 2;
+    // Fine deterministic matte film grain dots
+    let seed = 4219;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+    for (let i = 0; i < 420; i++) {
+      seed = (seed * 16807) % 2147483647;
+      const gx = seed % W;
+      seed = (seed * 16807) % 2147483647;
+      const gy = seed % H;
+      ctx.fillRect(gx, gy, 1.4, 1.4);
+    }
+
+    // 3. Outer Architectural Hairline Frame + Corner Registration Marks
+    const pad = 38;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.13)';
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.roundRect(36, 36, W - 72, H - 72, 34);
+    ctx.roundRect(pad, pad, W - pad * 2, H - pad * 2, 26);
     ctx.stroke();
 
-    // Top LM mark + kind pill
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 34px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('LM', 80, 108);
-
-    ctx.fillStyle = 'rgba(124, 92, 255, 0.22)';
+    // Inner subtle accent rule on top bar
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
     ctx.beginPath();
-    ctx.roundRect(W - 250, 72, 172, 42, 21);
-    ctx.fill();
-    ctx.fillStyle = '#E6E0FF';
-    ctx.font = '600 21px "IBM Plex Sans Arabic", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(opts.badge, W - 164, 100);
-    ctx.textAlign = 'left';
+    ctx.moveTo(pad + 34, 122);
+    ctx.lineTo(W - pad - 34, 122);
+    ctx.stroke();
 
-    // Avatar / Thumbnail circle on left
-    const cx = 170;
-    const cy = 285;
-    const r = 88;
+    // 4. Top Editorial Header: Crisp Solid Monograph LM Badge (left) + Minimalist Category Stamp (right)
+    ctx.fillStyle = '#F5F5F4';
+    ctx.beginPath();
+    ctx.roundRect(pad + 34, 64, 48, 38, 10);
+    ctx.fill();
+    ctx.fillStyle = '#0C0D10';
+    ctx.font = '800 22px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('LM', pad + 58, 84);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#8F939E';
+    ctx.font = '600 14px "Plus Jakarta Sans", monospace';
+    ctx.fillText('LM PLATFORM  ·  CURATED EDITION', pad + 98, 84);
+
+    // Category Badge Pill (Matte Warm Ivory Rim — ZERO Neon!)
+    ctx.font = '600 19px "IBM Plex Sans Arabic", "Plus Jakarta Sans", sans-serif';
+    const badgeW = Math.max(126, ctx.measureText(opts.badge).width + 44);
+    ctx.fillStyle = '#1B1D23';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(W - pad - 34 - badgeW, 65, badgeW, 36, 18);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#F5F5F4';
+    ctx.textAlign = 'center';
+    ctx.fillText(opts.badge, W - pad - 34 - badgeW / 2, 84);
+
+    // 5. Left Studio-Framed Visual Portrait / Media Card (360x360 Matte Frame)
+    const imgX = pad + 36;
+    const imgY = 158;
+    const imgSize = 368;
     ctx.save();
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.roundRect(imgX, imgY, imgSize, imgSize, 24);
     ctx.clip();
 
     let drewImg = false;
@@ -117,7 +190,11 @@ async function generateShareCardPng(opts: {
           el.onerror = reject;
           el.src = opts.imageUrl!;
         });
-        ctx.drawImage(img, cx - r, cy - r, r * 2, r * 2);
+        // Aspect-ratio-preserving center cover crop (NEVER stretches portraits!)
+        const scale = Math.max(imgSize / img.naturalWidth, imgSize / img.naturalHeight);
+        const dw = img.naturalWidth * scale;
+        const dh = img.naturalHeight * scale;
+        ctx.drawImage(img, imgX + (imgSize - dw) / 2, imgY + (imgSize - dh) / 2, dw, dh);
         drewImg = true;
       } catch {
         drewImg = false;
@@ -125,53 +202,118 @@ async function generateShareCardPng(opts: {
     }
 
     if (!drewImg) {
-      const avGrad = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-      avGrad.addColorStop(0, '#7C5CFF');
-      avGrad.addColorStop(1, '#498AF5');
-      ctx.fillStyle = avGrad;
-      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = '700 54px "Plus Jakarta Sans", "IBM Plex Sans Arabic", sans-serif';
+      // Architectural Monogram Studio Tile (Matte Obsidian + Fine Concentric Orbit Hairlines)
+      const tileGrad = ctx.createLinearGradient(imgX, imgY, imgX + imgSize, imgY + imgSize);
+      tileGrad.addColorStop(0, '#1A1C22');
+      tileGrad.addColorStop(1, '#121318');
+      ctx.fillStyle = tileGrad;
+      ctx.fillRect(imgX, imgY, imgSize, imgSize);
+
+      const cx = imgX + imgSize / 2;
+      const cy = imgY + imgSize / 2;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1.2;
+      [68, 108, 148].forEach(rad => {
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+      // Delicate diagonal editorial crosshair
+      ctx.beginPath();
+      ctx.moveTo(imgX + 24, imgY + imgSize - 24);
+      ctx.lineTo(imgX + imgSize - 24, imgY + 24);
+      ctx.stroke();
+
+      ctx.fillStyle = '#F5F5F4';
+      ctx.font = '800 96px "Plus Jakarta Sans", "IBM Plex Sans Arabic", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText((opts.initials || 'LM').slice(0, 2).toUpperCase(), cx, cy + 2);
+      ctx.fillText((opts.initials || 'LM').slice(0, 2).toUpperCase(), cx, cy + 4);
     }
     ctx.restore();
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.lineWidth = 4;
+    // Subtle crisp inner hairline border on image card
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.roundRect(imgX, imgY, imgSize, imgSize, 24);
     ctx.stroke();
 
-    // Title, Handle & Snippet
-    ctx.textAlign = 'left';
+    // 6. Right Editorial Copy Block (True RTL when Arabic!)
+    const textAreaLeft = imgX + imgSize + 48;
+    const textAreaRight = W - pad - 42;
+    const textMaxW = textAreaRight - textAreaLeft;
+    const anchorX = hasArabic ? textAreaRight : textAreaLeft;
+
+    ctx.save();
+    ctx.direction = hasArabic ? 'rtl' : 'ltr';
+    ctx.textAlign = hasArabic ? 'right' : 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 44px "Plus Jakarta Sans", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(opts.title.slice(0, 32), 296, 255);
 
+    // Thin crimson-ivory editorial accent marker bar
+    ctx.fillStyle = '#E11D48';
+    ctx.fillRect(hasArabic ? textAreaRight - 46 : textAreaLeft, 174, 46, 4);
+
+    // Bold Editorial Display Headline (Up to 2 crisp wrapped lines)
+    ctx.fillStyle = '#FAFAFA';
+    ctx.font = '700 44px "IBM Plex Sans Arabic", "Plus Jakarta Sans", sans-serif';
+    const titleLines = wrapCanvasText(ctx, opts.title, textMaxW, 2);
+    let cursorY = 236;
+    for (const line of titleLines) {
+      ctx.fillText(line, anchorX, cursorY);
+      cursorY += 56;
+    }
+
+    // Handle / Subtitle
     if (opts.subtitle) {
-      ctx.fillStyle = '#9BB4D0';
-      ctx.font = '500 26px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(opts.subtitle.slice(0, 42), 296, 300);
+      ctx.fillStyle = '#9CA3AF';
+      ctx.font = '500 23px "Plus Jakarta Sans", "IBM Plex Sans Arabic", sans-serif';
+      ctx.fillText(opts.subtitle.slice(0, 44), anchorX, cursorY + 4);
+      cursorY += 46;
+    } else {
+      cursorY += 16;
     }
 
+    // Editorial Snippet / Pull Quote (Up to 3 wrapped lines with vertical quote rule)
     if (opts.snippet) {
-      ctx.fillStyle = '#CFDCEB';
       ctx.font = '400 24px "IBM Plex Sans Arabic", "Plus Jakarta Sans", sans-serif';
-      const clean = opts.snippet.replace(/\s+/g, ' ').trim();
-      ctx.fillText(clean.slice(0, 56) + (clean.length > 56 ? '...' : ''), 296, 352);
-    }
+      const snippetLines = wrapCanvasText(ctx, opts.snippet, textMaxW - 22, 3);
+      if (snippetLines.length > 0) {
+        const quoteTop = cursorY + 4;
+        const quoteHeight = snippetLines.length * 38;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
+        ctx.fillRect(hasArabic ? textAreaRight - 3 : textAreaLeft, quoteTop - 22, 3, quoteHeight);
 
-    // Bottom link bar
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.fillStyle = '#D4D4D8';
+        const qAnchorX = hasArabic ? textAreaRight - 18 : textAreaLeft + 18;
+        let qY = quoteTop + 4;
+        for (const sl of snippetLines) {
+          ctx.fillText(sl, qAnchorX, qY);
+          qY += 38;
+        }
+      }
+    }
+    ctx.restore();
+
+    // 7. Bottom Architectural Footer Strip
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(80, H - 118, W - 160, 52, 26);
-    ctx.fill();
-    ctx.fillStyle = '#A8C5E8';
-    ctx.font = '500 21px "Plus Jakarta Sans", monospace';
-    ctx.fillText(opts.fullUrl.slice(0, 68), 106, H - 85);
+    ctx.moveTo(pad + 34, H - 108);
+    ctx.lineTo(W - pad - 34, H - 108);
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#A1A1AA';
+    ctx.font = '500 18px "Plus Jakarta Sans", monospace';
+    const cleanHost = opts.fullUrl.replace(/^https?:\/\//i, '').slice(0, 58);
+    ctx.fillText(cleanHost, pad + 36, H - 72);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#F5F5F4';
+    ctx.font = '600 18px "IBM Plex Sans Arabic", "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(hasArabic ? 'افتح الرابط على منصة LM' : 'Open on LM', W - pad - 36, H - 72);
 
     const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
     if (!blob) return null;
@@ -319,7 +461,8 @@ export function ShareSheetModal({
     await apiPost(`/api/conversations/${conv.id}/messages`, {
       senderId: currentUser.id,
       content: `${badgeLabel}: ${active.title}${excerpt}\n${fullUrl}`,
-      msgType: 'text',
+      msgType: active.kind === 'video' ? 'video_note' : 'text',
+      mediaUrl: validPreviewImg || undefined,
     });
     flash(`تم الإرسال إلى ${conv.title}`);
   }
@@ -328,31 +471,31 @@ export function ShareSheetModal({
     {
       id: 'whatsapp' as const,
       label: 'واتساب',
-      bg: '#16A34A',
       href: `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${fullUrl}`)}`,
     },
     {
       id: 'telegram' as const,
       label: 'تيليجرام',
-      bg: '#0EA5E9',
       href: `https://t.me/share/url?url=${encodeURIComponent(fullUrl)}&text=${encodeURIComponent(shareText)}`,
+    },
+    {
+      id: 'instagram' as const,
+      label: 'إنستغرام',
+      href: '',
     },
     {
       id: 'x' as const,
       label: 'X',
-      bg: '#1D2939',
       href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(fullUrl)}`,
     },
     {
       id: 'facebook' as const,
       label: 'فيسبوك',
-      bg: '#2563EB',
       href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(fullUrl)}&quote=${encodeURIComponent(shareText)}`,
     },
     {
       id: 'sms' as const,
       label: 'رسائل',
-      bg: '#10B981',
       href: `sms:?body=${encodeURIComponent(`${shareText}\n${fullUrl}`)}`,
     },
   ];
@@ -459,27 +602,42 @@ export function ShareSheetModal({
             </button>
           )}
 
-          {externalTargets.map(t => (
-            <a
-              key={t.id}
-              href={t.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => {
-                recordUniqueShare(t.id);
-                setTimeout(onClose, 250);
-              }}
-              className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
-            >
-              <div
-                style={{ backgroundColor: t.bg }}
-                className="w-12 h-12 rounded-full flex items-center justify-center"
+          {externalTargets.map(t =>
+            t.href ? (
+              <a
+                key={t.id}
+                href={t.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  recordUniqueShare(t.id);
+                  setTimeout(onClose, 250);
+                }}
+                className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer group"
               >
-                {SharePlatformIcons[t.id]}
-              </div>
-              <span className="text-[10.5px] text-[#A1A1AA] truncate w-full text-center">{t.label}</span>
-            </a>
-          ))}
+                <div className="w-12 h-12 rounded-full overflow-hidden shadow-md group-hover:scale-105 transition-transform">
+                  {SharePlatformIcons[t.id]}
+                </div>
+                <span className="text-[10.5px] text-[#C4C4CC] truncate w-full text-center">{t.label}</span>
+              </a>
+            ) : (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  recordUniqueShare(t.id);
+                  navigator.clipboard?.writeText(fullUrl);
+                  flash('تم نسخ الرابط للمشاركة على إنستغرام');
+                }}
+                className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer group"
+              >
+                <div className="w-12 h-12 rounded-full overflow-hidden shadow-md group-hover:scale-105 transition-transform">
+                  {SharePlatformIcons[t.id]}
+                </div>
+                <span className="text-[10.5px] text-[#C4C4CC] truncate w-full text-center">{t.label}</span>
+              </button>
+            )
+          )}
 
           {active.onReport && (
             <button

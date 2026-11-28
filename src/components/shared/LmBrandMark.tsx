@@ -209,12 +209,12 @@ function renderTextWithRichEntities(
               e.stopPropagation();
               onHashtagClick(tag);
             }}
-            className="inline font-medium text-[#FB7185] hover:text-[#FDA4AF] hover:underline cursor-pointer transition-colors"
+            className="inline font-semibold text-[#25F4EE] hover:text-[#7DF9F5] hover:underline cursor-pointer transition-colors"
           >
             {matchText}
           </button>
         ) : (
-          <span key={`${keyPrefix}-tag-${tokenIdx++}`} className="font-medium text-[#FB7185]">
+          <span key={`${keyPrefix}-tag-${tokenIdx++}`} className="font-semibold text-[#25F4EE]">
             {matchText}
           </span>
         )

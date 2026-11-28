@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { v4 as uuid } from 'uuid';
 import { db, loadProviderConfig, UPLOADS_DIR } from './db.ts';
 import { loadTrustedMediaBytes } from './cloudStorage.ts';
+import { gatherLiveWebContext, shouldFetchLiveWeb } from './webSearch.ts';
 
 export interface AiChatRequest {
   userId: string;
@@ -93,13 +94,25 @@ function normalizeArabicForFilter(text: string): string {
     .replace(/ة/g, 'ه');
 }
 
-const LM_AI_SYSTEM_PROMPT = `You are a sharp, friendly everyday AI assistant inside the LM social platform.
+function buildDynamicSystemPrompt(): string {
+  const now = new Date();
+  const isoDate = now.toISOString().slice(0, 10);
+  const arDate = now.toLocaleDateString('ar-EG', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  return `You are a sharp, friendly everyday AI assistant inside the LM social platform.
+Current live date: ${isoDate} (${arDate}).
 Strict Non-Negotiable Rules:
 1. STRICT NO-CODING POLICY: You are STRICTLY FORBIDDEN from writing, generating, creating, debugging, fixing, or outputting ANY programming code, source code, scripts, HTML, CSS, JavaScript, TypeScript, Python, SQL, C++, Java, shell commands, or code blocks anywhere on LM — under ALL circumstances, even if asked indirectly. If a user asks for programming or code, politely decline in the user's language and explain that LM AI is designed exclusively for everyday conversations, general life questions, and exploring content inside the LM platform.
-2. STRICT VIDEO/CONTENT SCOPING: When context is provided for a specific Pulse video or post (including its caption/title, creator, tags, and comments), answer STRICTLY about THAT exact video/post and its comments. Never mix in unrelated videos or invent details not present in the provided video details.
-3. PRIVACY: Never read private 1-on-1 chats unless the user explicitly shares a snippet; in group chats where the group admin enabled you as a member, use the provided recent group context naturally.
-4. ZERO FINANCIAL AUTHORITY: Never transfer money, modify balances, or execute payments.
-5. STYLE: Reply directly, clearly, naturally, and concisely in the same language the user writes in (Arabic or English).`;
+2. LIVE WEB KNOWLEDGE: When Google Search grounding or live web search results are provided, use them naturally to give accurate, up-to-date answers about current events, prices, people, weather, sports, and modern topics.
+3. STRICT VIDEO/CONTENT SCOPING: When context is provided for a specific Pulse video or post (including its caption/title, creator, tags, and comments), answer STRICTLY about THAT exact video/post and its comments. Never mix in unrelated videos or invent details not present in the provided video details.
+4. PRIVACY: Never read private 1-on-1 chats unless the user explicitly shares a snippet; in group chats where the group admin enabled you as a member, use the provided recent group context naturally.
+5. ZERO FINANCIAL AUTHORITY: Never transfer money, modify balances, or execute payments.
+6. STYLE: Reply directly, clearly, naturally, and concisely in the same language the user writes in (Arabic or English).`;
+}
 
 function logSecurity(userId: string, actionType: string, decision: 'ALLOWED' | 'BLOCKED', reason: string): string {
   const id = uuid();
@@ -162,9 +175,11 @@ async function callGeminiWithFailover(
   apiKey: string,
   requestedModel: string | undefined,
   fullUserContent: string,
-  inlineData?: { mimeType: string; data: string }
+  inlineData?: { mimeType: string; data: string },
+  useGoogleSearch = false
 ): Promise<{ text: string; modelUsed: string }> {
   const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 14000 } });
+  const sysPrompt = buildDynamicSystemPrompt();
   const preferred = requestedModel && requestedModel !== 'lm-smart-local' ? requestedModel : 'gemini-2.5-flash';
   const rawChain = [
     preferred,
@@ -190,38 +205,78 @@ async function callGeminiWithFailover(
     const model = fallbackChain[i];
     const isStableFast = model === 'gemini-2.5-flash' || model === 'gemini-3-flash-preview' || model === 'gemini-3.5-flash-lite';
     const timeoutMs = isStableFast ? 18000 : 7500;
+    const enableTool = useGoogleSearch && (model.startsWith('gemini-2.5') || model.startsWith('gemini-3'));
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        const bodyObj: Record<string, unknown> = {
+          systemInstruction: { parts: [{ text: sysPrompt }] },
+          contents: [{ role: 'user', parts: userParts }],
+        };
+        if (enableTool) {
+          bodyObj.tools = [{ google_search: {} }];
+        }
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: controller.signal,
-            body: JSON.stringify({
-              systemInstruction: { parts: [{ text: LM_AI_SYSTEM_PROMPT }] },
-              contents: [{ role: 'user', parts: userParts }],
-            }),
+            body: JSON.stringify(bodyObj),
           }
         );
         const data = (await res.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+            groundingMetadata?: {
+              groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+            };
+          }>;
           error?: { code?: number; message?: string; status?: string };
         };
 
         if (res.ok) {
-          const text = (data.candidates?.[0]?.content?.parts || [])
+          let text = (data.candidates?.[0]?.content?.parts || [])
             .map(p => p.text || '')
             .join('')
             .trim();
+          const chunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+          const webRefs = chunks
+            .map(c => c.web)
+            .filter((w): w is { uri: string; title?: string } => Boolean(w?.uri))
+            .slice(0, 3);
+          if (text && webRefs.length > 0) {
+            const srcLine = webRefs.map(w => `[${(w.title || 'مصدر').slice(0, 42)}](${w.uri})`).join(' · ');
+            text = `${text}\n\nالمصادر: ${srcLine}`;
+          }
           if (text) return { text, modelUsed: model };
         }
 
         // If 401/403 (bad key), fail immediately — don't try other models
         if (res.status === 401 || res.status === 403) {
           throw new Error(`AUTH_ERROR: ${data.error?.message || `HTTP ${res.status}`}`);
+        }
+
+        // If google_search tool caused 400 on a specific model, retry same model cleanly without tool
+        if (res.status === 400 && enableTool) {
+          const retryRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                systemInstruction: { parts: [{ text: sysPrompt }] },
+                contents: [{ role: 'user', parts: userParts }],
+              }),
+            }
+          );
+          if (retryRes.ok) {
+            const retryData = (await retryRes.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+            const retryText = (retryData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+            if (retryText) return { text: retryText, modelUsed: model };
+          }
         }
 
         // Cache 429 / 503 / 404 for 90 seconds so next requests stay instant!
@@ -244,7 +299,7 @@ async function callGeminiWithFailover(
   // Final attempt through official @google/genai SDK on gemini-2.5-flash
   const interaction = await ai.interactions.create({
     model: 'gemini-2.5-flash',
-    system_instruction: LM_AI_SYSTEM_PROMPT,
+    system_instruction: sysPrompt,
     input: fullUserContent,
   });
   if (interaction.output_text?.trim()) {
@@ -295,8 +350,13 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
 
   const config = loadProviderConfig();
   const requestedProvider = pickBestConfiguredProvider(config, req.provider);
+  const sysPrompt = buildDynamicSystemPrompt();
 
-  const attachment = await resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
+  const wantLiveWeb = shouldFetchLiveWeb(prompt, req.source);
+  const [attachment, liveWebCtx] = await Promise.all([
+    resolveAttachmentPayload(req.attachmentUrl, req.attachmentName),
+    wantLiveWeb ? gatherLiveWebContext(prompt) : Promise.resolve(null),
+  ]);
   const effectiveInlineData =
     req.imageBase64 && req.imageMimeType
       ? { mimeType: req.imageMimeType, data: req.imageBase64 }
@@ -310,6 +370,9 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
     fullUserContent = `[سياق محادثة المجموعة الحديثة — أنت عضو مفعّل داخل المجموعة]:\n${req.groupHistoryContext}\n\n[رسالة المستخدم الموجهة إليك]:\n${fullUserContent}`;
   } else if (req.sharedContext) {
     fullUserContent = `[السياق المشارَك معك بإذن المستخدم]:\n${req.sharedContext}\n\n[سؤال المستخدم — أجب مباشرة على سؤاله واستخدم السياق إن كان مرتبطًا به]:\n${fullUserContent}`;
+  }
+  if (liveWebCtx) {
+    fullUserContent = `${liveWebCtx}\n\n${fullUserContent}`;
   }
 
   db.prepare('UPDATE users SET ai_used_today = ai_used_today + 1 WHERE id = ?').run(req.userId);
@@ -343,9 +406,15 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   }
 
   try {
-    // 1. Google Gemini with instant failover + real multimodal vision/PDF support
+    // 1. Google Gemini with instant failover + native Google Search Grounding + multimodal vision!
     if (requestedProvider === 'gemini' && config.geminiApiKey) {
-      const out = await callGeminiWithFailover(config.geminiApiKey, req.model, fullUserContent, effectiveInlineData);
+      const out = await callGeminiWithFailover(
+        config.geminiApiKey,
+        req.model,
+        fullUserContent,
+        effectiveInlineData,
+        wantLiveWeb
+      );
       return {
         ok: true,
         reply: out.text,
@@ -370,7 +439,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         body: JSON.stringify({
           model,
           max_tokens: 1536,
-          system: LM_AI_SYSTEM_PROMPT,
+          system: sysPrompt,
           messages: [{ role: 'user', content: fullUserContent }],
         }),
       });
@@ -399,7 +468,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         body: JSON.stringify({
           model,
           messages: [
-            { role: 'system', content: LM_AI_SYSTEM_PROMPT },
+            { role: 'system', content: sysPrompt },
             { role: 'user', content: fullUserContent },
           ],
         }),
@@ -436,7 +505,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         body: JSON.stringify({
           model,
           messages: [
-            { role: 'system', content: LM_AI_SYSTEM_PROMPT },
+            { role: 'system', content: sysPrompt },
             { role: 'user', content: fullUserContent },
           ],
         }),
@@ -464,7 +533,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
           model,
           stream: false,
           messages: [
-            { role: 'system', content: LM_AI_SYSTEM_PROMPT },
+            { role: 'system', content: sysPrompt },
             { role: 'user', content: fullUserContent },
           ],
         }),
@@ -535,9 +604,14 @@ export async function streamLmAi(
   const config = loadProviderConfig();
   const requestedProvider = pickBestConfiguredProvider(config, req.provider);
 
-  // Real native Gemini SSE streaming when Gemini is active!
+  // Real native Gemini SSE streaming when Gemini is active (with Live Web Grounding!)
   if (requestedProvider === 'gemini' && config.geminiApiKey) {
-    const attachment = await resolveAttachmentPayload(req.attachmentUrl, req.attachmentName);
+    const sysPrompt = buildDynamicSystemPrompt();
+    const wantLiveWeb = shouldFetchLiveWeb(prompt, req.source);
+    const [attachment, liveWebCtx] = await Promise.all([
+      resolveAttachmentPayload(req.attachmentUrl, req.attachmentName),
+      wantLiveWeb ? gatherLiveWebContext(prompt) : Promise.resolve(null),
+    ]);
     const effectiveInlineData =
       req.imageBase64 && req.imageMimeType
         ? { mimeType: req.imageMimeType, data: req.imageBase64 }
@@ -549,6 +623,9 @@ export async function streamLmAi(
     }
     if (req.sharedContext) {
       fullUserContent = `[السياق المشارَك معك بإذن المستخدم]:\n${req.sharedContext}\n\n[سؤال المستخدم — أجب مباشرة على سؤاله واستخدم السياق إن كان مرتبطًا به]:\n${fullUserContent}`;
+    }
+    if (liveWebCtx) {
+      fullUserContent = `${liveWebCtx}\n\n${fullUserContent}`;
     }
 
     const userParts: Array<Record<string, unknown>> = [];
@@ -569,20 +646,25 @@ export async function streamLmAi(
     const auditId = logSecurity(req.userId, req.source || 'ai_tab', 'ALLOWED', 'Streamed');
 
     for (const model of fallbackChain) {
+      const enableTool = wantLiveWeb && (model.startsWith('gemini-2.5') || model.startsWith('gemini-3'));
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 22000);
         try {
+          const streamBody: Record<string, unknown> = {
+            systemInstruction: { parts: [{ text: sysPrompt }] },
+            contents: [{ role: 'user', parts: userParts }],
+          };
+          if (enableTool) {
+            streamBody.tools = [{ google_search: {} }];
+          }
           const res = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(config.geminiApiKey)}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               signal: controller.signal,
-              body: JSON.stringify({
-                systemInstruction: { parts: [{ text: LM_AI_SYSTEM_PROMPT }] },
-                contents: [{ role: 'user', parts: userParts }],
-              }),
+              body: JSON.stringify(streamBody),
             }
           );
 

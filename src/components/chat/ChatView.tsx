@@ -29,6 +29,9 @@ import {
   Pencil,
   Trash2,
   Palette,
+  Play,
+  ExternalLink,
+  FileText,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile, VoiceCallLogItem } from '../../types';
@@ -55,6 +58,8 @@ interface ChatViewProps {
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
   onOpenHashtag?: (tag: string) => void;
+  onOpenVideo?: (videoId: string) => void;
+  onOpenPost?: (postId: string) => void;
   onStartCall?: (req: CallLaunchRequest) => void;
 }
 
@@ -78,13 +83,67 @@ const WORLD_LANGUAGES = [
 ];
 
 const CHAT_WALLPAPERS = [
-  { id: 'lm-wp-telegram', label: 'تيليجرام كلاسيك', labelEn: 'Telegram Classic', swatch: '#14263D', accent: '#38BDF8' },
-  { id: 'lm-wp-whatsapp', label: 'واتساب الداكن', labelEn: 'WhatsApp Dark', swatch: '#0E2024', accent: '#34D399' },
-  { id: 'lm-wp-aurora', label: 'أورورا البنفسجي', labelEn: 'Aurora Violet', swatch: '#22153E', accent: '#C084FC' },
-  { id: 'lm-wp-emerald', label: 'الزمرد الليلي', labelEn: 'Midnight Emerald', swatch: '#0E2924', accent: '#2DD4BF' },
-  { id: 'lm-wp-sunset', label: 'غروب دافئ', labelEn: 'Warm Sunset', swatch: '#291521', accent: '#FB7185' },
-  { id: 'lm-wp-obsidian', label: 'أوبسيديان صافي', labelEn: 'Obsidian Matte', swatch: '#14171F', accent: '#94A3B8' },
+  { id: 'lm-wp-space', label: 'فضاء LM', labelEn: 'LM Cosmic Space', swatch: '#0B0E15', accent: '#CBD5E1' },
+  { id: 'lm-wp-orbit', label: 'مدار عميق', labelEn: 'Deep Orbit', swatch: '#090B10', accent: '#94A3B8' },
+  { id: 'lm-wp-lunar', label: 'سكون القمر', labelEn: 'Lunar Calm', swatch: '#101218', accent: '#64748B' },
 ] as const;
+
+type ChatRichEmbed =
+  | { kind: 'pulse'; id: string; title: string; url: string; thumbUrl: string | null }
+  | { kind: 'post'; id: string; title: string; url: string; thumbUrl: string | null }
+  | { kind: 'link'; url: string; host: string; path: string };
+
+function extractChatRichEmbed(msg: ChatMessageItem): ChatRichEmbed | null {
+  const text = (msg.content || '').trim();
+  const pulseMatch = text.match(/(?:https?:\/\/[^\s]+)?\/pulse\/([a-zA-Z0-9_-]+)/);
+  if (pulseMatch) {
+    const cleanTitle = text
+      .replace(/https?:\/\/[^\s]+/g, '')
+      .replace(/^شارك نبض:\s*/i, '')
+      .replace(/^فيديو نبض:\s*/i, '')
+      .trim();
+    return {
+      kind: 'pulse',
+      id: pulseMatch[1],
+      title: cleanTitle || 'فيديو نبض على LM',
+      url: pulseMatch[0],
+      thumbUrl: msg.mediaUrl || null,
+    };
+  }
+
+  const postMatch = text.match(/(?:https?:\/\/[^\s]+)?\/post\/([a-zA-Z0-9_-]+)/);
+  if (postMatch) {
+    const cleanTitle = text
+      .replace(/https?:\/\/[^\s]+/g, '')
+      .replace(/^منشور:\s*/i, '')
+      .trim();
+    return {
+      kind: 'post',
+      id: postMatch[1],
+      title: cleanTitle || 'منشور على مجتمع LM',
+      url: postMatch[0],
+      thumbUrl: msg.mediaUrl || null,
+    };
+  }
+
+  const urlMatch = text.match(/\bhttps?:\/\/[^\s<>"{}|\\^`[\]]+/i);
+  if (urlMatch) {
+    const rawUrl = urlMatch[0].replace(/[.,!?;:)\]]+$/, '');
+    try {
+      const parsed = new URL(rawUrl);
+      const pathStr = `${parsed.pathname}${parsed.search}`.replace(/\/$/, '');
+      return {
+        kind: 'link',
+        url: rawUrl,
+        host: parsed.hostname.replace(/^www\./, ''),
+        path: pathStr && pathStr !== '/' ? pathStr : parsed.hostname,
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 function isMostlyLatin(text: string): boolean {
   const letters = text.replace(/[^a-zA-Z\u0600-\u06FF]/g, '');
@@ -102,6 +161,8 @@ export function ChatView({
   onOpenProfile,
   onOpenProfileByUsername,
   onOpenHashtag,
+  onOpenVideo,
+  onOpenPost,
   onStartCall,
 }: ChatViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded, setChatInThread, setBottomDockHidden } = useLayout();
@@ -169,7 +230,7 @@ export function ChatView({
     [activeConvId]
   );
 
-  // Authentic Telegram Wallpaper Preset (Persisted across refresh)
+  // Signature LM Cosmic Space Wallpaper Preset (Persisted across refresh)
   const [chatWallpaper, setChatWallpaperState] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('lm_chat_wallpaper');
@@ -177,7 +238,7 @@ export function ChatView({
     } catch {
       // ignore
     }
-    return 'lm-wp-telegram';
+    return 'lm-wp-space';
   });
   const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
 
@@ -1449,7 +1510,7 @@ export function ChatView({
             </header>
           ) : (
             <header className="pointer-events-none absolute top-3 inset-x-3 md:inset-x-5 z-20 flex items-center justify-between gap-2">
-              <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#17212B]/88 backdrop-blur-xl border border-[#94B3D6]/[0.16] min-w-0 shadow-[0_8px_24px_rgba(4,10,18,0.45)]">
+              <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#121620]/78 backdrop-blur-xl min-w-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -1502,8 +1563,8 @@ export function ChatView({
                 </button>
               </div>
 
-              {/* Clean Header Controls: Wallpaper Picker + In-Chat Search + Voice Call */}
-              <div className="pointer-events-auto relative flex items-center gap-1 p-1 rounded-full bg-[#17212B]/92 border border-[#94B3D6]/[0.16]">
+              {/* Borderless Floating Header Controls: Cosmic Space Theme + Search + Voice Call */}
+              <div className="pointer-events-auto relative flex items-center gap-1 p-1 rounded-full bg-[#121620]/78 backdrop-blur-xl">
                 <button
                   type="button"
                   onClick={() => setWallpaperMenuOpen(v => !v)}
@@ -1736,29 +1797,36 @@ export function ChatView({
                     )
                   )}
 
-                  {/* Clean Telegram Message Bubble (Tap/Long-Press/Right-Click -> Telegram Menu · Double-Tap -> Quick ❤️ · Swipe -> Reply!) */}
+                  {/* Clean Message Bubble + Rich Interactive Pulse Video Cards, Post Cards & Colored Link Previews */}
                   <div className="relative max-w-[84%] sm:max-w-[72%] min-w-0">
-                    {/* Circular Video Note */}
-                    {msg.msgType === 'video_note' && msg.mediaUrl ? (
-                      <div
-                        onClick={e => {
-                          e.stopPropagation();
-                          setExpandedVideoNote(expandedVideoNote === msg.id ? null : msg.id);
-                        }}
-                        className={`rounded-full overflow-hidden border border-white/[0.16] cursor-pointer transition-all duration-200 ${
-                          expandedVideoNote === msg.id ? 'w-60 h-60' : 'w-44 h-44'
-                        }`}
-                      >
-                        <video
-                          src={msg.mediaUrl}
-                          autoPlay
-                          loop
-                          playsInline
-                          muted={expandedVideoNote !== msg.id}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ) : (() => {
+                    {(() => {
+                      const richEmbed = extractChatRichEmbed(msg);
+                      const isSharedPulseCard = richEmbed?.kind === 'pulse';
+                      const isCircularVideoNote = msg.msgType === 'video_note' && msg.mediaUrl && !isSharedPulseCard;
+
+                      if (isCircularVideoNote) {
+                        return (
+                          <div
+                            onClick={e => {
+                              e.stopPropagation();
+                              setExpandedVideoNote(expandedVideoNote === msg.id ? null : msg.id);
+                            }}
+                            className={`rounded-full overflow-hidden border border-white/[0.16] cursor-pointer transition-all duration-200 ${
+                              expandedVideoNote === msg.id ? 'w-60 h-60' : 'w-44 h-44'
+                            }`}
+                          >
+                            <video
+                              src={msg.mediaUrl!}
+                              autoPlay
+                              loop
+                              playsInline
+                              muted={expandedVideoNote !== msg.id}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        );
+                      }
+
                       const imgUrls = msg.msgType === 'image' ? parseMediaUrls(msg.mediaUrl) : [];
                       const trimmedText = (msg.content || '').trim();
                       const isPurePhoto =
@@ -1767,6 +1835,7 @@ export function ChatView({
                         !translated &&
                         !msg.replyText &&
                         !msg.isSpoiler;
+                      const thumbIsVideo = Boolean(richEmbed && 'thumbUrl' in richEmbed && richEmbed.thumbUrl && /\.(mp4|webm|mov)(\?|$)/i.test(richEmbed.thumbUrl));
 
                       return (
                       <div
@@ -1867,6 +1936,58 @@ export function ChatView({
                           >
                             محتوى مخفي
                           </button>
+                        ) : isSharedPulseCard && richEmbed ? (
+                          /* Interactive Shared Pulse Video Card (Tap -> Jumps directly to that Pulse Video!) */
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              onOpenVideo?.(richEmbed.id);
+                            }}
+                            className="w-[238px] sm:w-[272px] text-start rounded-2xl overflow-hidden bg-black/45 border border-white/[0.12] hover:border-[#25F4EE]/60 transition-colors cursor-pointer group block my-0.5"
+                          >
+                            <div className="relative w-full aspect-[16/10] bg-[#0D0F16] overflow-hidden flex items-center justify-center">
+                              {richEmbed.thumbUrl ? (
+                                thumbIsVideo ? (
+                                  <video
+                                    src={richEmbed.thumbUrl}
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  />
+                                ) : (
+                                  <img
+                                    src={richEmbed.thumbUrl}
+                                    alt=""
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  />
+                                )
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-br from-[#191C26] to-[#0B0E15] flex items-center justify-center">
+                                  <LmBrandMark size={38} />
+                                </div>
+                              )}
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-transparent" />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="w-12 h-12 rounded-full bg-black/65 backdrop-blur-md border border-white/30 text-white flex items-center justify-center group-hover:scale-110 transition-transform">
+                                  <Play className="w-5 h-5 fill-current ms-0.5" />
+                                </span>
+                              </div>
+                              <span className="absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-[#FE2C55] text-[10px] font-bold text-white">
+                                فيديو نبض
+                              </span>
+                            </div>
+                            <div className="p-2.5 space-y-1">
+                              <div className="text-[13px] font-semibold text-white line-clamp-2 leading-snug">
+                                {richEmbed.title}
+                              </div>
+                              <div className="text-[11px] font-medium text-[#38BDF8] flex items-center gap-1">
+                                <Play className="w-3 h-3 fill-current" />
+                                <span>اضغط لمشاهدة الفيديو في نبض</span>
+                              </div>
+                            </div>
+                          </button>
                         ) : (
                           <div>
                             {isAi && !translated ? (
@@ -1884,6 +2005,62 @@ export function ChatView({
                                 onHashtagClick={onOpenHashtag}
                               />
                             )}
+
+                            {/* Interactive Shared LM Post Card */}
+                            {richEmbed?.kind === 'post' && (
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  onOpenPost?.(richEmbed.id);
+                                }}
+                                className={`mt-2 w-full min-w-[210px] text-start rounded-xl overflow-hidden border-s-[3px] border-[#25F4EE] p-2.5 transition-colors cursor-pointer block ${
+                                  isMine ? 'bg-black/22 hover:bg-black/32' : 'bg-white/[0.06] hover:bg-white/[0.11]'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  {richEmbed.thumbUrl && !thumbIsVideo && (
+                                    <img
+                                      src={richEmbed.thumbUrl}
+                                      alt=""
+                                      className="w-12 h-12 rounded-lg object-cover shrink-0"
+                                    />
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[11px] font-bold text-[#25F4EE] flex items-center gap-1">
+                                      <FileText className="w-3 h-3 shrink-0" />
+                                      <span>منشور على LM</span>
+                                    </div>
+                                    <div className="text-[12.5px] font-semibold text-white line-clamp-2 mt-0.5">
+                                      {richEmbed.title}
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
+                            )}
+
+                            {/* Sleek Embedded External Link Preview Card */}
+                            {richEmbed?.kind === 'link' && (
+                              <a
+                                href={richEmbed.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                dir="ltr"
+                                className={`mt-2 w-full min-w-[205px] text-left rounded-xl border-s-[3px] border-[#38BDF8] px-3 py-2 flex items-center justify-between gap-2.5 transition-colors ${
+                                  isMine ? 'bg-black/20 hover:bg-black/30' : 'bg-white/[0.06] hover:bg-white/[0.11]'
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[11.5px] font-bold text-[#7DD3FC] truncate">{richEmbed.host}</div>
+                                  <div className="text-[11px] text-white/80 truncate">{richEmbed.path}</div>
+                                </div>
+                                <span className="w-7 h-7 rounded-lg bg-[#38BDF8]/18 text-[#7DD3FC] flex items-center justify-center shrink-0">
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </span>
+                              </a>
+                            )}
+
                             {translated && (
                               <div
                                 className={`mt-1.5 pt-1.5 border-t flex items-center justify-between gap-2 text-[10.5px] ${
@@ -1913,7 +2090,7 @@ export function ChatView({
                           </div>
                         )}
 
-                        {!isPurePhoto && showAutoTranslateChip && (
+                        {!isPurePhoto && showAutoTranslateChip && !isSharedPulseCard && (
                           <button
                             type="button"
                             onClick={e => {

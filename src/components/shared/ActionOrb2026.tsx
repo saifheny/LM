@@ -178,16 +178,16 @@ export function QuickRemovePill({
         }
       }}
       title={confirm ? 'اضغط مجددًا للتأكيد' : label}
-      className={`inline-flex items-center gap-1 rounded-full transition-all cursor-pointer ${
+      className={`inline-flex items-center gap-1.5 rounded-full transition-all cursor-pointer py-0.5 ${
         confirm
-          ? 'px-2 py-0.5 bg-[#EF4444]/20 border border-[#EF4444]/40 text-[#FCA5A5] text-[10.5px] font-semibold'
+          ? 'px-2.5 py-1 bg-[#EF4444]/20 border border-[#EF4444]/40 text-[#FCA5A5] text-[12px] font-semibold'
           : iconOnly
-          ? 'w-6 h-6 justify-center hover:bg-white/[0.08] text-[#8E8E93] hover:text-[#FB7185]'
-          : 'text-[11px] text-[#8E8E93] hover:text-[#FB7185]'
+          ? 'w-7 h-7 justify-center hover:bg-white/[0.08] text-[#9E9EA8] hover:text-[#FB7185]'
+          : 'text-[12.5px] font-medium text-[#9E9EA8] hover:text-[#FB7185]'
       }`}
     >
-      <RemoveCrossIcon className="w-3.5 h-3.5 shrink-0" />
-      {(!iconOnly || confirm) && <span>{confirm ? 'تأكيد؟' : label}</span>}
+      <RemoveCrossIcon className="w-4 h-4 shrink-0" />
+      {(!iconOnly || confirm) && <span>{confirm ? 'تأكيد الحذف؟' : label}</span>}
     </button>
   );
 }

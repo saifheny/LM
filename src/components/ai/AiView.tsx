@@ -692,7 +692,7 @@ export function AiView({ user, lang }: AiViewProps) {
               setBrowsingCompany(null);
               setHistoryOpen(false);
             }}
-            className="h-10 px-3.5 rounded-full bg-[#14141A]/90 backdrop-blur-xl border border-white/[0.11] hover:border-white/25 text-xs font-medium text-[#F2F2F5] flex items-center gap-2 cursor-pointer shadow-lg transition-colors"
+            className="h-10 px-3.5 rounded-full bg-[#181922]/78 hover:bg-[#222430]/90 backdrop-blur-xl text-xs font-medium text-[#F2F2F5] flex items-center gap-2 cursor-pointer transition-colors"
           >
             <span className="flex items-center justify-center shrink-0">{activeCompany.renderLogo(17)}</span>
             <span className="font-semibold text-white">{shortenModelLabel(activeModel.label)}</span>
@@ -866,8 +866,8 @@ export function AiView({ user, lang }: AiViewProps) {
               loadSessions();
             }}
             title="المحادثات السابقة"
-            className={`h-9 px-3 rounded-full bg-[#14141A]/90 backdrop-blur-xl border text-xs flex items-center gap-1.5 cursor-pointer shadow-lg transition-colors ${
-              historyOpen ? 'border-white/35 text-white' : 'border-white/[0.1] text-[#D4D4D8] hover:text-white'
+            className={`h-9 px-3 rounded-full bg-[#181922]/78 hover:bg-[#222430]/90 backdrop-blur-xl text-xs flex items-center gap-1.5 cursor-pointer transition-colors ${
+              historyOpen ? 'text-white bg-white/[0.14]' : 'text-[#D4D4D8] hover:text-white'
             }`}
           >
             <History className="w-3.5 h-3.5" />
@@ -881,7 +881,7 @@ export function AiView({ user, lang }: AiViewProps) {
                 setTurns([]);
                 setSessionId(null);
               }}
-              className="h-9 px-3 rounded-full bg-[#14141A]/90 backdrop-blur-xl border border-white/[0.1] hover:border-white/25 text-xs text-[#D4D4D8] hover:text-white flex items-center gap-1.5 cursor-pointer shadow-lg"
+              className="h-9 px-3 rounded-full bg-[#181922]/78 hover:bg-[#222430]/90 backdrop-blur-xl text-xs text-[#D4D4D8] hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{t(lang, 'ai_new_chat')}</span>

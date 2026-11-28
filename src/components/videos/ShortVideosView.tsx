@@ -350,6 +350,8 @@ export function ShortVideosView({
     setCameraError('');
   }, [stopStudioCamera, localPreviewUrl]);
 
+  const [studioCameraIsWide, setStudioCameraIsWide] = useState(false);
+
   useEffect(() => {
     if (!uploadOpen || studioStep !== 'capture') {
       stopStudioCamera();
@@ -358,6 +360,7 @@ export function ShortVideosView({
     let cancelled = false;
     setCameraError('');
     setCameraReady(false);
+    setStudioCameraIsWide(false);
 
     async function bootCamera() {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -365,16 +368,30 @@ export function ShortVideosView({
         return;
       }
       try {
+        // Request natural un-cropped camera sensor framing (NEVER force portrait sensor crop that zooms into the face!)
         const stream = await navigator.mediaDevices.getUserMedia({
-          video:
-            studioOrientation === 'landscape'
-              ? { facingMode: { ideal: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }
-              : { facingMode: { ideal: cameraFacing }, width: { ideal: 1080 }, height: { ideal: 1920 } },
+          video: {
+            facingMode: { ideal: cameraFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
           audio: true,
         });
         if (cancelled) {
           stream.getTracks().forEach(tr => tr.stop());
           return;
+        }
+        // Reset optical/digital zoom to minimum wide-angle (1x) if supported by the mobile camera hardware
+        try {
+          const vTrack = stream.getVideoTracks()[0];
+          const caps = vTrack?.getCapabilities?.() as { zoom?: { min?: number } } | undefined;
+          if (vTrack && caps?.zoom && typeof caps.zoom.min === 'number') {
+            await vTrack.applyConstraints({
+              advanced: [{ zoom: caps.zoom.min } as MediaTrackConstraintSet],
+            });
+          }
+        } catch {
+          // ignore unsupported zoom capability
         }
         studioStreamRef.current = stream;
         if (studioVideoPreviewRef.current) {
@@ -394,7 +411,7 @@ export function ShortVideosView({
       cancelled = true;
       stopStudioCamera();
     };
-  }, [uploadOpen, studioStep, cameraFacing, studioOrientation, lang, stopStudioCamera]);
+  }, [uploadOpen, studioStep, cameraFacing, lang, stopStudioCamera]);
 
   // Edit Own Pulse Comment Inline
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -731,11 +748,12 @@ export function ShortVideosView({
     if (!shareVideo) return;
     setSentToIds(prev => ({ ...prev, [conv.id]: true }));
     trackPulseShare(shareVideo.id, 'lm_chat');
+    const deepUrl = `${window.location.origin}/pulse/${shareVideo.id}`;
     await apiPost(`/api/conversations/${conv.id}/messages`, {
       senderId: user.id,
-      content: `شارك نبض: ${shareVideo.title.slice(0, 70)}`,
+      content: `${shareVideo.title.slice(0, 90)}\n${deepUrl}`,
       msgType: 'video_note',
-      mediaUrl: shareVideo.videoUrl || '/uploads/seed/reel1.mp4',
+      mediaUrl: shareVideo.posterUrl || shareVideo.videoUrl || '/uploads/seed/reel1.mp4',
     });
     showToast(`تم الإرسال إلى ${conv.title}`);
   }
@@ -1249,22 +1267,26 @@ export function ShortVideosView({
                         : 'bottom-[calc(104px+env(safe-area-inset-bottom))] start-4 end-20 items-start text-start'
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white flex-wrap justify-start">
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-white max-w-full min-w-0">
                       <button
                         type="button"
                         onClick={() => onOpenProfile?.(v.userId)}
-                        className="inline-flex items-center gap-2 hover:underline cursor-pointer"
+                        className="inline-flex items-center gap-2 hover:underline cursor-pointer min-w-0 max-w-[68%]"
                       >
-                        <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={30} />
-                        <span>{v.displayName}</span>
+                        <span className="shrink-0">
+                          <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={30} />
+                        </span>
+                        <span className="truncate max-w-[138px] sm:max-w-[175px]">{v.displayName}</span>
                       </button>
-                      {v.verified && <VerifiedIcon />}
-                      <span className="text-[11.5px] font-normal text-white/70 font-mono-num">@{v.username}</span>
+                      {v.verified && <span className="shrink-0"><VerifiedIcon /></span>}
+                      <span className="text-[11.5px] font-normal text-white/70 font-mono-num truncate max-w-[88px] shrink-0">
+                        @{v.username}
+                      </span>
                       {v.userId !== user.id && !v.isFollowingAuthor && (
                         <button
                           type="button"
                           onClick={() => followCreator(v.userId)}
-                          className="ms-0.5 px-2.5 py-0.5 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors"
+                          className="ms-0.5 px-2.5 py-0.5 rounded-full bg-[#FE2C55] hover:bg-[#EA284E] text-[11px] font-bold text-white inline-flex items-center gap-0.5 cursor-pointer transition-colors shrink-0"
                         >
                           <Plus className="w-3 h-3" strokeWidth={2.8} />
                           <span>متابعة</span>
@@ -1273,44 +1295,64 @@ export function ShortVideosView({
                     </div>
 
                     {v.title && (
-                      <div className="text-[13.5px] text-white/95 leading-snug max-w-full">
+                      <div className="text-[13.5px] text-white/95 leading-snug max-w-full break-words">
                         {isLong && !isExpanded ? (
-                          <>
-                            <span>{v.title.slice(0, 74)}... </span>
+                          <div className="inline">
+                            <RichMessageText
+                              text={`${v.title.slice(0, 74)}...`}
+                              onMentionClick={onOpenProfileByUsername}
+                              onHashtagClick={onOpenHashtag}
+                            />{' '}
                             <button
                               type="button"
                               onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: true }))}
-                              className="text-white/80 hover:text-white font-semibold cursor-pointer"
+                              className="text-white/85 hover:text-white font-semibold cursor-pointer inline"
                             >
                               المزيد
                             </button>
-                          </>
+                          </div>
                         ) : (
-                          <>
-                            <span>{v.title}</span>
+                          <div className="inline">
+                            <RichMessageText
+                              text={v.title}
+                              onMentionClick={onOpenProfileByUsername}
+                              onHashtagClick={onOpenHashtag}
+                            />
                             {isLong && (
                               <button
                                 type="button"
                                 onClick={() => setExpandedCaptions(prev => ({ ...prev, [v.id]: false }))}
-                                className="ms-1.5 text-white/80 hover:text-white font-semibold cursor-pointer"
+                                className="ms-1.5 text-white/85 hover:text-white font-semibold cursor-pointer inline"
                               >
                                 أقل
                               </button>
                             )}
-                          </>
+                          </div>
                         )}
                       </div>
                     )}
 
-                    {v.tags && (isExpanded || !isLong) && (
-                      <div className="text-xs text-white/80 max-w-full">
-                        <RichMessageText
-                          text={v.tags}
-                          onMentionClick={onOpenProfileByUsername}
-                          onHashtagClick={onOpenHashtag}
-                        />
-                      </div>
-                    )}
+                    {/* Deduplicated Extra Hashtags (NEVER repeat hashtags already written inside v.title!) */}
+                    {(() => {
+                      if (!v.tags || (!isExpanded && isLong)) return null;
+                      const titleTags = new Set(
+                        (v.title.match(/#[\p{L}\p{N}_]+/gu) || []).map(tag => tag.toLowerCase())
+                      );
+                      const extraTokens = v.tags
+                        .trim()
+                        .split(/\s+/)
+                        .filter(tok => tok && !titleTags.has(tok.toLowerCase()));
+                      if (extraTokens.length === 0) return null;
+                      return (
+                        <div className="text-xs text-[#25F4EE] max-w-full">
+                          <RichMessageText
+                            text={extraTokens.join(' ')}
+                            onMentionClick={onOpenProfileByUsername}
+                            onHashtagClick={onOpenHashtag}
+                          />
+                        </div>
+                      );
+                    })()}
 
                     <div className="flex items-center gap-2 text-xs text-white/85 pt-0.5 max-w-full justify-start">
                       <Music2 className="w-3.5 h-3.5 shrink-0" />
@@ -1554,10 +1596,7 @@ export function ShortVideosView({
                   }}
                   className="flex flex-col items-center gap-1.5 shrink-0 w-14 cursor-pointer"
                 >
-                  <div
-                    style={{ backgroundColor: p.bg }}
-                    className="w-11 h-11 rounded-full flex items-center justify-center border border-white/[0.08]"
-                  >
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center overflow-hidden shadow-md">
                     {SharePlatformIcons[p.id]}
                   </div>
                   <span className="text-[10.5px] text-[#A1A1AA] truncate w-full text-center">{p.label}</span>
@@ -1814,7 +1853,7 @@ export function ShortVideosView({
                           </div>
                         )}
 
-                        <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                        <div className="mt-2 flex items-center gap-4 flex-wrap">
                           <button
                             type="button"
                             onClick={() => {
@@ -1826,9 +1865,9 @@ export function ShortVideosView({
                               });
                               if (c.isAi) setAiMode(true);
                             }}
-                            className="text-[11px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
+                            className="text-[12.5px] font-medium text-[#A6A7B2] hover:text-white flex items-center gap-1.5 cursor-pointer py-0.5"
                           >
-                            <CornerDownLeft className="w-3 h-3" />
+                            <CornerDownLeft className="w-4 h-4" />
                             <span>{c.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
                           </button>
 
@@ -1838,19 +1877,19 @@ export function ShortVideosView({
                                 type="button"
                                 disabled={translatingCommentId === c.id}
                                 onClick={() => setCommentLangMenuId(cur => (cur === c.id ? null : c.id))}
-                                className="text-[11px] text-[#7A7A85] hover:text-[#34D399] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                className="text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 py-0.5"
                               >
-                                <Languages className="w-3 h-3" />
+                                <Languages className="w-4 h-4" />
                                 <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
                               </button>
                               {commentLangMenuId === c.id && (
-                                <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
                                   {PULSE_TRANSLATE_LANGS.map(lg => (
                                     <button
                                       key={lg.code}
                                       type="button"
                                       onClick={() => translatePulseComment(c.id, c.content, lg.code)}
-                                      className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
+                                      className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
                                     >
                                       {lg.label}
                                     </button>
@@ -1867,9 +1906,9 @@ export function ShortVideosView({
                                 setEditingCommentId(c.id);
                                 setEditingCommentText(c.content);
                               }}
-                              className="text-[11px] text-[#7A7A85] hover:text-[#FBBF24] flex items-center gap-1 cursor-pointer transition-colors"
+                              className="text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#FBBF24] flex items-center gap-1.5 cursor-pointer transition-colors py-0.5"
                             >
-                              <StylusEditIcon className="w-3 h-3" />
+                              <StylusEditIcon className="w-3.5 h-3.5" />
                               <span>{t(lang, 'edit')}</span>
                             </button>
                           )}
@@ -1886,9 +1925,9 @@ export function ShortVideosView({
                                   label: lang === 'en' ? 'this comment' : 'هذا التعليق',
                                 })
                               }
-                              className="text-[11px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
+                              className="text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#FB7185] flex items-center gap-1.5 cursor-pointer py-0.5"
                             >
-                              <Flag className="w-2.5 h-2.5" />
+                              <Flag className="w-3.5 h-3.5" />
                               <span>{t(lang, 'report')}</span>
                             </button>
                           )}
@@ -2038,7 +2077,7 @@ export function ShortVideosView({
                                 </div>
                               )}
 
-                              <div className="mt-1 flex items-center gap-3 flex-wrap">
+                              <div className="mt-1.5 flex items-center gap-4 flex-wrap">
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2050,9 +2089,9 @@ export function ShortVideosView({
                                     });
                                     if (rep.isAi) setAiMode(true);
                                   }}
-                                  className="text-[10.5px] text-[#7A7A85] hover:text-white flex items-center gap-1 cursor-pointer"
+                                  className="text-[12px] font-medium text-[#A6A7B2] hover:text-white flex items-center gap-1.5 cursor-pointer py-0.5"
                                 >
-                                  <CornerDownLeft className="w-2.5 h-2.5" />
+                                  <CornerDownLeft className="w-3.5 h-3.5" />
                                   <span>{rep.isAi ? (lang === 'en' ? 'Reply to AI' : 'الرد على AI') : t(lang, 'reply')}</span>
                                 </button>
 
@@ -2062,19 +2101,19 @@ export function ShortVideosView({
                                       type="button"
                                       disabled={translatingCommentId === rep.id}
                                       onClick={() => setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))}
-                                      className="text-[10.5px] text-[#7A7A85] hover:text-[#34D399] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                      className="text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 py-0.5"
                                     >
-                                      <Languages className="w-2.5 h-2.5" />
+                                      <Languages className="w-3.5 h-3.5" />
                                       <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
                                     </button>
                                     {commentLangMenuId === rep.id && (
-                                      <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[170px]">
+                                      <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
                                         {PULSE_TRANSLATE_LANGS.map(lg => (
                                           <button
                                             key={lg.code}
                                             type="button"
                                             onClick={() => translatePulseComment(rep.id, rep.content, lg.code)}
-                                            className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.15] text-[10.5px] text-white cursor-pointer"
+                                            className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
                                           >
                                             {lg.label}
                                           </button>
@@ -2091,9 +2130,9 @@ export function ShortVideosView({
                                       setEditingCommentId(rep.id);
                                       setEditingCommentText(rep.content);
                                     }}
-                                    className="text-[10.5px] text-[#7A7A85] hover:text-[#FBBF24] flex items-center gap-1 cursor-pointer transition-colors"
+                                    className="text-[12px] font-medium text-[#A6A7B2] hover:text-[#FBBF24] flex items-center gap-1.5 cursor-pointer transition-colors py-0.5"
                                   >
-                                    <StylusEditIcon className="w-2.5 h-2.5" />
+                                    <StylusEditIcon className="w-3.5 h-3.5" />
                                     <span>{t(lang, 'edit')}</span>
                                   </button>
                                 )}
@@ -2110,9 +2149,9 @@ export function ShortVideosView({
                                         label: lang === 'en' ? 'this reply' : 'هذا الرد',
                                       })
                                     }
-                                    className="text-[10.5px] text-[#7A7A85] hover:text-[#FB7185] flex items-center gap-1 cursor-pointer"
+                                    className="text-[12px] font-medium text-[#A6A7B2] hover:text-[#FB7185] flex items-center gap-1.5 cursor-pointer py-0.5"
                                   >
-                                    <Flag className="w-2.5 h-2.5" />
+                                    <Flag className="w-3.5 h-3.5" />
                                     <span>{t(lang, 'report')}</span>
                                   </button>
                                 )}
@@ -2228,13 +2267,20 @@ export function ShortVideosView({
           {studioStep === 'capture' ? (
             /* STEP 1: Full-Screen TikTok Camera + Gallery Studio */
             <div className="relative flex-1 w-full max-w-[540px] mx-auto bg-black flex flex-col overflow-hidden">
-              {/* Live Camera Feed (Adapts seamlessly between Portrait 9:16 & Landscape 16:9!) */}
+              {/* Live Camera Feed: Natural Un-Zoomed Mobile/Laptop Framing (NEVER crops/zooms onto the user's face!) */}
               <video
                 ref={studioVideoPreviewRef}
                 autoPlay
                 muted
                 playsInline
-                className={`absolute inset-0 w-full h-full ${studioOrientation === 'landscape' ? 'object-contain bg-black' : 'object-cover'} ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''} ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
+                onLoadedMetadata={e => {
+                  const vw = e.currentTarget.videoWidth;
+                  const vh = e.currentTarget.videoHeight;
+                  setStudioCameraIsWide(vw > vh);
+                }}
+                className={`absolute inset-0 w-full h-full bg-black ${
+                  studioOrientation === 'landscape' || studioCameraIsWide ? 'object-contain' : 'object-cover'
+                } ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''} ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
               />
 
               {/* Clean Fallback Canvas if Camera isn't active */}
@@ -2390,10 +2436,10 @@ export function ShortVideosView({
           ) : (
             /* STEP 2: Full-Screen TikTok Post Screen (Unified Caption, NO Boxes, NO Character Limit Badges!) */
             <form onSubmit={publishPulse} className="flex-1 w-full max-w-[640px] mx-auto bg-[#121212] flex flex-col">
-              {/* Top Header */}
+              {/* Floating Borderless Top Header */}
               <div
                 style={{ paddingTop: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
-                className="px-4 pb-3 border-b border-white/[0.08] flex items-center justify-between shrink-0"
+                className="px-4 pb-3 flex items-center justify-between shrink-0"
               >
                 <button
                   type="button"
@@ -2414,17 +2460,69 @@ export function ShortVideosView({
                 </button>
               </div>
 
-              {/* Main Content: TikTok Split Preview + Unified Free-Form Caption */}
-              <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+              {/* Main Content: TikTok Split Preview + Live Hashtag-Highlighted Caption Composer */}
+              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
                 <div className="flex items-start gap-3.5 pb-5 border-b border-white/[0.08]">
-                  {/* Unified Caption Textarea (Serves as Title & Description — NO forced separate boxes or counters!) */}
-                  <textarea
-                    rows={5}
-                    value={newTitle}
-                    onChange={e => setNewTitle(e.target.value)}
-                    placeholder="اكتب وصفًا أو عنوانًا للفيديو... يمكنك إضافة #هاشتاج بحرية"
-                    className="flex-1 bg-transparent text-[15px] text-[#F1F1F2] placeholder:text-[#71717A] leading-relaxed outline-none resize-none"
-                  />
+                  {/* Live Colored #Hashtag & @Mention Highlighting Editor (Highlights #tags LIVE in #25F4EE as you type!) */}
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <div className="relative min-h-[126px] w-full">
+                      {/* Synchronized Visual Highlight Underlay */}
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none whitespace-pre-wrap break-words text-[15px] leading-relaxed font-normal text-[#F1F1F2] min-h-[126px]"
+                      >
+                        {newTitle ? (
+                          <>
+                            {newTitle.split(/(#[\p{L}\p{N}_]+|@[\p{L}\p{N}_]+)/gu).map((part, idx) =>
+                              part.startsWith('#') ? (
+                                <span key={idx} className="text-[#25F4EE] font-semibold">
+                                  {part}
+                                </span>
+                              ) : part.startsWith('@') ? (
+                                <span key={idx} className="text-[#FBBF24] font-semibold">
+                                  {part}
+                                </span>
+                              ) : (
+                                <React.Fragment key={idx}>{part}</React.Fragment>
+                              )
+                            )}
+                            {newTitle.endsWith('\n') ? '\u200B' : ''}
+                          </>
+                        ) : (
+                          <span className="text-[#71717A]">
+                            اكتب وصفًا أو عنوانًا للفيديو... اكتب #هاشتاج وسيتلوّن تلقائيًا
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Transparent-Ink Interactive Textarea Directly Over Underlay */}
+                      <textarea
+                        rows={5}
+                        value={newTitle}
+                        onChange={e => setNewTitle(e.target.value)}
+                        aria-label="وصف الفيديو والهاشتاجات"
+                        className="absolute inset-0 w-full h-full bg-transparent text-[15px] leading-relaxed font-normal text-transparent caret-white selection:bg-[#25F4EE]/30 outline-none resize-none overflow-hidden"
+                      />
+                    </div>
+
+                    {/* Live Detected Hashtag Chips Preview */}
+                    {(() => {
+                      const liveTags = Array.from(new Set(newTitle.match(/#[\p{L}\p{N}_]+/gu) || []));
+                      if (liveTags.length === 0) return null;
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                          {liveTags.map(ht => (
+                            <span
+                              key={ht}
+                              className="px-2 py-0.5 rounded-full bg-[#25F4EE]/15 text-[#25F4EE] text-[11px] font-semibold"
+                            >
+                              {ht}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
 
                   {/* Adaptive Video Cover Thumbnail (Matches Portrait or Landscape!) */}
                   <div

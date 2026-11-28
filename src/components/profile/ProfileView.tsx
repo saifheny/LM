@@ -29,6 +29,7 @@ import { ActionMenuOrb } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton } from '../shared/ModalChrome2026';
 import { FacebookReactionButton } from '../shared/TelegramReactions';
 import { MediaCollageGrid } from '../shared/MediaCollageGrid';
+import { SmartVoicePill } from '../shared/VoiceStudio2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
@@ -739,7 +740,7 @@ export function ProfileView({
                     {isMe && isOwnOriginal && !isRepostItem && (
                       <ActionMenuOrb
                         editLabel={lang === 'en' ? 'Edit post' : 'تعديل المنشور'}
-                        removeLabel={lang === 'en' ? 'Remove post' : 'إزالة المنشور'}
+                        removeLabel={lang === 'en' ? 'Delete post' : 'حذف المنشور'}
                         onEdit={() => {
                           setEditingPostId(post.id);
                           setEditingPostText(post.content);
@@ -776,13 +777,25 @@ export function ProfileView({
                       </div>
                     </div>
                   ) : (
-                    <div className="text-[14.5px] text-[#F2F2F5] leading-relaxed">
-                      <RichMessageText
-                        text={post.content}
-                        maxChars={240}
-                        lang={lang}
-                        onMentionClick={onOpenProfileByUsername}
-                        onHashtagClick={onOpenHashtag}
+                    post.content && (
+                      <div className="text-[14.5px] text-[#F2F2F5] leading-relaxed">
+                        <RichMessageText
+                          text={post.content}
+                          maxChars={240}
+                          lang={lang}
+                          onMentionClick={onOpenProfileByUsername}
+                          onHashtagClick={onOpenHashtag}
+                        />
+                      </div>
+                    )
+                  )}
+
+                  {post.musicUrl && post.mediaUrls.length === 0 && (
+                    <div className="mt-2 p-3 rounded-2xl bg-[#181920]">
+                      <SmartVoicePill
+                        url={post.musicUrl}
+                        title={post.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
+                        showSkipButtons
                       />
                     </div>
                   )}

@@ -457,6 +457,15 @@ export function App() {
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
               onOpenHashtag={openHashtagFeed}
+              onOpenVideo={vidId => {
+                setFocusedVideoId(vidId);
+                setActiveTab('videos');
+              }}
+              onOpenPost={postId => {
+                setFocusedPostId(postId);
+                setPostReturnTab(null);
+                setActiveTab('social');
+              }}
               onStartCall={setOutgoingCall}
             />
           )}
