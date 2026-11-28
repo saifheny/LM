@@ -36,7 +36,6 @@ import {
   Smartphone,
   Timer,
   Eye,
-  Maximize2,
   Sliders,
 } from 'lucide-react';
 
@@ -64,6 +63,7 @@ interface ShortVideosViewProps {
   onOpenProfile?: (userId: string) => void;
   onOpenProfileByUsername?: (username: string) => void;
   onOpenHashtag?: (tag: string) => void;
+  onOpenSocialWithAudio?: () => void;
 }
 
 /**
@@ -162,6 +162,7 @@ export function ShortVideosView({
   onOpenProfile,
   onOpenProfileByUsername,
   onOpenHashtag,
+  onOpenSocialWithAudio,
 }: ShortVideosViewProps) {
   const { bottomDockHidden, setBottomDockHidden } = useLayout();
   const [videos, setVideos] = useState<ShortVideoItem[]>([]);
@@ -176,28 +177,12 @@ export function ShortVideosView({
     }
     return 'for_you';
   });
-  const [activeIndex, setActiveIndexState] = useState<number>(() => {
-    try {
-      const n = Number(localStorage.getItem('lm_pulse_index') || '0');
-      return Number.isFinite(n) && n >= 0 ? n : 0;
-    } catch {
-      return 0;
-    }
-  });
+  const [activeIndex, setActiveIndex] = useState<number>(0);
 
   const setFeedTab = useCallback((t: 'following' | 'friends' | 'for_you') => {
     setFeedTabState(t);
     try {
       localStorage.setItem('lm_pulse_tab', t);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const setActiveIndex = useCallback((i: number) => {
-    setActiveIndexState(i);
-    try {
-      localStorage.setItem('lm_pulse_index', String(i));
     } catch {
       // ignore
     }
@@ -281,9 +266,34 @@ export function ShortVideosView({
   const [sentToIds, setSentToIds] = useState<Record<string, boolean>>({});
   const [shareToast, setShareToast] = useState('');
 
-  // TikTok-Grade Clear Display Mode + Interactive Audio Page Sheet
+  // TikTok-Grade Clear Display Mode (2-finger swipe only!) + Interactive Audio Page Sheet
   const [clearDisplayMode, setClearDisplayMode] = useState(false);
+  const [clearNotice, setClearNotice] = useState('');
+  const clearNoticeTimerRef = useRef<number | null>(null);
+  const twoFingerSwipeRef = useRef<{ active: boolean; startX: number; handled: boolean }>({
+    active: false,
+    startX: 0,
+    handled: false,
+  });
+  const viewedInSessionRef = useRef<Set<string>>(new Set());
   const [audioSheetTitle, setAudioSheetTitle] = useState<string | null>(null);
+  const [audioSheetVideo, setAudioSheetVideo] = useState<ShortVideoItem | null>(null);
+  const [reusedAudio, setReusedAudio] = useState<{ url: string; title: string } | null>(null);
+
+  function openAudioSheet(v: ShortVideoItem) {
+    setAudioSheetVideo(v);
+    setAudioSheetTitle(v.audioTitle || 'الصوت الأصلي');
+  }
+
+  function toggleClearDisplayBySwipe() {
+    setClearDisplayMode(prev => {
+      const next = !prev;
+      if (clearNoticeTimerRef.current) window.clearTimeout(clearNoticeTimerRef.current);
+      setClearNotice(next ? 'الوضع الصافي مفعّل — اسحب بإصبعين للعودة' : 'تمت استعادة واجهة نبض');
+      clearNoticeTimerRef.current = window.setTimeout(() => setClearNotice(''), 2000);
+      return next;
+    });
+  }
 
   // Full-Screen 2-Step TikTok Creator Studio (Step 1: Camera + Gallery Picker -> Step 2: Unified Caption Publish Screen)
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -494,6 +504,20 @@ export function ShortVideosView({
 
   useEffect(() => {
     loadVideos();
+    try {
+      const staged = localStorage.getItem('lm_pulse_reused_audio');
+      if (staged) {
+        localStorage.removeItem('lm_pulse_reused_audio');
+        const parsed = JSON.parse(staged) as { url?: string; title?: string };
+        if (parsed?.url) {
+          setReusedAudio({ url: parsed.url, title: parsed.title || 'صوت مستخدم' });
+          setStudioStep('capture');
+          setUploadOpen(true);
+        }
+      }
+    } catch {
+      // ignore
+    }
     return () => setBottomDockHidden(false);
   }, [loadVideos, setBottomDockHidden]);
 
@@ -541,7 +565,15 @@ export function ShortVideosView({
         el.pause();
       }
     });
-  }, [activeIndex, orderedVideos.length, feedTab]);
+    const cur = orderedVideos[activeIndex];
+    if (!cur || viewedInSessionRef.current.has(cur.id)) return;
+    const viewTimer = window.setTimeout(() => {
+      if (viewedInSessionRef.current.has(cur.id)) return;
+      viewedInSessionRef.current.add(cur.id);
+      apiPost(`/api/videos/${cur.id}/view`, { userId: user.id }).catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(viewTimer);
+  }, [activeIndex, orderedVideos, feedTab, user.id]);
 
   function togglePlayPause() {
     const el = videoRefs.current[activeIndex];
@@ -1060,16 +1092,24 @@ export function ShortVideosView({
     if ((!newTitle.trim() && !uploadedVideoUrl) || uploadingVideo || publishingVideo) return;
     setPublishingVideo(true);
     try {
-      const extractedTags = (newTitle.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ');
+      const uniqueTags = Array.from(new Set(newTitle.match(/#[\p{L}\p{N}_]+/gu) || [])).slice(0, 5);
+      const safeTitle = newTitle.trim().slice(0, 120);
+      const safeTags = (newTags.trim() || uniqueTags.join(' ') || '#LM')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 5)
+        .join(' ');
       await apiPost('/api/videos', {
         userId: user.id,
-        title: newTitle.trim(),
+        title: safeTitle,
         description: '',
-        tags: newTags.trim() || extractedTags || '#LM',
+        tags: safeTags,
         videoUrl: uploadedVideoUrl || '/uploads/seed/reel1.mp4',
         posterUrl: uploadedPosterUrl,
         orientation: studioOrientation,
+        ...(reusedAudio ? { audioUrl: reusedAudio.url, audioTitle: reusedAudio.title } : {}),
       });
+      setReusedAudio(null);
       closeCreatorStudio();
       await loadVideos();
       setActiveIndex(0);
@@ -1127,6 +1167,7 @@ export function ShortVideosView({
       className="w-full h-full bg-black relative overflow-hidden flex items-center justify-center"
     >
       <div className="relative w-full h-full max-w-[500px] mx-auto bg-black overflow-hidden">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/70 via-black/30 to-transparent z-20" />
         {/* Centered Top Tabs: Safe Top Inset + متابعون | أصدقاء | لك */}
         <div
           style={{ top: 'max(14px, calc(env(safe-area-inset-top) + 8px))' }}
@@ -1200,8 +1241,6 @@ export function ShortVideosView({
             const nextIdx = sw.activeIndex;
             if (nextIdx > prevSlideIdxRef.current) {
               setBottomDockHidden(true);
-            } else if (nextIdx < prevSlideIdxRef.current) {
-              setBottomDockHidden(false);
             }
             prevSlideIdxRef.current = nextIdx;
             setActiveIndex(nextIdx);
@@ -1219,6 +1258,25 @@ export function ShortVideosView({
                   onPointerUp={releaseLongPressSpeed}
                   onPointerLeave={releaseLongPressSpeed}
                   onPointerCancel={releaseLongPressSpeed}
+                  onTouchStart={e => {
+                    if (e.touches.length === 2) {
+                      releaseLongPressSpeed();
+                      const avgX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                      twoFingerSwipeRef.current = { active: true, startX: avgX, handled: false };
+                    }
+                  }}
+                  onTouchMove={e => {
+                    const st = twoFingerSwipeRef.current;
+                    if (!st.active || st.handled || e.touches.length < 2) return;
+                    const avgX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    if (Math.abs(avgX - st.startX) >= 42) {
+                      st.handled = true;
+                      toggleClearDisplayBySwipe();
+                    }
+                  }}
+                  onTouchEnd={e => {
+                    if (e.touches.length < 2) twoFingerSwipeRef.current.active = false;
+                  }}
                   onContextMenu={e => e.preventDefault()}
                   onClick={e => handleStageClick(e, v)}
                   style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
@@ -1319,12 +1377,9 @@ export function ShortVideosView({
                         <span className="shrink-0">
                           <UserAvatar initials={v.avatarInitials} avatarUrl={v.avatarUrl} size={30} />
                         </span>
-                        <span className="truncate max-w-[138px] sm:max-w-[175px]">{v.displayName}</span>
+                        <span className="truncate max-w-[165px]">{v.displayName}</span>
                       </button>
                       {v.verified && <span className="shrink-0"><VerifiedIcon /></span>}
-                      <span className="text-[11.5px] font-normal text-white/70 font-mono-num truncate max-w-[88px] shrink-0">
-                        @{v.username}
-                      </span>
                       {v.userId !== user.id && !v.isFollowingAuthor && (
                         <button
                           type="button"
@@ -1399,7 +1454,7 @@ export function ShortVideosView({
 
                     <button
                       type="button"
-                      onClick={() => setAudioSheetTitle(v.audioTitle || 'الصوت الأصلي')}
+                      onClick={() => openAudioSheet(v)}
                       className="flex items-center gap-2 text-xs text-white/90 hover:text-[#25F4EE] pt-0.5 max-w-full justify-start cursor-pointer transition-colors"
                     >
                       <Music2 className="w-3.5 h-3.5 shrink-0" />
@@ -1408,19 +1463,13 @@ export function ShortVideosView({
                   </div>
                   )}
 
-                  {/* Minimal Restore Pill when Clear Display Mode is active */}
-                  {clearDisplayMode && (
-                    <button
-                      type="button"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setClearDisplayMode(false);
-                      }}
-                      className="absolute end-3.5 bottom-16 z-30 h-9 px-3.5 rounded-full bg-black/55 backdrop-blur-md border border-white/20 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer hover:bg-black/75"
-                    >
-                      <Eye className="w-4 h-4 text-[#25F4EE]" />
-                      <span>إظهار الواجهة</span>
-                    </button>
+                  {clearNotice && (
+                    <div className="pointer-events-none absolute top-20 inset-x-4 z-40 flex justify-center">
+                      <div className="px-3.5 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-[11.5px] font-semibold text-white inline-flex items-center gap-1.5">
+                        <Eye className="w-3.5 h-3.5 text-[#25F4EE]" />
+                        <span>{clearNotice}</span>
+                      </div>
+                    </div>
                   )}
 
                   {/* Right Action Rail: Uniform Crisp TikTok Icons Positioned Above Scrubber Lane */}
@@ -1506,16 +1555,7 @@ export function ShortVideosView({
 
                     <button
                       type="button"
-                      onClick={() => setClearDisplayMode(true)}
-                      title="وضع الشاشة الصافية"
-                      className="flex flex-col items-center gap-0.5 text-white/85 hover:text-white cursor-pointer active:scale-95 transition-transform"
-                    >
-                      <Maximize2 className="w-5 h-5" strokeWidth={2} />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setAudioSheetTitle(v.audioTitle || 'الصوت الأصلي')}
+                      onClick={() => openAudioSheet(v)}
                       title={v.audioTitle || 'صفحة الصوت'}
                       className="w-10 h-10 rounded-full bg-[#1C1D24] border border-white/25 hover:border-[#25F4EE] flex items-center justify-center cursor-pointer transition-colors"
                     >
@@ -1554,10 +1594,10 @@ export function ShortVideosView({
                         setIsScrubbing(false);
                         setScrubHover(false);
                       }}
-                      className={`absolute inset-x-3 md:inset-x-4 z-30 h-9 flex items-center cursor-pointer touch-none select-none transition-all duration-200 md:bottom-2 ${
+                      className={`absolute md:inset-x-4 z-30 h-9 flex items-center cursor-pointer touch-none select-none transition-all duration-200 md:bottom-2 ${
                         bottomDockHidden
-                          ? 'bottom-[max(10px,calc(env(safe-area-inset-bottom)+6px))]'
-                          : 'bottom-[calc(70px+env(safe-area-inset-bottom))]'
+                          ? 'start-16 end-3.5 bottom-[max(12px,calc(env(safe-area-inset-bottom)+8px))]'
+                          : 'inset-x-3 bottom-[calc(70px+env(safe-area-inset-bottom))]'
                       }`}
                     >
                       {/* Floating Live Timestamp Preview Pill while scrubbing forward/backward */}
@@ -1652,7 +1692,7 @@ export function ShortVideosView({
                   type="button"
                   onClick={() => {
                     const deepUrl = `${window.location.origin}/pulse/${shareVideo.id}`;
-                    const txt = `${shareVideo.title} — @${shareVideo.username}`;
+                    const txt = shareVideo.title;
                     trackPulseShare(shareVideo.id, p.id);
                     if (p.id === 'copy') {
                       navigator.clipboard?.writeText(deepUrl);
@@ -2607,20 +2647,37 @@ export function ShortVideosView({
                       {/* Transparent-Ink Interactive Textarea Directly Over Underlay */}
                       <textarea
                         rows={5}
+                        maxLength={120}
                         value={newTitle}
-                        onChange={e => setNewTitle(e.target.value)}
+                        onChange={e => setNewTitle(e.target.value.slice(0, 120))}
                         aria-label="وصف الفيديو والهاشتاجات"
                         className="absolute inset-0 w-full h-full bg-transparent text-[15px] leading-relaxed font-normal text-transparent caret-white selection:bg-[#25F4EE]/30 outline-none resize-none overflow-hidden"
                       />
                     </div>
 
-                    {/* Live Detected Hashtag Chips Preview */}
+                    <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono-num">
+                      <span>{newTitle.length}/120 حرف · بحد أقصى 5 هاشتاجات</span>
+                      {reusedAudio && (
+                        <button
+                          type="button"
+                          onClick={() => setReusedAudio(null)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#25F4EE]/15 text-[#25F4EE] cursor-pointer"
+                          title="إلغاء استخدام هذا الصوت"
+                        >
+                          <Music2 className="w-3 h-3" />
+                          <span className="truncate max-w-[120px]">{reusedAudio.title}</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Live Detected Hashtag Chips Preview (Max 5) */}
                     {(() => {
                       const liveTags = Array.from(new Set(newTitle.match(/#[\p{L}\p{N}_]+/gu) || []));
                       if (liveTags.length === 0) return null;
                       return (
                         <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                          {liveTags.map(ht => (
+                          {liveTags.slice(0, 5).map(ht => (
                             <span
                               key={ht}
                               className="px-2 py-0.5 rounded-full bg-[#25F4EE]/15 text-[#25F4EE] text-[11px] font-semibold"
@@ -2628,6 +2685,11 @@ export function ShortVideosView({
                               {ht}
                             </span>
                           ))}
+                          {liveTags.length > 5 && (
+                            <span className="text-[11px] text-[#FE2C55] font-medium">
+                              سيتم اعتماد أول 5 هاشتاجات فقط
+                            </span>
+                          )}
                         </div>
                       );
                     })()}
@@ -2758,18 +2820,25 @@ export function ShortVideosView({
             </div>
 
             <div className="p-5 space-y-4">
-              <textarea
-                rows={4}
-                value={editTitle}
-                onChange={e => setEditTitle(e.target.value)}
-                placeholder="اكتب عنوان أو وصف الفيديو..."
-                className="w-full rounded-xl bg-[#121212] border border-white/[0.1] focus:border-[#FE2C55]/60 p-3.5 text-sm text-white outline-none resize-none transition-colors"
-              />
+              <div>
+                <textarea
+                  rows={4}
+                  maxLength={120}
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value.slice(0, 120))}
+                  placeholder="اكتب عنوان أو وصف الفيديو..."
+                  className="w-full rounded-xl bg-[#121212] border border-white/[0.1] focus:border-[#FE2C55]/60 p-3.5 text-sm text-white outline-none resize-none transition-colors"
+                />
+                <div className="mt-1 text-[11px] text-[#8E8E93] font-mono-num">{editTitle.length}/120 حرف</div>
+              </div>
 
               <input
                 value={editTags}
-                onChange={e => setEditTags(e.target.value)}
-                placeholder="الوسوم (مثال: #LM #نبض)..."
+                onChange={e => {
+                  const limited = e.target.value.split(/\s+/).filter(Boolean).slice(0, 5).join(' ');
+                  setEditTags(e.target.value.endsWith(' ') ? `${limited} ` : limited);
+                }}
+                placeholder="الوسوم (بحد أقصى 5 وسوم: #LM #نبض)..."
                 className="w-full h-11 rounded-xl bg-[#121212] border border-white/[0.1] focus:border-[#FE2C55]/60 px-3.5 text-xs text-white outline-none transition-colors"
               />
 
@@ -2824,18 +2893,48 @@ export function ShortVideosView({
                 <CloseOrbButton size="sm" onClick={() => setAudioSheetTitle(null)} />
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setAudioSheetTitle(null);
-                  setStudioStep('capture');
-                  setUploadOpen(true);
-                }}
-                className="w-full h-10 rounded-xl bg-[#FE2C55] hover:bg-[#EA284E] text-xs font-bold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
-              >
-                <Camera className="w-4 h-4" />
-                <span>استخدم هذا الصوت في فيديو جديد</span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = audioSheetVideo?.audioUrl || audioSheetVideo?.videoUrl || '';
+                    if (url) {
+                      setReusedAudio({ url, title: audioSheetTitle });
+                    }
+                    setAudioSheetTitle(null);
+                    setAudioSheetVideo(null);
+                    setStudioStep('capture');
+                    setUploadOpen(true);
+                  }}
+                  className="w-full h-10 rounded-xl bg-[#FE2C55] hover:bg-[#EA284E] text-xs font-bold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Camera className="w-4 h-4" />
+                  <span>استخدم الصوت في نبض</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = audioSheetVideo?.audioUrl || audioSheetVideo?.videoUrl || '';
+                    if (url) {
+                      try {
+                        localStorage.setItem(
+                          'lm_social_reused_audio',
+                          JSON.stringify({ url, title: audioSheetTitle })
+                        );
+                      } catch {
+                        // ignore
+                      }
+                    }
+                    setAudioSheetTitle(null);
+                    setAudioSheetVideo(null);
+                    onOpenSocialWithAudio?.();
+                  }}
+                  className="w-full h-10 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.12] text-xs font-bold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Music2 className="w-4 h-4 text-[#25F4EE]" />
+                  <span>نشر الصوت في المجتمع</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 grid grid-cols-3 gap-2">

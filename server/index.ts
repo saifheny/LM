@@ -280,12 +280,38 @@ function getActiveStoryUserSet(): Set<string> {
   return new Set(rows.map(r => r.user_id));
 }
 
+function capHashtagsInText(raw: string, maxTags = 5): string {
+  const seen = new Set<string>();
+  return String(raw || '').replace(/#[\p{L}\p{N}_]+/gu, match => {
+    const key = match.toLowerCase();
+    if (seen.has(key)) return '';
+    if (seen.size >= maxTags) return '';
+    seen.add(key);
+    return match;
+  }).replace(/[ \t]{2,}/g, ' ').trim();
+}
+
+function capTagTokens(rawTags: string, fallbackTags = '#LM', maxTags = 5): string {
+  const tokens = String(rawTags || '').match(/#[\p{L}\p{N}_]+/gu) || [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tokens) {
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= maxTags) break;
+  }
+  if (out.length === 0) return fallbackTags;
+  return out.join(' ');
+}
+
 function createNotification(params: {
   userId: string;
   actorId: string;
   type: 'follow' | 'react' | 'comment' | 'message';
   text: string;
-  refTab: 'social' | 'videos' | 'chat' | 'profile';
+  refTab: 'social' | 'videos' | 'chat' | 'profile' | 'live';
   refId?: string | null;
 }) {
   if (!params.userId || !params.actorId || params.userId === params.actorId) return;
@@ -1183,6 +1209,7 @@ app.get('/api/users/:id/profile', (req, res) => {
     description: r.description,
     tags: r.tags,
     audioTitle: r.audio_title || 'الصوت الأصلي',
+    audioUrl: r.audio_url || null,
     videoUrl: r.video_url,
     posterUrl: r.poster_url,
     scenePreset: r.scene_preset,
@@ -1219,6 +1246,7 @@ app.get('/api/users/:id/profile', (req, res) => {
     description: r.description,
     tags: r.tags,
     audioTitle: r.audio_title || 'الصوت الأصلي',
+    audioUrl: r.audio_url || null,
     videoUrl: r.video_url,
     posterUrl: r.poster_url,
     scenePreset: r.scene_preset,
@@ -1792,6 +1820,7 @@ app.get('/api/hashtags/:tag', (req, res) => {
       description: r.description,
       tags: r.tags,
       audioTitle: r.audio_title || 'الصوت الأصلي',
+      audioUrl: r.audio_url || null,
       videoUrl: r.video_url,
       posterUrl: r.poster_url,
       scenePreset: r.scene_preset,
@@ -2275,7 +2304,17 @@ app.post('/api/posts', (req, res) => {
   db.prepare(`
     INSERT INTO posts (id, user_id, topic, content, media_url, media_urls_json, music_url, music_title, quoted_post_id, poll_json, score, likes_count, created_at)
     VALUES (?, ?, 'عام', ?, ?, ?, ?, ?, ?, ?, 1, 1, 'الآن')
-  `).run(id, userId, (content || '').trim(), firstMedia, urlsJson, musicUrl || null, musicTitle || null, validQuotedId, pollJson);
+  `).run(
+    id,
+    userId,
+    capHashtagsInText(content || '', 5),
+    firstMedia,
+    urlsJson,
+    musicUrl || null,
+    musicTitle ? String(musicTitle).trim().slice(0, 80) : null,
+    validQuotedId,
+    pollJson
+  );
 
   if (validQuotedId) {
     db.prepare('UPDATE posts SET shares_count = shares_count + 1 WHERE id = ?').run(validQuotedId);
@@ -2790,6 +2829,7 @@ app.get('/api/videos', (req, res) => {
       description: String(r.description || ''),
       tags: String(r.tags || ''),
       audioTitle: r.audio_title || 'الصوت الأصلي',
+      audioUrl: r.audio_url ? String(r.audio_url) : null,
       videoUrl: r.video_url,
       posterUrl: r.poster_url,
       scenePreset: r.scene_preset,
@@ -2823,7 +2863,7 @@ app.get('/api/videos', (req, res) => {
 });
 
 app.post('/api/videos', (req, res) => {
-  const { userId, title, description, tags, videoUrl, posterUrl, orientation } = req.body as {
+  const { userId, title, description, tags, videoUrl, posterUrl, orientation, audioUrl, audioTitle } = req.body as {
     userId: string;
     title?: string;
     description?: string;
@@ -2831,21 +2871,48 @@ app.post('/api/videos', (req, res) => {
     videoUrl?: string;
     posterUrl?: string | null;
     orientation?: 'portrait' | 'landscape';
+    audioUrl?: string | null;
+    audioTitle?: string | null;
   };
-  const cleanTitle = (title || '').trim();
-  const cleanDesc = (description || '').trim();
+  const cleanTitle = capHashtagsInText(title || '', 5).slice(0, 120);
+  const cleanDesc = capHashtagsInText(description || '', 5).slice(0, 220);
   const orient = orientation === 'landscape' ? 'landscape' : 'portrait';
   if (!userId || (!cleanTitle && !videoUrl)) {
     return res.status(400).json({ ok: false, error: 'أضف فيديو أو عنوانًا للنشر.' });
   }
   const id = `v_${uuid().slice(0, 8)}`;
-  const extractedTags = (cleanTitle.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ');
-  const finalTags = (tags || '').trim() || extractedTags || '#LM';
+  const finalTags = capTagTokens(`${cleanTitle} ${tags || ''}`, '#LM', 5);
+  const finalAudioUrl = audioUrl && String(audioUrl).trim() ? String(audioUrl).trim() : null;
+  const finalAudioTitle =
+    audioTitle && String(audioTitle).trim()
+      ? String(audioTitle).trim().slice(0, 64)
+      : 'الصوت الأصلي';
   db.prepare(`
-    INSERT INTO short_videos (id, user_id, title, description, tags, video_url, poster_url, orientation)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, cleanTitle, cleanDesc, finalTags, videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null, orient);
-  res.json({ ok: true, id, posterUrl: posterUrl || null, orientation: orient });
+    INSERT INTO short_videos (id, user_id, title, description, tags, audio_title, audio_url, video_url, poster_url, orientation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, cleanTitle, cleanDesc, finalTags, finalAudioTitle, finalAudioUrl, videoUrl || '/uploads/seed/reel1.mp4', posterUrl || null, orient);
+  res.json({ ok: true, id, posterUrl: posterUrl || null, orientation: orient, audioUrl: finalAudioUrl, audioTitle: finalAudioTitle });
+});
+
+app.post('/api/videos/:id/view', (req, res) => {
+  const { userId } = req.body as { userId?: string };
+  const row = db.prepare('SELECT id, user_id, title, description, tags, views_count FROM short_videos WHERE id = ?').get(req.params.id) as
+    | { id: string; user_id: string; title: string; description: string; tags: string; views_count: number }
+    | undefined;
+  if (!row) return res.status(404).json({ ok: false });
+  db.prepare('UPDATE short_videos SET views_count = views_count + 1 WHERE id = ?').run(req.params.id);
+  if (userId) {
+    recordUserInteraction({
+      userId,
+      targetType: 'video',
+      targetId: req.params.id,
+      authorId: row.user_id,
+      action: 'watch',
+      text: `${row.title} ${row.description} ${row.tags}`,
+      weight: 1.5,
+    });
+  }
+  res.json({ ok: true, viewsCount: Number(row.views_count || 0) + 1 });
 });
 
 app.patch('/api/videos/:id', (req, res) => {
@@ -2863,9 +2930,9 @@ app.patch('/api/videos/:id', (req, res) => {
   if (userId && row.user_id !== userId) {
     return res.status(403).json({ ok: false, error: 'يمكنك تعديل فيديوهاتك فقط.' });
   }
-  const nextTitle = (title ?? row.title).trim() || row.title;
-  const nextDesc = (description ?? row.description).trim();
-  const nextTags = (tags ?? row.tags).trim();
+  const nextTitle = capHashtagsInText((title ?? row.title).trim() || row.title, 5).slice(0, 120);
+  const nextDesc = capHashtagsInText((description ?? row.description).trim(), 5).slice(0, 220);
+  const nextTags = capTagTokens(`${nextTitle} ${(tags ?? row.tags).trim()}`, '#LM', 5);
   const nextOrient = orientation === 'landscape' ? 'landscape' : orientation === 'portrait' ? 'portrait' : (row.orientation === 'landscape' ? 'landscape' : 'portrait');
   db.prepare('UPDATE short_videos SET title = ?, description = ?, tags = ?, orientation = ? WHERE id = ?').run(
     nextTitle,
@@ -3971,7 +4038,8 @@ app.post('/api/live/rooms', (req, res) => {
     category?: string;
     orientation?: 'portrait' | 'landscape';
   };
-  if (!hostId || !title?.trim()) {
+  const cleanTitle = capHashtagsInText(title || '', 5).slice(0, 50).trim();
+  if (!hostId || !cleanTitle) {
     return res.status(400).json({ ok: false, error: 'عنوان البث المباشر مطلوب.' });
   }
   const host = getUserOrNull(hostId);
@@ -3985,7 +4053,7 @@ app.post('/api/live/rooms', (req, res) => {
   db.prepare(`
     INSERT INTO live_rooms (id, host_id, title, category, video_url, scene_preset, orientation, viewers_count, is_active)
     VALUES (?, ?, ?, ?, NULL, 'webrtc_live', ?, 1, 1)
-  `).run(id, hostId, title.trim(), (category || 'عام').trim(), orient);
+  `).run(id, hostId, cleanTitle, (category || 'عام').trim(), orient);
 
   const runtime = liveEngine.getPublicState(id);
   const room = {
@@ -3996,7 +4064,7 @@ app.post('/api/live/rooms', (req, res) => {
     hostColor: host.avatarColor,
     hostInitials: host.avatarInitials,
     hostAvatarUrl: host.avatarUrl,
-    title: title.trim(),
+    title: cleanTitle,
     category: (category || 'عام').trim(),
     videoUrl: null,
     scenePreset: 'webrtc_live',
@@ -4037,12 +4105,13 @@ app.get('/api/live/rooms/:id/state', (req, res) => {
 });
 
 app.post('/api/live/rooms/:id/comment', (req, res) => {
-  const { userId, text, replyToId, replyToName, replyToText } = req.body as {
+  const { userId, text, replyToId, replyToName, replyToText, replyToUserId } = req.body as {
     userId: string;
     text: string;
     replyToId?: string;
     replyToName?: string;
     replyToText?: string;
+    replyToUserId?: string;
   };
   const user = getUserOrNull(userId);
   if (!user) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
@@ -4061,6 +4130,28 @@ app.post('/api/live/rooms/:id/comment', (req, res) => {
     isHost
   );
   if (!result.ok) return res.status(400).json(result);
+
+  let targetUid = replyToUserId && replyToUserId !== userId ? replyToUserId : '';
+  if (!targetUid && replyToId) {
+    const pub = liveEngine.getPublicState(req.params.id);
+    const parentMsg = pub?.recentMessages?.find((m) => m.id === replyToId);
+    if (parentMsg?.userId && parentMsg.userId !== userId) {
+      targetUid = parentMsg.userId;
+    }
+  }
+  if (targetUid && getUserOrNull(targetUid)) {
+    const cleanSnippet = String(text || '').trim().slice(0, 64);
+    createNotification({
+      userId: targetUid,
+      actorId: userId,
+      type: 'comment',
+      text: cleanSnippet
+        ? `${user.displayName} رد عليك في البث المباشر: ${cleanSnippet}`
+        : `${user.displayName} رد على تعليقك في البث المباشر`,
+      refId: req.params.id,
+      refTab: 'live',
+    });
+  }
   if (room) {
     recordUserInteraction({
       userId,
@@ -4807,6 +4898,7 @@ function buildDynamicOgMeta(req: express.Request): {
   image: string;
   url: string;
   type: string;
+  video?: string;
 } {
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
   const host = String(req.headers['x-forwarded-host'] || req.get('host') || 'localhost:4000');
@@ -4830,19 +4922,39 @@ function buildDynamicOgMeta(req: express.Request): {
   const postId = postMatch ? decodeURIComponent(postMatch[1]) : String(req.query.post || '').trim();
   if (postId) {
     const r = db.prepare(`
-      SELECT p.content, p.media_url, p.media_urls_json, u.display_name, u.username, u.avatar_url
+      SELECT p.content, p.media_url, p.media_urls_json, p.music_title, p.score, p.comments_count, u.display_name
       FROM posts p JOIN users u ON p.user_id = u.id WHERE p.id = ?
     `).get(postId) as Record<string, unknown> | undefined;
     if (r) {
       let mediaUrls: string[] = [];
       try { mediaUrls = JSON.parse(String(r.media_urls_json || '[]')); } catch { mediaUrls = []; }
-      const firstImg = mediaUrls[0] || (r.media_url ? String(r.media_url) : null) || (r.avatar_url ? String(r.avatar_url) : null);
-      title = `${String(r.display_name)} (@${String(r.username)}) على LM`;
+      if (r.media_url && !mediaUrls.includes(String(r.media_url))) {
+        mediaUrls.unshift(String(r.media_url));
+      }
+      const isVid = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
+      const firstImg = mediaUrls.find((u) => u && !isVid(u)) || null;
+      const firstVid = mediaUrls.find((u) => u && isVid(u)) || null;
       const snippet = String(r.content || '').replace(/\s+/g, ' ').trim();
-      description = snippet ? (snippet.length > 165 ? `${snippet.slice(0, 162)}...` : snippet) : 'منشور مشارَك على منصة LM';
-      image = toAbs(firstImg);
-      type = 'article';
-      return { title, description, image, url: fullUrl, type };
+      const shortHead = snippet ? (snippet.length > 64 ? `${snippet.slice(0, 61)}...` : snippet) : '';
+      title = shortHead
+        ? `${shortHead} — ${String(r.display_name)}`
+        : r.music_title
+          ? `مقطع صوتي: ${String(r.music_title)} — ${String(r.display_name)}`
+          : `منشور بقلم ${String(r.display_name)} على LM`;
+      const statsSuffix = ` (${Number(r.score || 0)} إعجاب · ${Number(r.comments_count || 0)} تعليق)`;
+      description = snippet
+        ? `${snippet.length > 140 ? `${snippet.slice(0, 137)}...` : snippet}${statsSuffix}`
+        : `منشور مشارَك على منصة LM${statsSuffix}`;
+      image = toAbs(firstImg || '/lm-icon-512.png');
+      type = firstVid && !firstImg ? 'video.other' : 'article';
+      return {
+        title,
+        description,
+        image,
+        url: fullUrl,
+        type,
+        ...(firstVid ? { video: toAbs(firstVid) } : {}),
+      };
     }
   }
 
@@ -4860,7 +4972,7 @@ function buildDynamicOgMeta(req: express.Request): {
       description = bio ? `${bio.slice(0, 150)}${loc}` : `الملف الشخصي لـ ${String(u.display_name)} على LM`;
       const rawCover = typeof u.cover_url === 'string' && !u.cover_url.startsWith('lm:') ? u.cover_url : null;
       const rawAvatar = typeof u.avatar_url === 'string' && !u.avatar_url.startsWith('lm:') ? u.avatar_url : null;
-      image = toAbs(rawCover || rawAvatar);
+      image = toAbs(rawAvatar || rawCover);
       type = 'profile';
       return { title, description, image, url: fullUrl, type };
     }
@@ -5004,7 +5116,11 @@ if (fs.existsSync(distDir)) {
     <meta property="og:image" content="${escapeHtmlAttr(og.image)}" />
     <meta property="og:image:secure_url" content="${escapeHtmlAttr(og.image)}" />
     <meta property="og:image:width" content="512" />
-    <meta property="og:image:height" content="512" />
+    <meta property="og:image:height" content="512" />${
+      og.video
+        ? `\n    <meta property="og:video" content="${escapeHtmlAttr(og.video)}" />\n    <meta property="og:video:secure_url" content="${escapeHtmlAttr(og.video)}" />\n    <meta property="og:video:type" content="video/mp4" />`
+        : ''
+    }
     <meta property="og:url" content="${escapeHtmlAttr(og.url)}" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="${escapeHtmlAttr(og.title)}" />

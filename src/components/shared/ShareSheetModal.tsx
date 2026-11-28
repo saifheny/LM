@@ -402,7 +402,9 @@ export function ShareSheetModal({
         snippet: active.snippet,
         badge: badgeLabel,
         fullUrl,
-        imageUrl: validPreviewImg || (isUsableImageUrl(active.avatarUrl) ? active.avatarUrl : null),
+        imageUrl:
+          validPreviewImg ||
+          (active.kind === 'post' ? null : isUsableImageUrl(active.avatarUrl) ? active.avatarUrl : null),
         initials: active.avatarInitials || active.title.slice(0, 2),
       });
       if (!file) {

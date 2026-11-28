@@ -660,7 +660,7 @@ export function AppShell({
               {!sidebarCollapsed && (
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold text-white truncate">{user.displayName}</div>
-                  <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{user.username}</div>
+  
                 </div>
               )}
             </button>
@@ -790,7 +790,7 @@ export function AppShell({
               setBottomDockHidden(false);
             }}
             aria-label="إظهار الشريط السفلي"
-            style={{ bottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
+            style={{ bottom: 'max(14px, calc(env(safe-area-inset-bottom) + 10px))' }}
             className="md:hidden fixed start-3.5 z-40 w-10 h-10 rounded-full bg-black/88 backdrop-blur-xl border border-white/[0.16] text-white flex items-center justify-center shadow-2xl cursor-pointer active:scale-90"
           >
             <LayoutGrid className="w-[18px] h-[18px]" strokeWidth={1.9} />
@@ -847,7 +847,7 @@ export function AppShell({
                       <span>{user.displayName}</span>
                       {user.verified && <VerifiedIcon />}
                     </div>
-                    <div className="text-xs text-[#8E8E93] font-mono-num">@{user.username}</div>
+  
                     <div className="text-[11px] text-[#FBBF24] mt-0.5">{t(lang, 'my_profile')}</div>
                   </div>
                   {lang === 'ar' ? (
@@ -1141,7 +1141,6 @@ export function AppShell({
                           <span>{user.displayName}</span>
                           {user.verified && <VerifiedIcon />}
                         </div>
-                        <div className="text-xs text-[#7A7A85] font-mono-num">@{user.username}</div>
                       </div>
                     </button>
                     <CloseOrbButton onClick={() => setAccountOpen(false)} />
@@ -1382,7 +1381,6 @@ export function AppShell({
                       <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={32} />
                       <div>
                         <div className="text-xs font-semibold text-white">{u.displayName}</div>
-                        <div className="text-[11px] text-[#7A7A85]">@{u.username}</div>
                       </div>
                     </button>
                   ))}
@@ -1402,7 +1400,6 @@ export function AppShell({
                       className="w-full px-4 py-2 hover:bg-white/[0.04] cursor-pointer text-start"
                     >
                       <div className="text-xs text-[#E4E4E7] line-clamp-1">{String(p.content)}</div>
-                      <div className="text-[11px] text-[#7A7A85] mt-0.5">@{String(p.username)}</div>
                     </button>
                   ))}
                 </div>

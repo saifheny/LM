@@ -84,6 +84,7 @@ interface SocialViewProps {
   onOpenProfileByUsername?: (username: string) => void;
   onMessageUser?: (userId: string) => void;
   onOpenVideo?: (videoId: string) => void;
+  onOpenVideosWithAudio?: () => void;
   onShare?: (payload: SharePayload) => void;
 }
 
@@ -110,6 +111,7 @@ export function SocialView({
   onOpenProfileByUsername,
   onMessageUser,
   onOpenVideo,
+  onOpenVideosWithAudio,
   onShare,
 }: SocialViewProps) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -300,6 +302,22 @@ export function SocialView({
     setHashtagFilter('all');
     loadFeed();
   }, [loadFeed]);
+
+  useEffect(() => {
+    try {
+      const staged = localStorage.getItem('lm_social_reused_audio');
+      if (staged) {
+        localStorage.removeItem('lm_social_reused_audio');
+        const parsed = JSON.parse(staged) as { url?: string; title?: string };
+        if (parsed?.url) {
+          setSelectedMusic({ url: parsed.url, title: parsed.title || 'صوت مستخدم' });
+          setComposerActive(true);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const loadMusicLibrary = useCallback(async () => {
     try {
@@ -1384,7 +1402,7 @@ export function SocialView({
                       <div className="absolute inset-x-0 bottom-0 z-20 p-2 bg-gradient-to-t from-black/90 via-black/45 to-transparent space-y-0.5 pointer-events-none">
                         <p className="text-[11px] font-medium text-white line-clamp-2 leading-snug">{v.title}</p>
                         <div className="flex items-center justify-between text-[10px] text-white/75 font-mono-num">
-                          <span className="truncate">@{v.username}</span>
+                          
                           <span className="flex items-center gap-0.5 shrink-0">
                             <Play className="w-2.5 h-2.5 fill-current text-[#FF2D55]" />
                             {formatCount(v.viewsCount)}
@@ -1590,14 +1608,21 @@ export function SocialView({
                 </button>
               </div>
 
-              <PublishActionButton
-                type="submit"
-                variant="luminous"
-                loading={publishing}
-                disabled={!draft.trim() && uploadedMediaUrls.length === 0 && !selectedMusic}
-                label={lang === 'ar' ? 'نشر' : 'Post'}
-                loadingLabel="جارٍ النشر..."
-              />
+              <div className="flex items-center gap-2.5">
+                {Array.from(new Set(draft.match(/#[\p{L}\p{N}_]+/gu) || [])).length > 5 && (
+                  <span className="text-[10.5px] font-medium text-[#FE2C55]">
+                    الحد الأقصى 5 هاشتاجات
+                  </span>
+                )}
+                <PublishActionButton
+                  type="submit"
+                  variant="luminous"
+                  loading={publishing}
+                  disabled={!draft.trim() && uploadedMediaUrls.length === 0 && !selectedMusic}
+                  label={lang === 'ar' ? 'نشر' : 'Post'}
+                  loadingLabel="جارٍ النشر..."
+                />
+              </div>
             </div>
           </div>
         </form>
@@ -1755,7 +1780,7 @@ export function SocialView({
                           {post.displayName}
                         </button>
                         {post.verified && <VerifiedIcon />}
-                        <span className="text-xs text-[#7A7A85] font-mono-num">@{post.username}</span>
+                        
                         <span className="text-[#585860]">·</span>
                         <span className="text-xs text-[#7A7A85]">{post.createdAt}</span>
                         {post.isEdited && <span className="text-[10.5px] text-[#7A7A85]">(معدّل)</span>}
@@ -1766,13 +1791,23 @@ export function SocialView({
                           type="button"
                           onClick={() => {
                             if (onShare) {
+                              const rawTxt = (post.content || '').replace(/\s+/g, ' ').trim();
+                              const headline = rawTxt
+                                ? rawTxt.length > 64
+                                  ? `${rawTxt.slice(0, 61)}...`
+                                  : rawTxt
+                                : post.musicTitle
+                                  ? `مقطع صوتي: ${post.musicTitle}`
+                                  : `منشور بقلم ${post.displayName}`;
+                              const firstPhoto =
+                                post.mediaUrls.find(u => !isVideoMediaUrl(u)) || null;
                               onShare({
                                 kind: 'post',
                                 targetId: post.id,
-                                title: post.displayName,
-                                subtitle: `@${post.username}`,
-                                snippet: post.content || 'منشور مصوّر على منصة LM',
-                                imageUrl: post.mediaUrls[0] || null,
+                                title: headline,
+                                subtitle: post.displayName,
+                                snippet: `${rawTxt || 'منشور مشارَك على منصة LM'}\n👍 ${post.score} · 💬 ${post.commentsCount}`,
+                                imageUrl: firstPhoto,
                                 avatarUrl: post.avatarUrl,
                                 avatarInitials: post.avatarInitials,
                                 path: `/post/${post.id}`,
@@ -1876,22 +1911,60 @@ export function SocialView({
                       )
                     )}
 
-                    {/* Voice-Note-Style Interactive Audio Player for Text+Audio Posts (Play/Pause, Smooth Track Scrubbing, Speed 0.5x–2x!) */}
+                    {/* Voice-Note-Style Interactive Audio Player for Text+Audio Posts (Play/Pause, Smooth Track Scrubbing, Speed 0.5x–2x + Free Reuse!) */}
                     {post.musicUrl && post.mediaUrls.length === 0 && (
                       <div
                         onClick={e => e.stopPropagation()}
-                        className="mt-2.5 p-3 rounded-2xl bg-[#191A22]"
+                        className="mt-2.5 p-3 rounded-2xl bg-[#191A22] space-y-2"
                       >
                         <SmartVoicePill
                           url={post.musicUrl}
                           title={post.musicTitle || (lang === 'en' ? 'Audio Post' : 'مقطع صوتي')}
                         />
+                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedMusic({
+                                url: post.musicUrl!,
+                                title: post.musicTitle || post.displayName,
+                              });
+                              setComposerActive(true);
+                              setComposerExpanded(false);
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[11px] font-medium text-[#D4D4D8] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Music className="w-3 h-3 text-[#25F4EE]" />
+                            <span>استخدم الصوت في منشور</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                localStorage.setItem(
+                                  'lm_pulse_reused_audio',
+                                  JSON.stringify({
+                                    url: post.musicUrl!,
+                                    title: post.musicTitle || post.displayName,
+                                  })
+                                );
+                              } catch {
+                                // ignore
+                              }
+                              onOpenVideosWithAudio?.();
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-[#FE2C55]/15 hover:bg-[#FE2C55]/25 text-[11px] font-semibold text-[#FE2C55] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>استخدم في نبض</span>
+                          </button>
+                        </div>
                       </div>
                     )}
 
                     {/* Media: Telegram-Grade Seamless Collage Grid | Single-Tap opens Lightbox | Double-Tap triggers Upvote */}
                     {post.mediaUrls.length > 0 && (
-                      <div className="relative mt-2.5 rounded-[16px] overflow-hidden border border-[#94B3D6]/[0.12] bg-[#0B121B]">
+                      <div className="relative mt-2.5 rounded-[16px] overflow-hidden border border-white/[0.08] bg-[#121212]">
                         <MediaCollageGrid
                           urls={post.mediaUrls}
                           onSelect={idx => handleMediaTap(post, idx)}
@@ -1911,22 +1984,46 @@ export function SocialView({
                             onClick={e => e.stopPropagation()}
                             className="pointer-events-none absolute inset-x-3 bottom-3 z-20 flex items-center justify-between gap-2"
                           >
-                            <div className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/72 backdrop-blur-xl border border-white/15 max-w-[75%]">
-                              <Music
-                                className={`w-3.5 h-3.5 shrink-0 transition-colors ${
-                                  isPostMusicPlaying ? 'text-[#34D399]' : 'text-white/80'
-                                }`}
-                              />
-                              {isPostMusicPlaying && (
-                                <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
-                                  <span className="w-[2px] h-2 bg-[#34D399] rounded-full animate-pulse" />
-                                  <span className="w-[2px] h-3 bg-[#34D399] rounded-full animate-pulse [animation-delay:150ms]" />
-                                  <span className="w-[2px] h-1.5 bg-[#34D399] rounded-full animate-pulse [animation-delay:300ms]" />
+                            <div className="pointer-events-auto flex items-center gap-1.5 max-w-[82%]">
+                              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/72 backdrop-blur-xl border border-white/15 min-w-0">
+                                <Music
+                                  className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+                                    isPostMusicPlaying ? 'text-[#34D399]' : 'text-white/80'
+                                  }`}
+                                />
+                                {isPostMusicPlaying && (
+                                  <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
+                                    <span className="w-[2px] h-2 bg-[#34D399] rounded-full animate-pulse" />
+                                    <span className="w-[2px] h-3 bg-[#34D399] rounded-full animate-pulse [animation-delay:150ms]" />
+                                    <span className="w-[2px] h-1.5 bg-[#34D399] rounded-full animate-pulse [animation-delay:300ms]" />
+                                  </span>
+                                )}
+                                <span className="text-[11.5px] font-medium text-white truncate">
+                                  {post.musicTitle || (lang === 'en' ? 'Attached Audio' : 'موسيقى مرفقة')}
                                 </span>
-                              )}
-                              <span className="text-[11.5px] font-medium text-white truncate">
-                                {post.musicTitle || (lang === 'en' ? 'Attached Audio' : 'موسيقى مرفقة')}
-                              </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  try {
+                                    localStorage.setItem(
+                                      'lm_pulse_reused_audio',
+                                      JSON.stringify({
+                                        url: post.musicUrl!,
+                                        title: post.musicTitle || post.displayName,
+                                      })
+                                    );
+                                  } catch {
+                                    // ignore
+                                  }
+                                  onOpenVideosWithAudio?.();
+                                }}
+                                title="استخدم الصوت في نبض"
+                                className="px-2.5 py-1.5 rounded-full bg-black/72 hover:bg-[#FE2C55] border border-white/15 text-[10.5px] font-semibold text-white shrink-0 cursor-pointer transition-colors"
+                              >
+                                استخدم الصوت
+                              </button>
                             </div>
 
                             <button
@@ -2008,7 +2105,7 @@ export function SocialView({
                           />
                           <span className="font-semibold text-white truncate">{post.quotedPost.displayName}</span>
                           {post.quotedPost.verified && <VerifiedIcon />}
-                          <span className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{post.quotedPost.username}</span>
+                          
                           <span className="text-[#585860]">·</span>
                           <span className="text-[10.5px] text-[#7A7A85] shrink-0">{post.quotedPost.createdAt}</span>
                         </div>
@@ -2618,7 +2715,7 @@ export function SocialView({
                     </div>
                     {dPost && (
                       <div className="text-[11.5px] text-[#A6A7B2] font-mono-num truncate">
-                        @{dPost.username} · {dPost.createdAt}
+                        {dPost.createdAt}
                       </div>
                     )}
                   </div>
@@ -2628,22 +2725,32 @@ export function SocialView({
                   {dPost && onShare && (
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const rawTxt = (dPost.content || '').replace(/\s+/g, ' ').trim();
+                        const headline = rawTxt
+                          ? rawTxt.length > 64
+                            ? `${rawTxt.slice(0, 61)}...`
+                            : rawTxt
+                          : dPost.musicTitle
+                            ? `مقطع صوتي: ${dPost.musicTitle}`
+                            : `منشور بقلم ${dPost.displayName}`;
+                        const firstPhoto =
+                          dPost.mediaUrls.find(u => !isVideoMediaUrl(u)) || null;
                         onShare({
                           kind: 'post',
                           targetId: dPost.id,
-                          title: dPost.displayName,
-                          subtitle: `@${dPost.username}`,
-                          snippet: dPost.content || 'منشور على منصة LM',
-                          imageUrl: dPost.mediaUrls[0] || null,
+                          title: headline,
+                          subtitle: dPost.displayName,
+                          snippet: `${rawTxt || 'منشور على منصة LM'}\n👍 ${dPost.score} · 💬 ${dPost.commentsCount}`,
+                          imageUrl: firstPhoto,
                           avatarUrl: dPost.avatarUrl,
                           avatarInitials: dPost.avatarInitials,
                           path: `/post/${dPost.id}`,
                           onShared: nextCount => {
                             setPosts(prev => prev.map(p => (p.id === dPost.id ? { ...p, sharesCount: nextCount } : p)));
                           },
-                        })
-                      }
+                        });
+                      }}
                       title={lang === 'en' ? 'Share' : 'مشاركة'}
                       className="w-10 h-10 rounded-full text-[#D4D4D8] hover:text-white hover:bg-white/[0.08] flex items-center justify-center cursor-pointer shrink-0 transition-colors"
                     >
@@ -2693,7 +2800,7 @@ export function SocialView({
                               {dPost.verified && <VerifiedIcon />}
                             </div>
                             <div className="text-[11.5px] text-[#8DA2BC] font-mono-num">
-                              @{dPost.username} · {dPost.createdAt}
+                              {dPost.createdAt}
                             </div>
                           </div>
                         </button>
@@ -2729,16 +2836,55 @@ export function SocialView({
                       )}
 
                       {dPost.musicUrl && dPost.mediaUrls.length === 0 && (
-                        <div className="p-3 rounded-2xl bg-[#191A22]">
+                        <div className="p-3 rounded-2xl bg-[#191A22] space-y-2">
                           <SmartVoicePill
                             url={dPost.musicUrl}
                             title={dPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
                           />
+                          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                closePostDetail();
+                                setSelectedMusic({
+                                  url: dPost.musicUrl!,
+                                  title: dPost.musicTitle || dPost.displayName,
+                                });
+                                setComposerActive(true);
+                              }}
+                              className="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] text-[11px] font-medium text-[#D4D4D8] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Music className="w-3 h-3 text-[#25F4EE]" />
+                              <span>استخدم الصوت في منشور</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem(
+                                    'lm_pulse_reused_audio',
+                                    JSON.stringify({
+                                      url: dPost.musicUrl!,
+                                      title: dPost.musicTitle || dPost.displayName,
+                                    })
+                                  );
+                                } catch {
+                                  // ignore
+                                }
+                                closePostDetail();
+                                onOpenVideosWithAudio?.();
+                              }}
+                              className="px-2.5 py-1 rounded-full bg-[#FE2C55]/15 hover:bg-[#FE2C55]/25 text-[11px] font-semibold text-[#FE2C55] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>استخدم في نبض</span>
+                            </button>
+                          </div>
                         </div>
                       )}
 
                       {dPost.mediaUrls.length > 0 && (
-                        <div className="relative rounded-[16px] overflow-hidden border border-[#94B3D6]/[0.12] bg-[#0B121B]">
+                        <div className="relative rounded-[16px] overflow-hidden border border-white/[0.08] bg-[#121212]">
                           <MediaCollageGrid
                             urls={dPost.mediaUrls}
                             onSelect={idx =>
@@ -2804,7 +2950,7 @@ export function SocialView({
                               size={22}
                             />
                             <span className="font-semibold text-white">{dPost.quotedPost.displayName}</span>
-                            <span className="text-[11px] text-[#8DA2BC] font-mono-num">@{dPost.quotedPost.username}</span>
+                            
                           </div>
                           {dPost.quotedPost.content && (
                             <p className="text-[13px] text-[#D7E3F0] leading-relaxed">{dPost.quotedPost.content}</p>
@@ -3654,7 +3800,6 @@ export function SocialView({
                                 <span>{vw.displayName}</span>
                                 {vw.verified && <VerifiedIcon />}
                               </div>
-                              <div className="text-[10.5px] text-[#8E8E93] font-mono-num">@{vw.username}</div>
                             </div>
                           </div>
                           {vw.reaction && <span className="shrink-0">{resolveReaction(vw.reaction).renderIcon(20)}</span>}
@@ -4200,7 +4345,7 @@ export function SocialView({
                     {quotingPost.verified && <VerifiedIcon />}
                   </div>
                   <div className="text-[11.5px] text-[#8E8E93] font-mono-num truncate">
-                    @{quotingPost.username} · {quotingPost.createdAt}
+                    {quotingPost.createdAt}
                   </div>
                 </div>
               </div>
@@ -4322,7 +4467,6 @@ export function SocialView({
                             <span>{r.displayName}</span>
                             {r.verified && <VerifiedIcon />}
                           </div>
-                          <div className="text-[11px] text-[#8E8E93] font-mono-num truncate">@{r.username}</div>
                         </div>
                       </div>
                       <span className="shrink-0">{resolveReaction(r.reaction).renderIcon(22)}</span>

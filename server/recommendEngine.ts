@@ -126,6 +126,7 @@ export interface UserInterestProfile {
   followingSet: Set<string>;
   authorAffinity: Map<string, number>;
   keywordAffinity: Map<string, number>;
+  watchedIds: Set<string>;
   topTopics: Array<{ keyword: string; score: number }>;
 }
 
@@ -133,9 +134,10 @@ export function buildUserInterestProfile(userId?: string | null): UserInterestPr
   const followingSet = new Set<string>();
   const authorAffinity = new Map<string, number>();
   const keywordAffinity = new Map<string, number>();
+  const watchedIds = new Set<string>();
 
   if (!userId) {
-    return { followingSet, authorAffinity, keywordAffinity, topTopics: [] };
+    return { followingSet, authorAffinity, keywordAffinity, watchedIds, topTopics: [] };
   }
 
   const followRows = db.prepare('SELECT following_id FROM user_follows WHERE follower_id = ?').all(userId) as Array<{
@@ -144,14 +146,17 @@ export function buildUserInterestProfile(userId?: string | null): UserInterestPr
   for (const r of followRows) followingSet.add(r.following_id);
 
   const ixRows = db.prepare(`
-    SELECT author_id, keywords_json, weight
+    SELECT target_id, action, author_id, keywords_json, weight
     FROM user_interactions
     WHERE user_id = ?
     ORDER BY rowid DESC
-    LIMIT 180
-  `).all(userId) as Array<{ author_id: string | null; keywords_json: string; weight: number }>;
+    LIMIT 240
+  `).all(userId) as Array<{ target_id: string; action: string; author_id: string | null; keywords_json: string; weight: number }>;
 
   ixRows.forEach((row, idx) => {
+    if (row.target_id && (row.action === 'watch' || row.action === 'like' || row.action === 'react' || row.action === 'save')) {
+      watchedIds.add(row.target_id);
+    }
     // Exponential recency decay so latest interests dominate smoothly
     const decay = Math.pow(0.985, idx);
     const w = Number(row.weight || 1) * decay;
@@ -175,7 +180,7 @@ export function buildUserInterestProfile(userId?: string | null): UserInterestPr
     .slice(0, 10)
     .map(([keyword, score]) => ({ keyword, score: Math.round(score * 10) / 10 }));
 
-  return { followingSet, authorAffinity, keywordAffinity, topTopics };
+  return { followingSet, authorAffinity, keywordAffinity, watchedIds, topTopics };
 }
 
 export interface RankableItem {
@@ -228,23 +233,31 @@ export function rankFeedItems<T extends RankableItem>(items: T[], userId?: strin
     }
     topicScore = Math.max(-24, Math.min(38, topicScore));
 
-    // 5. Freshness boost (newly created posts/videos/lives surface smoothly)
-    const freshnessScore = item.isOwnFresh ? 45 : Math.max(0, 14 - item.recencyIndex * 1.4);
+    // 5. Freshness + Unseen Discovery priority (NEVER lock user onto already-seen items first!)
+    const freshnessScore = item.isOwnFresh ? 48 : Math.max(0, 14 - item.recencyIndex * 1.4);
+    const unseenBoost = item.isOwnFresh ? 36 : profile.watchedIds.has(item.id) ? -18 : 26;
 
-    // 6. Mild penalty for 3+ report sensitive items in default ranking (still allowed, behind blur!)
+    // 6. Controlled stochastic discovery factor so popular & niche hidden gems rotate freshly every visit
+    const jitter = Math.random() * 11;
+
+    // 7. Mild penalty for 3+ report sensitive items in default ranking (still allowed, behind blur!)
     const sensitiveAdj = item.isSensitive ? -6 : 0;
 
-    const total = engagementScore + followScore + authorScore + topicScore + freshnessScore + sensitiveAdj;
-    const isDiscoveryCandidate = !profile.followingSet.has(item.authorId) && rawAuthorAff <= 0 && topicScore <= 2;
+    const total =
+      engagementScore + followScore + authorScore + topicScore + freshnessScore + unseenBoost + jitter + sensitiveAdj;
+    const isDiscoveryCandidate =
+      !item.isOwnFresh && !profile.followingSet.has(item.authorId) && rawAuthorAff <= 0 && topicScore <= 2;
 
     return { item, total, isDiscoveryCandidate, engagementScore };
   });
 
   scored.sort((a, b) => b.total - a.total);
 
-  // Separate personalized primary stream & discovery pool for 80/20 TikTok exploration mixing
+  // Separate personalized primary stream & discovery pool for balanced TikTok exploration mixing
   const primary = scored.filter(s => !s.isDiscoveryCandidate);
-  const discovery = scored.filter(s => s.isDiscoveryCandidate).sort((a, b) => b.engagementScore - a.engagementScore);
+  const discovery = scored
+    .filter(s => s.isDiscoveryCandidate)
+    .sort((a, b) => (b.engagementScore * 0.65 + Math.random() * 14) - (a.engagementScore * 0.65 + Math.random() * 14));
 
   if (primary.length === 0 || discovery.length === 0) {
     return scored.map(s => s.item);

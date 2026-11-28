@@ -84,9 +84,9 @@ const WORLD_LANGUAGES = [
 ];
 
 const CHAT_WALLPAPERS = [
-  { id: 'lm-wp-space', label: 'فضاء LM', labelEn: 'LM Cosmic Space', swatch: '#0B0E15', accent: '#CBD5E1' },
-  { id: 'lm-wp-orbit', label: 'مدار عميق', labelEn: 'Deep Orbit', swatch: '#090B10', accent: '#94A3B8' },
-  { id: 'lm-wp-lunar', label: 'سكون القمر', labelEn: 'Lunar Calm', swatch: '#101218', accent: '#64748B' },
+  { id: 'lm-wp-space', label: 'فضاء LM', labelEn: 'LM Cosmic Space', swatch: '#121212', accent: '#F1F1F2' },
+  { id: 'lm-wp-orbit', label: 'مدار عميق', labelEn: 'Deep Orbit', swatch: '#101014', accent: '#A6A7B2' },
+  { id: 'lm-wp-lunar', label: 'سكون القمر', labelEn: 'Lunar Calm', swatch: '#14141A', accent: '#8E8E93' },
 ] as const;
 
 type ChatRichEmbed =
@@ -1226,35 +1226,35 @@ export function ChatView({
   const hasText = draft.trim().length > 0;
 
   return (
-    <div className="h-full w-full bg-[#0E1621] text-[#EEF2F7] flex overflow-hidden">
+    <div className="h-full w-full bg-[#121212] text-[#EEF2F7] flex overflow-hidden">
       {/* Left Conversations List — Sleek Midnight Slate Sidebar */}
       <aside
         className={`${
           mobileShowList ? 'flex' : 'hidden md:flex'
-        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#131E2B] md:border-e md:border-[#94B3D6]/[0.1]`}
+        } w-full md:w-[310px] lg:w-[340px] shrink-0 flex-col bg-[#16171D] md:border-e md:border-[#F1F1F2]/[0.1]`}
       >
         <div className="px-3.5 pt-3.5 pb-1 space-y-2.5">
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-10 rounded-full bg-[#1B2938] border border-[#94B3D6]/[0.12] focus-within:border-[#7C5CFF]/60 px-3.5 flex items-center gap-2 transition-colors">
-              <Search className="w-3.5 h-3.5 text-[#8DA2BC]" />
+            <div className="flex-1 h-10 rounded-full bg-[#1E1F26] border border-[#F1F1F2]/[0.12] focus-within:border-[#FE2C55]/60 px-3.5 flex items-center gap-2 transition-colors">
+              <Search className="w-3.5 h-3.5 text-[#8E8E93]" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={lang === 'ar' ? 'بحث في المحادثات...' : 'Search chats...'}
-                className="flex-1 bg-transparent text-[13px] text-white placeholder:text-[#7E93AB] outline-none"
+                className="flex-1 bg-transparent text-[13px] text-white placeholder:text-[#8E8E93] outline-none"
               />
             </div>
             <button
               type="button"
               onClick={() => setNewChatOpen(true)}
               title="محادثة جديدة"
-              className="w-10 h-10 rounded-full bg-[#1B2938] hover:bg-[#7C5CFF]/25 border border-[#94B3D6]/[0.15] hover:border-[#7C5CFF]/55 text-[#E2EEFF] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+              className="w-10 h-10 rounded-full bg-[#1E1F26] hover:bg-[#FE2C55]/25 border border-[#F1F1F2]/[0.15] hover:border-[#FE2C55]/55 text-[#F1F1F2] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
             >
               <Plus className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex items-center gap-3.5 text-[12.5px] border-b border-[#94B3D6]/[0.1] overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-3.5 text-[12.5px] border-b border-[#F1F1F2]/[0.1] overflow-x-auto no-scrollbar">
             {[
               { id: 'all' as const, label: t(lang, 'all') },
               { id: 'personal' as const, label: t(lang, 'chat_personal') },
@@ -1267,12 +1267,12 @@ export function ChatView({
                 type="button"
                 onClick={() => setFolder(f.id)}
                 className={`pb-2.5 relative transition-colors cursor-pointer shrink-0 ${
-                  folder === f.id ? 'text-white font-semibold' : 'text-[#8DA2BC] hover:text-white'
+                  folder === f.id ? 'text-white font-semibold' : 'text-[#8E8E93] hover:text-white'
                 }`}
               >
                 <span>{f.label}</span>
                 {folder === f.id && (
-                  <span className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-gradient-to-r from-[#7C5CFF] to-[#498AF5]" />
+                  <span className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-gradient-to-r from-[#FE2C55] to-[#25F4EE]" />
                 )}
               </button>
             ))}
@@ -1306,7 +1306,7 @@ export function ChatView({
                     <div className="relative shrink-0">
                       <UserAvatar initials={call.hostInitials} avatarUrl={call.hostAvatarUrl} size={42} />
                       {isActive && (
-                        <span className="absolute -bottom-0.5 -end-0.5 w-3.5 h-3.5 rounded-full bg-[#34D399] border-2 border-[#0A0A0C] animate-pulse" />
+                        <span className="absolute -bottom-0.5 -end-0.5 w-3.5 h-3.5 rounded-full bg-[#34D399] border-2 border-[#121212] animate-pulse" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0 text-start">
@@ -1444,7 +1444,7 @@ export function ChatView({
       </aside>
 
       {/* Active Conversation Stage */}
-      <section className={`${mobileShowList ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-[#0A0A0C] min-w-0 relative`}>
+      <section className={`${mobileShowList ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-[#121212] min-w-0 relative`}>
         {/* FLOATING HEADER — Replaced cleanly by WhatsApp-Style Search Bar (Back Arrow, NO X, Jump-to-Message!) */}
         {activeConv && (
           msgSearchOpen ? (
@@ -1452,7 +1452,7 @@ export function ChatView({
               onClick={e => e.stopPropagation()}
               className="absolute top-3 inset-x-3.5 md:inset-x-5 z-30 flex flex-col items-center gap-2"
             >
-              <div className="w-full max-w-[680px] h-11 rounded-full bg-[#13131A]/96 backdrop-blur-2xl border border-[#34D399]/35 px-2 flex items-center gap-2 shadow-2xl">
+              <div className="w-full max-w-[680px] h-11 rounded-full bg-[#181920]/96 backdrop-blur-2xl border border-[#34D399]/35 px-2 flex items-center gap-2 shadow-2xl">
                 <button
                   type="button"
                   onClick={() => {
@@ -1520,7 +1520,7 @@ export function ChatView({
 
               {/* Clickable WhatsApp-Style Search Matches Dropdown */}
               {msgSearchQ.trim() && (
-                <div className="w-full max-w-[680px] max-h-[240px] overflow-y-auto rounded-2xl bg-[#13131A]/97 backdrop-blur-2xl border border-white/[0.12] shadow-2xl divide-y divide-white/[0.06]">
+                <div className="w-full max-w-[680px] max-h-[240px] overflow-y-auto rounded-2xl bg-[#181920]/97 backdrop-blur-2xl border border-white/[0.12] shadow-2xl divide-y divide-white/[0.06]">
                   {searchMatches.length === 0 ? (
                     <div className="py-5 text-center text-xs text-[#8E8E93]">
                       {lang === 'en' ? 'No matching messages' : 'لا توجد رسائل مطابقة للبحث'}
@@ -1551,7 +1551,7 @@ export function ChatView({
             </header>
           ) : (
             <header className="pointer-events-none absolute top-3 inset-x-3 md:inset-x-5 z-20 flex items-center justify-between gap-2">
-              <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#121620]/78 backdrop-blur-xl min-w-0">
+              <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#181920]/78 backdrop-blur-xl min-w-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -1605,7 +1605,7 @@ export function ChatView({
               </div>
 
               {/* Borderless Floating Header Controls: Cosmic Space Theme + Search + Voice Call */}
-              <div className="pointer-events-auto relative flex items-center gap-1 p-1 rounded-full bg-[#121620]/78 backdrop-blur-xl">
+              <div className="pointer-events-auto relative flex items-center gap-1 p-1 rounded-full bg-[#181920]/78 backdrop-blur-xl">
                 <button
                   type="button"
                   onClick={() => setWallpaperMenuOpen(v => !v)}
@@ -1645,9 +1645,9 @@ export function ChatView({
                 {wallpaperMenuOpen && (
                   <div
                     onClick={e => e.stopPropagation()}
-                    className="absolute top-full end-0 mt-2 z-40 w-[215px] rounded-2xl bg-[#19232E]/98 border border-white/[0.1] p-2 space-y-1 shadow-2xl"
+                    className="absolute top-full end-0 mt-2 z-40 w-[215px] rounded-2xl bg-[#1E1F28]/98 border border-white/[0.1] p-2 space-y-1 shadow-2xl"
                   >
-                    <div className="px-2.5 py-1 text-[11px] font-semibold text-[#8DA2BC]">
+                    <div className="px-2.5 py-1 text-[11px] font-semibold text-[#8E8E93]">
                       {lang === 'en' ? 'Chat Wallpaper' : 'خلفية المحادثة'}
                     </div>
                     {CHAT_WALLPAPERS.map(wp => {
@@ -1685,7 +1685,7 @@ export function ChatView({
         {/* Persistent Top Floating Audio Bar (Like Telegram — keep scrolling while voice plays!) */}
         {floatingVoice && !msgSearchOpen && (
           <div className="pointer-events-none absolute top-[62px] inset-x-3 md:inset-x-5 z-20 flex justify-center">
-            <div className="pointer-events-auto relative w-full max-w-[540px] rounded-full bg-[#151B27]/92 backdrop-blur-xl px-3 py-1.5 flex items-center gap-2.5 overflow-hidden shadow-lg">
+            <div className="pointer-events-auto relative w-full max-w-[540px] rounded-full bg-[#1A1B22]/92 backdrop-blur-xl px-3 py-1.5 flex items-center gap-2.5 overflow-hidden shadow-lg">
               <button
                 type="button"
                 onClick={() => {
@@ -1758,8 +1758,8 @@ export function ChatView({
           className="relative z-10 flex-1 overflow-y-auto px-3 sm:px-4 pt-20 pb-28 space-y-2"
         >
           {activeConv?.pinnedMessage && (
-            <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#17212B]/88 backdrop-blur-md border border-[#94B3D6]/[0.15] flex items-center gap-2 text-[11.5px] text-[#B8CAE0] mb-2 shadow-md">
-              <Pin className="w-3 h-3 text-[#7C5CFF] shrink-0" />
+            <div className="mx-auto w-fit max-w-full px-3.5 py-1.5 rounded-full bg-[#1C1D24]/88 backdrop-blur-md border border-[#F1F1F2]/[0.15] flex items-center gap-2 text-[11.5px] text-[#B8CAE0] mb-2 shadow-md">
+              <Pin className="w-3 h-3 text-[#FE2C55] shrink-0" />
               <span className="truncate">{activeConv.pinnedMessage}</span>
             </div>
           )}
@@ -1774,7 +1774,7 @@ export function ChatView({
                 {activeConv ? (
                   <div className="relative">
                     <UserAvatar initials={activeConv.title.slice(0, 2)} avatarUrl={activeConv.avatarUrl} size={76} />
-                    <span className="absolute -bottom-1 -end-1 w-7 h-7 rounded-full bg-[#0A0A0C] border border-white/15 flex items-center justify-center">
+                    <span className="absolute -bottom-1 -end-1 w-7 h-7 rounded-full bg-[#121212] border border-white/15 flex items-center justify-center">
                       <LmBrandMark size={16} />
                     </span>
                   </div>
@@ -1853,7 +1853,7 @@ export function ChatView({
               <React.Fragment key={msg.id}>
                 {showDateDivider && (
                   <div className="flex justify-center py-2">
-                    <span className="px-3 py-1 rounded-full bg-[#121620]/75 backdrop-blur-md text-[11px] font-semibold text-white/85">
+                    <span className="px-3 py-1 rounded-full bg-[#181920]/75 backdrop-blur-md text-[11px] font-semibold text-white/85">
                       {curDateBucket}
                     </span>
                   </div>
@@ -1883,7 +1883,7 @@ export function ChatView({
                   isHighlighted
                     ? 'bg-[#25F4EE]/15 ring-1 ring-[#25F4EE]/55 p-1.5 -mx-1.5'
                     : isBeingEdited
-                    ? 'bg-[#2AABEE]/14 ring-1 ring-[#2AABEE]/45 p-1.5 -mx-1.5'
+                    ? 'bg-[#FE2C55]/14 ring-1 ring-[#FE2C55]/45 p-1.5 -mx-1.5'
                     : ''
                 }`}
               >
@@ -1982,7 +1982,7 @@ export function ChatView({
                                 e.stopPropagation();
                                 onOpenVideo?.(richEmbed.id);
                               }}
-                              className="relative w-[245px] sm:w-[280px] aspect-[10/13] max-h-[340px] rounded-[20px] overflow-hidden lm-media-rim bg-[#0D1018] cursor-pointer group block text-start"
+                              className="relative w-[245px] sm:w-[280px] aspect-[10/13] max-h-[340px] rounded-[20px] overflow-hidden lm-media-rim bg-[#181920] cursor-pointer group block text-start"
                             >
                               {richEmbed.thumbUrl ? (
                                 thumbIsVideo ? (
@@ -2001,7 +2001,7 @@ export function ChatView({
                                   />
                                 )
                               ) : (
-                                <div className="w-full h-full bg-gradient-to-br from-[#191C26] to-[#0B0E15] flex items-center justify-center">
+                                <div className="w-full h-full bg-gradient-to-br from-[#1E1F26] to-[#121212] flex items-center justify-center">
                                   <LmBrandMark size={44} />
                                 </div>
                               )}
@@ -2126,7 +2126,7 @@ export function ChatView({
                         style={{ WebkitTouchCallout: 'none' }}
                         className={`cursor-pointer px-3.5 py-2 text-[14.5px] leading-[1.55] break-words ${
                           isAi
-                            ? 'rounded-[18px] rounded-es-[5px] bg-[#182534] border border-[#7C5CFF]/30 text-[#EEF2F7]'
+                            ? 'rounded-[18px] rounded-es-[5px] bg-[#1E1F28] border border-[#FE2C55]/30 text-[#EEF2F7]'
                             : msg.aiSummoned
                             ? `rounded-[18px] ${isMine ? 'rounded-ee-[5px]' : 'rounded-es-[5px]'} border lm-ai-summon-ring text-white`
                             : isMine
@@ -2286,7 +2286,7 @@ export function ChatView({
                             {translated && (
                               <div
                                 className={`mt-1.5 pt-1.5 border-t flex items-center justify-between gap-2 text-[10.5px] ${
-                                  isMine ? 'border-white/20 text-white/85' : 'border-white/10 text-[#8DA2BC]'
+                                  isMine ? 'border-white/20 text-white/85' : 'border-white/10 text-[#8E8E93]'
                                 }`}
                               >
                                 <span className="inline-flex items-center gap-1">
@@ -2330,7 +2330,7 @@ export function ChatView({
 
                         <div
                           className={`mt-1 flex items-center justify-end gap-1 text-[10.5px] font-mono-num ${
-                            isMine ? 'text-white/80' : 'text-[#8DA2BC]'
+                            isMine ? 'text-white/80' : 'text-[#8E8E93]'
                           }`}
                         >
                           {msg.isEdited && <span>معدّلة ·</span>}
@@ -2430,14 +2430,14 @@ export function ChatView({
             <div className="pointer-events-auto w-full max-w-[780px] flex flex-col gap-2">
               {/* Authentic Telegram Context Bar Above Bottom Composer: Edit Message / Reply / Ask LM AI */}
               {(editingMsg || replyTarget || sharedForAi) && (
-                <div className="w-full max-w-[380px] self-start rounded-2xl bg-[#19232E]/96 border border-white/[0.08] px-3.5 py-2 flex items-center gap-2.5">
+                <div className="w-full max-w-[380px] self-start rounded-2xl bg-[#1E1F28]/96 border border-white/[0.08] px-3.5 py-2 flex items-center gap-2.5">
                   <span
                     className={`w-[3px] self-stretch rounded-full shrink-0 ${
-                      editingMsg ? 'bg-[#2AABEE]' : sharedForAi ? 'bg-[#A78BFA]' : 'bg-[#38BDF8]'
+                      editingMsg ? 'bg-[#FE2C55]' : sharedForAi ? 'bg-[#A78BFA]' : 'bg-[#38BDF8]'
                     }`}
                   />
                   {editingMsg ? (
-                    <Pencil className="w-4 h-4 text-[#2AABEE] shrink-0" />
+                    <Pencil className="w-4 h-4 text-[#FE2C55] shrink-0" />
                   ) : sharedForAi ? (
                     <Sparkles className="w-4 h-4 text-[#A78BFA] shrink-0" />
                   ) : (
@@ -2446,7 +2446,7 @@ export function ChatView({
                   <div className="flex-1 min-w-0">
                     <div
                       className={`text-[11.5px] font-bold truncate ${
-                        editingMsg ? 'text-[#2AABEE]' : sharedForAi ? 'text-[#C4B5FD]' : 'text-[#38BDF8]'
+                        editingMsg ? 'text-[#FE2C55]' : sharedForAi ? 'text-[#C4B5FD]' : 'text-[#38BDF8]'
                       }`}
                     >
                       {editingMsg
@@ -2478,7 +2478,7 @@ export function ChatView({
                       }
                     }}
                     aria-label="إلغاء"
-                    className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#8DA2BC] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                    className="w-7 h-7 rounded-full hover:bg-white/[0.1] text-[#8E8E93] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -2571,7 +2571,7 @@ export function ChatView({
                             type="submit"
                             disabled={!hasText}
                             title={lang === 'en' ? 'Save edit' : 'حفظ التعديل'}
-                            className="w-[38px] h-[38px] rounded-full bg-[#2AABEE] hover:bg-[#229ED9] disabled:opacity-40 text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                            className="w-[38px] h-[38px] rounded-full bg-[#FE2C55] hover:bg-[#E5254B] disabled:opacity-40 text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
                           >
                             <Check className="w-5 h-5" strokeWidth={2.5} />
                           </button>
@@ -2620,7 +2620,7 @@ export function ChatView({
         )}
         {/* Subtle Telegram Toast Feedback Pill */}
         {chatToast && (
-          <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-40 px-4 py-1.5 rounded-full bg-[#19232E]/95 border border-white/[0.12] text-xs font-semibold text-white">
+          <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-40 px-4 py-1.5 rounded-full bg-[#1E1F28]/95 border border-white/[0.12] text-xs font-semibold text-white">
             {chatToast}
           </div>
         )}
@@ -2670,7 +2670,7 @@ export function ChatView({
                         ? '🖼️ صورة'
                         : translations[contextMsg.id]?.text || contextMsg.content}
               </div>
-              <div className={`mt-1 text-[10.5px] font-mono-num text-end ${isMineCtx ? 'text-white/80' : 'text-[#8DA2BC]'}`}>
+              <div className={`mt-1 text-[10.5px] font-mono-num text-end ${isMineCtx ? 'text-white/80' : 'text-[#8E8E93]'}`}>
                 {contextMsg.isEdited && 'معدّلة · '}
                 {contextMsg.createdAt}
               </div>
@@ -2679,7 +2679,7 @@ export function ChatView({
             {/* 3. Authentic Telegram Vertical Action Menu BELOW Message */}
             <div
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-[268px] rounded-2xl bg-[#1C2632]/98 border border-white/[0.08] overflow-hidden shadow-2xl"
+              className="w-full max-w-[268px] rounded-2xl bg-[#1E1F28]/98 border border-white/[0.08] overflow-hidden shadow-2xl"
             >
               {contextSubmenu === 'main' ? (
                 <div className="divide-y divide-white/[0.06] text-[14px] font-medium text-[#F1F1F2]">
@@ -2751,7 +2751,7 @@ export function ChatView({
                       className="w-full h-12 px-4 flex items-center justify-between hover:bg-white/[0.07] active:bg-white/[0.11] cursor-pointer transition-colors"
                     >
                       <span>{lang === 'en' ? 'Edit' : 'تعديل'}</span>
-                      <Pencil className="w-[18px] h-[18px] text-[#2AABEE]" strokeWidth={1.9} />
+                      <Pencil className="w-[18px] h-[18px] text-[#FE2C55]" strokeWidth={1.9} />
                     </button>
                   )}
 
@@ -2835,7 +2835,7 @@ export function ChatView({
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-[320px] rounded-2xl bg-[#1C2632] border border-white/[0.09] p-5 space-y-4 shadow-2xl"
+            className="w-full max-w-[320px] rounded-2xl bg-[#1E1F28] border border-white/[0.09] p-5 space-y-4 shadow-2xl"
           >
             <div className="space-y-1.5">
               <h3 className="text-[16px] font-bold text-white">
@@ -2905,7 +2905,7 @@ export function ChatView({
 
             {newChatType === 'dm' ? (
               <div className="space-y-2.5">
-                <div className="h-10 rounded-full bg-[#0A0A0C] border border-white/[0.1] px-3.5 flex items-center gap-2">
+                <div className="h-10 rounded-full bg-[#121212] border border-white/[0.1] px-3.5 flex items-center gap-2">
                   <Search className="w-3.5 h-3.5 text-[#7A7A85]" />
                   <input
                     autoFocus
@@ -2935,7 +2935,6 @@ export function ChatView({
                         <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={36} />
                         <div className="min-w-0 flex-1">
                           <div className="text-xs font-semibold text-white truncate">{u.displayName}</div>
-                          <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{u.username}</div>
                         </div>
                         <span className="text-[11px] text-[#34D399] font-medium">{t(lang, 'message')}</span>
                       </button>
@@ -2981,14 +2980,14 @@ export function ChatView({
                         ? 'Community name...'
                         : 'اسم المجتمع...'
                   }
-                  className="w-full h-11 rounded-2xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none focus:border-[#34D399]/50"
+                  className="w-full h-11 rounded-2xl bg-[#121212] border border-white/[0.1] px-3.5 text-xs text-white outline-none focus:border-[#34D399]/50"
                 />
 
                 <input
                   value={newChatDesc}
                   onChange={e => setNewChatDesc(e.target.value)}
                   placeholder={lang === 'en' ? 'Short description (optional)...' : 'وصف مختصر (اختياري)...'}
-                  className="w-full h-10 rounded-2xl bg-[#0A0A0C] border border-white/[0.1] px-3.5 text-xs text-white outline-none focus:border-[#34D399]/50"
+                  className="w-full h-10 rounded-2xl bg-[#121212] border border-white/[0.1] px-3.5 text-xs text-white outline-none focus:border-[#34D399]/50"
                 />
 
                 {/* Searchable Initial Members Picker */}
@@ -2997,7 +2996,7 @@ export function ChatView({
                     <span>{lang === 'en' ? 'Add initial members' : 'إضافة أعضاء (اختياري)'}</span>
                     <span className="font-mono-num text-[#34D399]">{newChatMemberIds.length}</span>
                   </div>
-                  <div className="h-9 rounded-full bg-[#0A0A0C] border border-white/[0.09] px-3 flex items-center gap-2">
+                  <div className="h-9 rounded-full bg-[#121212] border border-white/[0.09] px-3 flex items-center gap-2">
                     <Search className="w-3 h-3 text-[#7A7A85]" />
                     <input
                       value={newChatMemberSearch}
@@ -3031,7 +3030,6 @@ export function ChatView({
                             <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={28} />
                             <div className="min-w-0 flex-1">
                               <div className="text-[11.5px] font-semibold text-white truncate">{u.displayName}</div>
-                              <div className="text-[10px] text-[#7A7A85] font-mono-num truncate">@{u.username}</div>
                             </div>
                             <span
                               className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center ${
@@ -3052,7 +3050,7 @@ export function ChatView({
                   className={`w-full px-3.5 py-2.5 rounded-2xl border text-xs flex items-center justify-between cursor-pointer transition-colors text-start gap-2 ${
                     newChatAiEnabled
                       ? 'bg-white/[0.08] border-white/25 text-white'
-                      : 'bg-[#0A0A0C] border-white/[0.08] text-[#8E8E93]'
+                      : 'bg-[#121212] border-white/[0.08] text-[#8E8E93]'
                   }`}
                 >
                   <span className="flex items-center gap-2">
@@ -3236,7 +3234,7 @@ export function ChatView({
                 .filter(x => x.embed !== null);
 
               return (
-                <div className="rounded-2xl bg-[#11131B] border border-white/[0.08] overflow-hidden">
+                <div className="rounded-2xl bg-[#16171D] border border-white/[0.08] overflow-hidden">
                   <div className="flex items-center border-b border-white/[0.07] px-2 pt-2 gap-1 overflow-x-auto no-scrollbar">
                     {[
                       { id: 'photos' as const, label: `الصور (${sharedPhotos.length})` },
@@ -3435,7 +3433,7 @@ export function ChatView({
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{member.username}</div>
+                        
                       </div>
                     </button>
                   ))}
@@ -3522,7 +3520,7 @@ export function ChatView({
       {chatLightbox && (
         <div
           onClick={() => setChatLightbox(null)}
-          className="fixed inset-0 z-[80] bg-[#070C14]/92 backdrop-blur-lg flex flex-col items-center justify-center p-4"
+          className="fixed inset-0 z-[80] bg-[#000000]/92 backdrop-blur-lg flex flex-col items-center justify-center p-4"
         >
           <div className="absolute top-4 end-4 z-10 flex items-center gap-2">
             {chatLightbox.urls.length > 1 && (
@@ -3549,7 +3547,7 @@ export function ChatView({
                   type="button"
                   onClick={() => setChatLightbox({ ...chatLightbox, idx: i })}
                   className={`w-12 h-12 rounded-xl overflow-hidden border-2 shrink-0 cursor-pointer transition-all ${
-                    i === chatLightbox.idx ? 'border-[#7C5CFF] scale-105' : 'border-transparent opacity-60 hover:opacity-100'
+                    i === chatLightbox.idx ? 'border-[#FE2C55] scale-105' : 'border-transparent opacity-60 hover:opacity-100'
                   }`}
                 >
                   <img src={u} alt="" className="w-full h-full object-cover" />

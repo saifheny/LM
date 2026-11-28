@@ -94,6 +94,10 @@ export function App() {
       kind: 'app',
       title: 'LM — المنصة الرقمية المتكاملة',
       snippet: 'المجتمع، نبض، بث مباشر، دردشة فورية، وLM AI في تطبيق واحد.',
+      imageUrl: '/lm-icon-512.png',
+      avatarUrl: null,
+      avatarInitials: 'LM',
+      badge: 'تطبيق LM',
       path: '/',
     });
   }, []);
@@ -256,6 +260,13 @@ export function App() {
           // ignore
         }
         setActiveTab('chat');
+      } else if (n.refTab === 'live' && n.refId) {
+        try {
+          localStorage.setItem('lm_live_focus_room_id', n.refId);
+        } catch {
+          // ignore
+        }
+        setActiveTab('live');
       } else if (n.refTab === 'profile' && n.refId) {
         openProfile(n.refId);
       } else {
@@ -301,7 +312,7 @@ export function App() {
     const liveId = liveMatch ? decodeURIComponent(liveMatch[1]) : params.get('live');
     if (liveId) {
       try {
-        localStorage.setItem('lm_live_room_id', liveId);
+        localStorage.setItem('lm_live_focus_room_id', liveId);
       } catch {
         // ignore
       }
@@ -461,6 +472,7 @@ export function App() {
                 setFocusedVideoId(vidId);
                 setActiveTab('videos');
               }}
+              onOpenVideosWithAudio={() => setActiveTab('videos')}
               onShare={setSharePayload}
             />
           )}
@@ -472,6 +484,7 @@ export function App() {
               onOpenProfile={openProfile}
               onOpenProfileByUsername={openProfileByUsername}
               onOpenHashtag={openHashtagFeed}
+              onOpenSocialWithAudio={() => setActiveTab('social')}
             />
           )}
           {activeTab === 'live' && (
@@ -569,6 +582,13 @@ export function App() {
                   // ignore
                 }
                 setActiveTab('chat');
+              } else if (target.refTab === 'live' && target.refId) {
+                try {
+                  localStorage.setItem('lm_live_focus_room_id', target.refId);
+                } catch {
+                  // ignore
+                }
+                setActiveTab('live');
               } else if (target.refTab === 'profile' && target.refId) {
                 openProfile(target.refId);
               } else {

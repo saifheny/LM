@@ -479,7 +479,6 @@ export function ProfileView({
                   <span className="truncate">{profileUser.displayName}</span>
                   {profileUser.verified && <VerifiedIcon />}
                 </div>
-                <div className="text-[11px] text-[#8E8E93] font-mono-num truncate">@{profileUser.username}</div>
               </div>
             </div>
             {isMe ? (
@@ -583,22 +582,27 @@ export function ProfileView({
               {onShare && (
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    const usableAvatar =
+                      profileUser.avatarUrl && !profileUser.avatarUrl.startsWith('lm:')
+                        ? profileUser.avatarUrl
+                        : null;
+                    const usableCover =
+                      profileUser.coverUrl && !profileUser.coverUrl.startsWith('lm:')
+                        ? profileUser.coverUrl
+                        : null;
                     onShare({
                       kind: 'profile',
+                      targetId: profileUser.id,
                       title: profileUser.displayName,
-                      subtitle: `@${profileUser.username}`,
+                      subtitle: profileUser.location || 'ملف شخصي على منصة LM',
                       snippet: profileUser.bio || profileUser.location || 'ملف شخصي على منصة LM',
-                      imageUrl:
-                        profileUser.coverUrl ||
-                        (profileUser.avatarUrl && !profileUser.avatarUrl.startsWith('lm:')
-                          ? profileUser.avatarUrl
-                          : null),
-                      avatarUrl: profileUser.avatarUrl,
+                      imageUrl: usableAvatar || usableCover || null,
+                      avatarUrl: usableAvatar,
                       avatarInitials: profileUser.avatarInitials,
                       path: `/u/${profileUser.username}`,
-                    })
-                  }
+                    });
+                  }}
                   title="مشاركة الملف الشخصي"
                   className="w-10 h-10 rounded-full bg-[#1E1F28] hover:bg-[#272936] text-[#F1F1F2] flex items-center justify-center cursor-pointer transition-colors"
                 >
@@ -666,7 +670,7 @@ export function ProfileView({
                   <span>{lang === 'ar' ? 'حساب خاص' : 'Private'}</span>
                 </span>
               )}
-              <span className="text-xs text-[#8E8E93] font-mono-num">@{profileUser.username}</span>
+              
             </div>
 
             {profileUser.bio && (
@@ -995,7 +999,7 @@ export function ProfileView({
                         />
                         <span className="font-semibold text-white truncate">{post.quotedPost.displayName}</span>
                         {post.quotedPost.verified && <VerifiedIcon />}
-                        <span className="text-[11px] text-[#8DA2BC] font-mono-num">@{post.quotedPost.username}</span>
+                        
                         <span className="text-[#697C93]">·</span>
                         <span className="text-[10.5px] text-[#8DA2BC]">{post.quotedPost.createdAt}</span>
                       </div>
@@ -1043,19 +1047,29 @@ export function ProfileView({
                     {onShare && (
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          const rawTxt = (post.content || '').replace(/\s+/g, ' ').trim();
+                          const headline = rawTxt
+                            ? rawTxt.length > 64
+                              ? `${rawTxt.slice(0, 61)}...`
+                              : rawTxt
+                            : post.musicTitle
+                              ? `مقطع صوتي: ${post.musicTitle}`
+                              : `منشور بقلم ${post.displayName}`;
+                          const firstPhoto =
+                            post.mediaUrls.find(u => !/\.(mp4|webm|mov|m4v)(\?|$)/i.test(u)) || null;
                           onShare({
                             kind: 'post',
                             targetId: post.id,
-                            title: post.displayName,
-                            subtitle: `@${post.username}`,
-                            snippet: post.content || 'منشور على منصة LM',
-                            imageUrl: post.mediaUrls[0] || null,
+                            title: headline,
+                            subtitle: post.displayName,
+                            snippet: `${rawTxt || 'منشور مشارَك على منصة LM'}\n👍 ${post.score} · 💬 ${post.commentsCount}`,
+                            imageUrl: firstPhoto,
                             avatarUrl: post.avatarUrl,
                             avatarInitials: post.avatarInitials,
                             path: `/post/${post.id}`,
-                          })
-                        }
+                          });
+                        }}
                         title={lang === 'en' ? 'Share' : 'مشاركة'}
                         className="w-9 h-9 rounded-full text-[#A6A7B2] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
                       >
@@ -1160,7 +1174,7 @@ export function ProfileView({
                     <UserAvatar initials={post.avatarInitials} avatarUrl={post.avatarUrl} size={28} />
                     <span className="font-semibold text-white">{post.displayName}</span>
                     {post.verified && <VerifiedIcon />}
-                    <span className="text-[#8E8E93] font-mono-num">@{post.username} · {post.createdAt}</span>
+                    <span className="text-[#8E8E93] font-mono-num">{post.createdAt}</span>
                   </div>
                   {post.content && (
                     <div className="text-[14px] text-[#E4E4E7] leading-relaxed line-clamp-4">
@@ -1222,7 +1236,7 @@ export function ProfileView({
                                   <span>{post.displayName}</span>
                                   {post.verified && <VerifiedIcon />}
                                 </div>
-                                <div className="text-[10.5px] text-[#7A7A85]">@{post.username} · {post.createdAt}</div>
+                                <div className="text-[10.5px] text-[#7A7A85]">{post.createdAt}</div>
                               </div>
                             </button>
                             <button
@@ -1575,7 +1589,6 @@ export function ProfileView({
                           <span>{u.displayName}</span>
                           {u.verified && <VerifiedIcon />}
                         </div>
-                        <div className="text-[11px] text-[#7A7A85] font-mono-num truncate">@{u.username}</div>
                       </div>
                     </button>
                   ))

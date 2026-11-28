@@ -495,6 +495,11 @@ export function initDatabase() {
     // column already exists
   }
   try {
+    db.exec('ALTER TABLE short_videos ADD COLUMN audio_url TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
     db.exec('ALTER TABLE ai_messages ADD COLUMN attachment_url TEXT;');
   } catch {
     // column already exists

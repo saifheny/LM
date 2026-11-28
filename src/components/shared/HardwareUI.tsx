@@ -100,8 +100,8 @@ export function ObsidianComposerPill({
         isGhostTransparent
           ? 'bg-black/38 backdrop-blur-sm border border-white/[0.14]'
           : transparent
-            ? 'bg-[#1D1F28]/96 border border-white/[0.14]'
-            : 'bg-[#22242E] border border-white/[0.08]'
+            ? 'bg-[#16171D]/96 border border-white/[0.14]'
+            : 'bg-[#1E1F28] border border-white/[0.08]'
       } ${multiline ? 'items-end' : 'items-center'}`}
     >
       {extraStart && <div className="shrink-0 flex items-center">{extraStart}</div>}
@@ -121,8 +121,8 @@ export function ObsidianComposerPill({
           onBlur?.();
         }}
         placeholder={placeholder}
-        className={`flex-1 bg-transparent text-[14.5px] leading-[22px] text-[#EEF2F7] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] text-start ${
-          isGhostTransparent ? 'placeholder:text-white/75' : 'placeholder:text-[#7E93AB]'
+        className={`flex-1 bg-transparent text-[14.5px] leading-[22px] text-[#F1F1F2] outline-none resize-none overflow-y-auto min-w-0 max-h-[148px] text-start ${
+          isGhostTransparent ? 'placeholder:text-white/75' : 'placeholder:text-[#8E8E93]'
         } ${multiline ? 'py-1.5' : 'py-0'}`}
       />
 

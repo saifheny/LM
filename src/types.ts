@@ -168,6 +168,7 @@ export interface ShortVideoItem {
   description: string;
   tags: string;
   audioTitle: string;
+  audioUrl?: string | null;
   videoUrl: string | null;
   posterUrl: string | null;
   scenePreset: string;

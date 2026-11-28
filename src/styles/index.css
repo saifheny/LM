@@ -10,8 +10,8 @@
   --lm-pill-hover: #2C2F3C;
   --lm-accent: #FE2C55;
   --lm-cyan: #25F4EE;
-  --lm-bubble-out: #6C63FF;
-  --lm-bubble-in: #1B2330;
+  --lm-bubble-out: #2D2229;
+  --lm-bubble-in: #1D1E26;
   --lm-line: rgba(255, 255, 255, 0.08);
   --lm-line-strong: rgba(255, 255, 255, 0.14);
   --lm-text: #F1F1F2;
@@ -35,7 +35,7 @@ body,
   padding: 0;
   background-color: #121212;
   color: #F1F1F2;
-  font-family: 'Plus Jakarta Sans', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Noto Sans Arabic', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-rendering: optimizeLegibility;
   overflow: hidden;
   overflow-x: hidden;
@@ -44,8 +44,15 @@ body,
   -moz-osx-font-smoothing: grayscale;
 }
 
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
 .font-mono-num {
-  font-family: 'Plus Jakarta Sans', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: 'Inter', 'Noto Sans Arabic', system-ui, -apple-system, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -78,60 +85,62 @@ body,
   opacity: 0.14;
 }
 
-/* 1. LM Space (Default Signature Calm Cosmic Space Slate) */
+/* 1. LM Space (Default Unified Matte Carbon Cosmic Space) */
 .lm-wp-space {
-  background-color: #0B0E15;
+  background-color: #121212;
   background-image:
-    radial-gradient(ellipse 95% 65% at 80% 10%, rgba(148, 163, 184, 0.08), transparent 65%),
-    radial-gradient(ellipse 85% 60% at 15% 90%, rgba(100, 116, 139, 0.06), transparent 65%);
+    radial-gradient(ellipse 90% 60% at 82% 10%, rgba(254, 44, 85, 0.055), transparent 68%),
+    radial-gradient(ellipse 80% 55% at 15% 88%, rgba(37, 244, 238, 0.04), transparent 68%),
+    linear-gradient(180deg, #131317 0%, #121212 55%, #151519 100%);
 }
 .lm-wp-space::after {
-  background: linear-gradient(155deg, #E2E8F0 0%, #94A3B8 55%, #CBD5E1 100%);
-  opacity: 0.14;
+  background: linear-gradient(155deg, #F1F1F2 0%, #A6A7B2 55%, #D4D4D8 100%);
+  opacity: 0.095;
 }
 
-/* 2. Deep Orbit (Quieter Midnight Obsidian Space) */
+/* 2. Deep Orbit (Quieter Pure Obsidian Matte) */
 .lm-wp-orbit {
-  background-color: #090B10;
+  background-color: #101014;
   background-image:
-    radial-gradient(ellipse 90% 60% at 50% 0%, rgba(148, 163, 184, 0.06), transparent 65%);
+    radial-gradient(ellipse 85% 58% at 50% 0%, rgba(255, 255, 255, 0.035), transparent 65%);
 }
 .lm-wp-orbit::after {
-  background: #94A3B8;
-  opacity: 0.11;
+  background: #A6A7B2;
+  opacity: 0.085;
 }
 
-/* 3. Lunar Calm (Ultra-Clean Minimal Matte Space Charcoal) */
+/* 3. Lunar Calm (Ultra-Clean Minimal Matte Charcoal) */
 .lm-wp-lunar {
-  background-color: #101218;
+  background-color: #14141A;
 }
 .lm-wp-lunar::after {
-  background: #CBD5E1;
-  opacity: 0.075;
+  background: #D4D4D8;
+  opacity: 0.06;
 }
 
 .lm-msg-out {
-  background: #27446E;
+  background: linear-gradient(135deg, #2D2229 0%, #241D22 100%);
   color: #F8FAFC;
+  border: 1px solid rgba(254, 44, 85, 0.24);
 }
 
 .lm-msg-in {
-  background: #171D28;
+  background: #1D1E26;
   color: #F1F1F2;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Frameless Telegram-Style Media Rim (ZERO outer chat bubble — subtle softly gleaming thin edges directly on wallpaper!) */
 .lm-media-rim {
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
-    0 0 0 1px rgba(186, 220, 255, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
     0 10px 28px rgba(0, 0, 0, 0.38);
 }
 
 /* Floating Borderless Caption Below Frameless Media */
 .lm-floating-caption {
-  background: rgba(16, 21, 31, 0.74);
+  background: rgba(22, 23, 29, 0.84);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
@@ -292,46 +301,244 @@ html[data-theme='oled'] .bg-\[\#161823\] {
 html[data-theme='light'],
 html[data-theme='light'] body,
 html[data-theme='light'] #root {
-  background-color: #F4F5F7;
-  color: #111318;
+  color-scheme: light;
+  background-color: #F5F6F8 !important;
+  color: #111827 !important;
 }
 
-html[data-theme='light'] .bg-\[\#121212\] {
+html[data-theme='light'] :where(
+  .bg-\[\#0A0A0C\],
+  .bg-\[\#0B0B0D\],
+  .bg-\[\#0C0C10\],
+  .bg-\[\#0E0E13\],
+  .bg-\[\#0E1621\],
+  .bg-\[\#101014\],
+  .bg-\[\#101925\],
+  .bg-\[\#111116\],
+  .bg-\[\#121212\],
+  .bg-\[\#121620\],
+  .bg-\[\#131318\],
+  .bg-\[\#131319\],
+  .bg-\[\#131E2B\],
+  .bg-\[\#14141A\],
+  [class*="bg-\[\#121212"],
+  [class*="bg-\[\#14141A"]
+) {
+  background-color: #F5F6F8 !important;
+}
+
+html[data-theme='light'] :where(
+  .bg-\[\#14151A\],
+  .bg-\[\#151B27\],
+  .bg-\[\#16171D\],
+  .bg-\[\#161820\],
+  .bg-\[\#161823\],
+  .bg-\[\#17212B\],
+  .bg-\[\#181920\],
+  .bg-\[\#181922\],
+  .bg-\[\#191A22\],
+  .bg-\[\#19232E\],
+  .bg-\[\#1A1B22\],
+  .bg-\[\#1B1B22\],
+  .bg-\[\#1B2938\],
+  .bg-\[\#1C1D24\],
+  .bg-\[\#1D1E26\],
+  .bg-\[\#1D1F28\],
+  .bg-\[\#1E1F26\],
+  .bg-\[\#1E1F28\],
+  [class*="bg-\[\#16171D"],
+  [class*="bg-\[\#161820"],
+  [class*="bg-\[\#181920"],
+  [class*="bg-\[\#181922"],
+  [class*="bg-\[\#191A22"],
+  [class*="bg-\[\#1B1B22"],
+  [class*="bg-\[\#1C1D24"],
+  [class*="bg-\[\#1D1F28"],
+  [class*="bg-\[\#1E1F28"]
+) {
+  background-color: #FFFFFF !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+}
+
+html[data-theme='light'] :where(
+  .bg-\[\#20212A\],
+  .bg-\[\#22242E\],
+  .bg-\[\#242C38\],
+  .bg-\[\#252731\],
+  .bg-\[\#262832\],
+  .bg-\[\#272833\],
+  .bg-\[\#28282B\],
+  .bg-\[\#2C2C30\],
+  [class*="bg-\[\#22242E"],
+  [class*="bg-\[\#252731"],
+  [class*="bg-\[\#262832"],
+  [class*="bg-white\/\[0\.0"],
+  [class*="bg-white\/5"],
+  [class*="bg-white\/10"]
+) {
+  background-color: #EEF0F4 !important;
+}
+
+html[data-theme='light'] :where(
+  [class*="border-white\/"],
+  [class*="border-\[\#2"]
+) {
+  border-color: rgba(15, 23, 42, 0.11) !important;
+}
+
+html[data-theme='light'] .divide-white\/\[0\.08\] > :not([hidden]) ~ :not([hidden]),
+html[data-theme='light'] .divide-white\/\[0\.07\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(15, 23, 42, 0.09) !important;
+}
+
+html[data-theme='light'] :where(
+  .text-white,
+  [class*="text-white\/9"],
+  [class*="text-white\/8"],
+  .text-\[\#F1F1F2\],
+  .text-\[\#F2F2F5\],
+  .text-\[\#EEF2F7\],
+  .text-\[\#E4E4E7\],
+  .text-zinc-100,
+  .text-zinc-200
+) {
+  color: #111827 !important;
+}
+
+html[data-theme='light'] :where(
+  [class*="text-white\/7"],
+  [class*="text-white\/6"],
+  .text-\[\#D4D4D8\],
+  .text-\[\#C4C4CC\],
+  .text-\[\#B8BAC6\],
+  .text-\[\#A6A7B2\],
+  .text-\[\#A1A1AA\],
+  .text-zinc-300
+) {
+  color: #374151 !important;
+}
+
+html[data-theme='light'] :where(
+  [class*="text-white\/5"],
+  [class*="text-white\/4"],
+  .text-\[\#9CA3AF\],
+  .text-\[\#8E8E93\],
+  .text-\[\#7A7A85\],
+  .text-\[\#7E93AB\],
+  .text-\[\#8DA2BC\],
+  .text-zinc-400
+) {
+  color: #6B7280 !important;
+}
+
+html[data-theme='light'] input::placeholder,
+html[data-theme='light'] textarea::placeholder {
+  color: #6B7280 !important;
+}
+
+html[data-theme='light'] .bg-white.text-black {
+  background-color: #111827 !important;
+  color: #FFFFFF !important;
+}
+
+html[data-theme='light'] .lm-wp-space {
+  background-color: #F3F4F6 !important;
+  background-image:
+    radial-gradient(ellipse 85% 60% at 82% 10%, rgba(254, 44, 85, 0.055), transparent 68%),
+    radial-gradient(ellipse 80% 55% at 15% 88%, rgba(13, 148, 136, 0.045), transparent 68%),
+    linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%) !important;
+}
+html[data-theme='light'] .lm-wp-space::after,
+html[data-theme='light'] .lm-wp-orbit::after,
+html[data-theme='light'] .lm-wp-lunar::after {
+  background: #64748B;
+  opacity: 0.085;
+}
+html[data-theme='light'] .lm-wp-orbit {
   background-color: #F4F5F7 !important;
-  color: #111318 !important;
+  background-image: linear-gradient(180deg, #F8F9FB 0%, #EFF1F5 100%) !important;
+}
+html[data-theme='light'] .lm-wp-lunar {
+  background-color: #F5F6F8 !important;
 }
 
-html[data-theme='light'] .bg-\[\#121212\]\/97,
-html[data-theme='light'] .bg-\[\#121212\]\/88 {
-  background-color: rgba(244, 245, 247, 0.94) !important;
+html[data-theme='light'] .lm-msg-out {
+  background: linear-gradient(135deg, #FE2C55 0%, #E11D48 100%) !important;
+  color: #FFFFFF !important;
+  border-color: rgba(225, 29, 72, 0.2) !important;
 }
-
-html[data-theme='light'] .text-white,
-html[data-theme='light'] .text-\[\#F1F1F2\],
-html[data-theme='light'] .text-\[\#F2F2F5\] {
-  color: #111318;
+html[data-theme='light'] .lm-msg-in {
+  background: #FFFFFF !important;
+  color: #111827 !important;
+  border-color: rgba(15, 23, 42, 0.09) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+}
+html[data-theme='light'] .lm-msg-in * {
+  color: #111827 !important;
+}
+html[data-theme='light'] .lm-floating-caption {
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: #111827 !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.09), 0 4px 16px rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme='light'] .lm-ai-badge {
+  background: #EEF0F4 !important;
+  color: #111827 !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+}
+html[data-theme='light'] .lm-link-shine {
+  color: #0284C7 !important;
+  text-decoration-color: rgba(2, 132, 199, 0.45) !important;
 }
 
 /* Keep crisp white text inside dark video/live stages & colored buttons even in Light Theme */
-html[data-theme='light'] .bg-black *,
-html[data-theme='light'] .bg-\[\#FE2C55\],
-html[data-theme='light'] .bg-\[\#FE2C55\] *,
-html[data-theme='light'] .lm-msg-out,
-html[data-theme='light'] .lm-msg-out * {
-  color: #FFFFFF;
+html[data-theme='light'] :where(
+  .bg-black,
+  [class*="bg-black\/"],
+  .bg-\[\#FE2C55\],
+  [class*="bg-\[\#FE2C55"],
+  .lm-msg-out,
+  .chrome-rim-btn,
+  .bg-emerald-500,
+  .bg-emerald-600,
+  .bg-rose-500,
+  .bg-rose-600,
+  .bg-sky-500,
+  .bg-amber-500,
+  .bg-amber-600
+),
+html[data-theme='light'] :where(
+  .bg-black,
+  [class*="bg-black\/"],
+  .bg-\[\#FE2C55\],
+  [class*="bg-\[\#FE2C55"],
+  .lm-msg-out,
+  .chrome-rim-btn,
+  .bg-emerald-500,
+  .bg-emerald-600,
+  .bg-rose-500,
+  .bg-rose-600,
+  .bg-sky-500,
+  .bg-amber-500,
+  .bg-amber-600
+) :where(.text-white, [class*="text-white\/"], .text-\[\#F1F1F2\], .text-\[\#EEF2F7\]) {
+  color: #FFFFFF !important;
 }
-
-html[data-theme='light'] .bg-\[\#181920\],
-html[data-theme='light'] .bg-\[\#191A22\],
-html[data-theme='light'] .bg-\[\#1E1F28\],
-html[data-theme='light'] .bg-\[\#14151A\] {
-  background-color: #FFFFFF !important;
-  color: #111318 !important;
-  border-color: rgba(17, 19, 24, 0.1) !important;
+html[data-theme='light'] .bg-black,
+html[data-theme='light'] .bg-black\/95,
+html[data-theme='light'] .bg-black\/90 {
+  background-color: #000000 !important;
 }
-
-html[data-theme='light'] .border-white\/\[0\.08\],
-html[data-theme='light'] .border-white\/\[0\.07\],
-html[data-theme='light'] .divide-white\/\[0\.08\] > :not([hidden]) ~ :not([hidden]) {
-  border-color: rgba(17, 19, 24, 0.09) !important;
+html[data-theme='light'] .bg-black\/80 { background-color: rgba(0, 0, 0, 0.8) !important; }
+html[data-theme='light'] .bg-black\/75 { background-color: rgba(0, 0, 0, 0.75) !important; }
+html[data-theme='light'] .bg-black\/65 { background-color: rgba(0, 0, 0, 0.65) !important; }
+html[data-theme='light'] .bg-black\/60 { background-color: rgba(0, 0, 0, 0.6) !important; }
+html[data-theme='light'] .bg-black\/55 { background-color: rgba(0, 0, 0, 0.55) !important; }
+html[data-theme='light'] .bg-black\/50 { background-color: rgba(0, 0, 0, 0.5) !important; }
+html[data-theme='light'] .bg-black\/45 { background-color: rgba(0, 0, 0, 0.45) !important; }
+html[data-theme='light'] .bg-black\/40 { background-color: rgba(0, 0, 0, 0.4) !important; }
+html[data-theme='light'] .bg-black\/35 { background-color: rgba(0, 0, 0, 0.35) !important; }
+html[data-theme='light'] .bg-black\/30 { background-color: rgba(0, 0, 0, 0.3) !important; }
+html[data-theme='light'] [class*="bg-\[\#FE2C55"] {
+  background-color: #FE2C55 !important;
 }

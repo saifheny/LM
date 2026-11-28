@@ -14,15 +14,11 @@ import {
   Clock,
   CornerDownLeft,
   Eye,
-  EyeOff,
-  Flag,
   Heart,
   MessageCircle,
   Mic,
   MicOff,
   Monitor,
-  Volume2,
-  VolumeX,
   Pin,
   Plus,
   Radio,
@@ -235,10 +231,15 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
   const [activeRoomId, setActiveRoomIdState] = useState<string>(() => {
     try {
-      return localStorage.getItem('lm_live_room_id') || 'live_1';
+      const focusId = localStorage.getItem('lm_live_focus_room_id');
+      if (focusId) {
+        localStorage.removeItem('lm_live_focus_room_id');
+        return focusId;
+      }
     } catch {
-      return 'live_1';
+      // ignore
     }
+    return '';
   });
   const [activeIndex, setActiveIndex] = useState(0);
   const [roomState, setRoomState] = useState<LiveRoomState | null>(null);
@@ -253,11 +254,6 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
 
   const setActiveRoomId = useCallback((id: string) => {
     setActiveRoomIdState(id);
-    try {
-      localStorage.setItem('lm_live_room_id', id);
-    } catch {
-      // ignore
-    }
   }, []);
 
   const setCommentText = useCallback((v: string) => {
@@ -281,6 +277,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   // TikTok-Style Highlighted Reply to a Specific Live Comment
   const [replyToLiveComment, setReplyToLiveComment] = useState<{
     id: string;
+    userId?: string;
     displayName: string;
     text: string;
   } | null>(null);
@@ -1233,6 +1230,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           replyToId: activeReply?.id,
           replyToName: activeReply?.displayName,
           replyToText: activeReply?.text,
+          replyToUserId: activeReply?.userId,
         });
       }
     } catch (err) {
@@ -1271,6 +1269,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         onTouchMove={handleStageTouchMove}
         onTouchEnd={handleStageTouchEnd}
         onClick={(e) => {
+          if (muted) setMuted(false);
           setComposerFocused(false);
           setMobileNavExpanded(false);
           if (!cleanView) triggerStageTapBurst(e.clientX, e.clientY);
@@ -1502,19 +1501,10 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           )}
 
           <div className="flex items-center gap-2 shrink-0">
-            <div className="h-10 px-3 rounded-full bg-black/55 flex items-center gap-1.5 text-xs font-semibold font-mono-num text-white">
-              <Eye className="w-4 h-4 text-white/85" />
-              <span>{displayedViewers.toLocaleString('en-US')}</span>
+            <div className="h-10 px-3 rounded-full bg-black/55 flex items-center gap-1.5 text-xs font-semibold font-mono-num text-white max-w-[82px]">
+              <Eye className="w-4 h-4 text-white/85 shrink-0" />
+              <span className="truncate">{formatCompact(displayedViewers)}</span>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setMuted(m => !m)}
-              aria-label={muted ? 'تشغيل الصوت' : 'كتم الصوت'}
-              className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
-            >
-              {muted ? <VolumeX className="w-5 h-5" strokeWidth={2} /> : <Volume2 className="w-5 h-5" strokeWidth={2} />}
-            </button>
 
             {hostingRoomId ? (
               <button
@@ -1667,23 +1657,20 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                     } else {
                       setReplyToLiveComment({
                         id: msg.id,
+                        userId: msg.userId,
                         displayName: msg.displayName,
                         text: msg.text,
                       });
                       setLiveInputFocused(true);
                     }
                   }}
-                  className={`group cursor-pointer transition-colors ${
-                    isReply
-                      ? 'bg-[#25F4EE]/[0.14] border-s-2 border-[#25F4EE] rounded-e-xl px-2.5 py-1.5'
-                      : 'px-1 py-0.5 rounded-lg hover:bg-black/30'
-                  }`}
+                  className="group cursor-pointer transition-colors px-2 py-1 rounded-xl bg-black/32 hover:bg-black/48"
                 >
                   {isReply && (
-                    <div className="flex items-center gap-1 text-[11px] font-semibold text-[#25F4EE] mb-0.5 truncate">
+                    <div className="flex items-center gap-1 text-[10.5px] font-medium text-white/65 mb-0.5 truncate">
                       <CornerDownLeft className="w-3 h-3 shrink-0" />
                       <span className="truncate">
-                        ردًا على @{msg.replyToName}
+                        ردًا على {msg.replyToName}
                         {msg.replyToText ? `: ${msg.replyToText.slice(0, 34)}` : ''}
                       </span>
                     </div>
@@ -1696,9 +1683,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                           ev.stopPropagation();
                           onOpenProfile?.(msg.userId);
                         }}
-                        className={`font-semibold hover:underline me-1.5 cursor-pointer ${
-                          isReply ? 'text-[#25F4EE]' : 'text-white/90 hover:text-white'
-                        }`}
+                        className="font-semibold hover:underline me-1.5 cursor-pointer text-white/95 hover:text-white truncate max-w-[140px] inline-block align-bottom"
                       >
                         {msg.displayName}
                       </button>
@@ -1710,13 +1695,14 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                         ev.stopPropagation();
                         setReplyToLiveComment({
                           id: msg.id,
+                          userId: msg.userId,
                           displayName: msg.displayName,
                           text: msg.text,
                         });
                         setLiveInputFocused(true);
                       }}
                       title="الرد على هذا التعليق"
-                      className="shrink-0 text-[10.5px] font-medium text-white/55 hover:text-[#25F4EE] opacity-80 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-0.5 cursor-pointer pt-0.5 transition-opacity"
+                      className="shrink-0 text-[10.5px] font-medium text-white/55 hover:text-white opacity-80 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-0.5 cursor-pointer pt-0.5 transition-opacity"
                     >
                       <CornerDownLeft className="w-3 h-3" />
                       <span>رد</span>
@@ -1812,18 +1798,6 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             </>
           )}
 
-          <button
-            type="button"
-            onClick={() => {
-              setCleanView(true);
-              showNotice('الوضع الصافي مفعّل — اسحب بإصبعين للعودة');
-            }}
-            title="إخفاء الواجهة (الوضع الصافي)"
-            className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
-          >
-            <EyeOff className="w-5 h-5" strokeWidth={2} />
-          </button>
-
           {isOwnerOfActiveRoom && (
             <button
               type="button"
@@ -1849,51 +1823,27 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   avatarUrl: activeRoom.hostAvatarUrl,
                   avatarInitials: activeRoom.hostInitials,
                   path: `/live/${activeRoom.id}`,
+                  onReport:
+                    activeRoom.hostId !== user.id
+                      ? () =>
+                          setReportRequest({
+                            targetType: 'live',
+                            targetId: activeRoom.id,
+                            label: lang === 'en' ? 'this live broadcast' : 'هذا البث المباشر',
+                          })
+                      : undefined,
                 });
               } else {
                 navigator.clipboard?.writeText(window.location.href);
                 showNotice('تم نسخ رابط البث');
               }
             }}
-            title="مشاركة البث"
+            title={activeRoom && activeRoom.hostId !== user.id ? 'مشاركة أو إبلاغ' : 'مشاركة البث'}
             className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer transition-colors"
           >
             <Share2 className="w-5 h-5" strokeWidth={2} />
           </button>
-
-          {activeRoom && activeRoom.hostId !== user.id && (
-            <button
-              type="button"
-              onClick={() =>
-                setReportRequest({
-                  targetType: 'live',
-                  targetId: activeRoom.id,
-                  label: lang === 'en' ? 'this live broadcast' : 'هذا البث المباشر',
-                })
-              }
-              title={t(lang, 'report')}
-              className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-white/90 hover:text-[#FE2C55] flex items-center justify-center cursor-pointer transition-colors"
-            >
-              <Flag className="w-5 h-5" strokeWidth={2} />
-            </button>
-          )}
         </div>
-
-        {/* Subtle Restore Pill in Clear-Display Mode (Or Swipe with 2 Fingers Anytime!) */}
-        {cleanView && (
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              setCleanView(false);
-            }}
-            style={{ bottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
-            className="absolute end-3.5 z-30 h-9 px-3.5 rounded-full bg-black/55 hover:bg-black/75 text-xs font-semibold text-white/90 flex items-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <Eye className="w-4 h-4" />
-            <span>إظهار الواجهة</span>
-          </button>
-        )}
 
         {statusMsg && (
           <div className="pointer-events-none absolute top-28 inset-x-8 z-30 py-1.5 px-3 rounded-full bg-black/80 text-center text-xs font-medium text-white">
@@ -1909,10 +1859,10 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
             className="absolute inset-x-3.5 z-20 flex flex-col gap-2 transition-[bottom] duration-150"
           >
             {replyToLiveComment && (
-              <div className="w-fit max-w-[85%] self-start rounded-xl bg-[#161823]/92 border-s-2 border-[#25F4EE] px-3 py-1.5 flex items-center gap-2.5">
+              <div className="w-fit max-w-[85%] self-start rounded-xl bg-black/78 backdrop-blur-md border-s-2 border-white/55 px-3 py-1.5 flex items-center gap-2.5">
                 <div className="min-w-0">
-                  <div className="text-[11px] font-bold text-[#25F4EE] truncate">
-                    الرد على @{replyToLiveComment.displayName}
+                  <div className="text-[11px] font-semibold text-white/90 truncate">
+                    الرد على {replyToLiveComment.displayName}
                   </div>
                   <div className="text-[11px] text-white/75 truncate max-w-[200px]">
                     {replyToLiveComment.text}
@@ -2038,10 +1988,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={36} />
                   <input
                     value={goLiveTitle}
-                    onChange={e => setGoLiveTitle(e.target.value)}
+                    maxLength={50}
+                    onChange={e => setGoLiveTitle(e.target.value.slice(0, 50))}
                     placeholder={lang === 'en' ? 'Add a broadcast title...' : 'اكتب عنوان البث هنا...'}
                     className="flex-1 min-w-0 bg-transparent text-sm font-medium text-white placeholder:text-white/75 outline-none"
                   />
+                  <span className="text-[10.5px] font-mono-num text-white/60 shrink-0">{goLiveTitle.length}/50</span>
                 </div>
 
                 {/* Floating Category Pills Directly Over Camera (NO Outer Container!) */}
@@ -2488,7 +2440,6 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                         <UserAvatar initials={bu.avatarInitials} avatarUrl={bu.avatarUrl} size={32} />
                         <div className="min-w-0">
                           <div className="text-xs font-semibold text-white truncate">{bu.displayName}</div>
-                          <div className="text-[10.5px] text-[#8E8E93] font-mono-num truncate">@{bu.username}</div>
                         </div>
                       </div>
                       <button
@@ -2657,7 +2608,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
               <div className="rounded-2xl bg-white/[0.05] border border-white/[0.07] p-3.5 flex flex-col items-center gap-1">
                 <Users className="w-4 h-4 text-[#A78BFA]" />
                 <span className="text-lg font-extrabold font-mono-num text-white">
-                  {liveSummary.peakViewers.toLocaleString('en-US')}
+                  {formatCompact(liveSummary.peakViewers)}
                 </span>
                 <span className="text-[11px] text-[#9E9EA8]">ذروة المشاهدين</span>
               </div>
@@ -2671,7 +2622,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
               <div className="rounded-2xl bg-white/[0.05] border border-white/[0.07] p-3.5 flex flex-col items-center gap-1">
                 <MessageCircle className="w-4 h-4 text-[#34D399]" />
                 <span className="text-lg font-extrabold font-mono-num text-white">
-                  {liveSummary.commentsCount.toLocaleString('en-US')}
+                  {formatCompact(liveSummary.commentsCount)}
                 </span>
                 <span className="text-[11px] text-[#9E9EA8]">التعليقات</span>
               </div>
