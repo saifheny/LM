@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { v4 as uuid } from 'uuid';
 import { db, loadProviderConfig, UPLOADS_DIR } from './db.ts';
 import { loadTrustedMediaBytes } from './cloudStorage.ts';
-import { gatherLiveWebContext, shouldFetchLiveWeb } from './webSearch.ts';
+import { extractSafeHost, gatherLiveWebBundle, shouldFetchLiveWeb, WebSourceCitation } from './webSearch.ts';
 
 export interface AiChatRequest {
   userId: string;
@@ -49,6 +49,24 @@ export interface AiChatResponse {
   modelUsed: string;
   latencyMs: number;
   securityAuditId: string;
+  sources?: WebSourceCitation[];
+}
+
+function mergeWebSources(primary: WebSourceCitation[], secondary: WebSourceCitation[]): WebSourceCitation[] {
+  const seen = new Set<string>();
+  const out: WebSourceCitation[] = [];
+  for (const s of [...primary, ...secondary]) {
+    if (!s?.url || !/^https?:\/\//i.test(s.url)) continue;
+    if (seen.has(s.url)) continue;
+    seen.add(s.url);
+    out.push({
+      title: (s.title || s.host || 'مصدر').slice(0, 90),
+      url: s.url,
+      host: s.host || extractSafeHost(s.url),
+    });
+    if (out.length >= 5) break;
+  }
+  return out;
 }
 
 const FINANCIAL_BLOCK_PATTERNS = [
@@ -177,7 +195,7 @@ async function callGeminiWithFailover(
   fullUserContent: string,
   inlineData?: { mimeType: string; data: string },
   useGoogleSearch = false
-): Promise<{ text: string; modelUsed: string }> {
+): Promise<{ text: string; modelUsed: string; sources: WebSourceCitation[] }> {
   const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 14000 } });
   const sysPrompt = buildDynamicSystemPrompt();
   const preferred = requestedModel && requestedModel !== 'lm-smart-local' ? requestedModel : 'gemini-2.5-flash';
@@ -237,20 +255,21 @@ async function callGeminiWithFailover(
         };
 
         if (res.ok) {
-          let text = (data.candidates?.[0]?.content?.parts || [])
+          const text = (data.candidates?.[0]?.content?.parts || [])
             .map(p => p.text || '')
             .join('')
             .trim();
           const chunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-          const webRefs = chunks
+          const geminiSources: WebSourceCitation[] = chunks
             .map(c => c.web)
-            .filter((w): w is { uri: string; title?: string } => Boolean(w?.uri))
-            .slice(0, 3);
-          if (text && webRefs.length > 0) {
-            const srcLine = webRefs.map(w => `[${(w.title || 'مصدر').slice(0, 42)}](${w.uri})`).join(' · ');
-            text = `${text}\n\nالمصادر: ${srcLine}`;
-          }
-          if (text) return { text, modelUsed: model };
+            .filter((w): w is { uri: string; title?: string } => Boolean(w?.uri && /^https?:\/\//i.test(w.uri)))
+            .slice(0, 5)
+            .map(w => ({
+              title: (w.title || extractSafeHost(w.uri)).slice(0, 90),
+              url: w.uri,
+              host: extractSafeHost(w.uri),
+            }));
+          if (text) return { text, modelUsed: model, sources: geminiSources };
         }
 
         // If 401/403 (bad key), fail immediately — don't try other models
@@ -275,7 +294,7 @@ async function callGeminiWithFailover(
           if (retryRes.ok) {
             const retryData = (await retryRes.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
             const retryText = (retryData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
-            if (retryText) return { text: retryText, modelUsed: model };
+            if (retryText) return { text: retryText, modelUsed: model, sources: [] };
           }
         }
 
@@ -303,7 +322,7 @@ async function callGeminiWithFailover(
     input: fullUserContent,
   });
   if (interaction.output_text?.trim()) {
-    return { text: interaction.output_text.trim(), modelUsed: 'gemini-2.5-flash' };
+    return { text: interaction.output_text.trim(), modelUsed: 'gemini-2.5-flash', sources: [] };
   }
   throw lastErr || new Error('لم يتم استلام رد من Gemini.');
 }
@@ -353,10 +372,12 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
   const sysPrompt = buildDynamicSystemPrompt();
 
   const wantLiveWeb = shouldFetchLiveWeb(prompt, req.source);
-  const [attachment, liveWebCtx] = await Promise.all([
+  const [attachment, webBundle] = await Promise.all([
     resolveAttachmentPayload(req.attachmentUrl, req.attachmentName),
-    wantLiveWeb ? gatherLiveWebContext(prompt) : Promise.resolve(null),
+    wantLiveWeb ? gatherLiveWebBundle(prompt) : Promise.resolve({ contextText: null, sources: [] as WebSourceCitation[] }),
   ]);
+  const liveWebCtx = webBundle.contextText;
+  const webSources = webBundle.sources;
   const effectiveInlineData =
     req.imageBase64 && req.imageMimeType
       ? { mimeType: req.imageMimeType, data: req.imageBase64 }
@@ -422,6 +443,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         modelUsed: out.modelUsed,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
+        sources: mergeWebSources(out.sources, webSources),
       };
     }
 
@@ -452,6 +474,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         modelUsed: model,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
+        sources: webSources,
       };
     }
 
@@ -519,6 +542,7 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
         modelUsed: model,
         latencyMs: Date.now() - start,
         securityAuditId: auditId,
+        sources: webSources,
       };
     }
 
@@ -581,7 +605,8 @@ export async function runLmAi(req: AiChatRequest): Promise<AiChatResponse> {
  */
 export async function streamLmAi(
   req: AiChatRequest,
-  onChunk: (delta: string) => void
+  onChunk: (delta: string) => void,
+  onStatus?: (status: string) => void
 ): Promise<AiChatResponse> {
   const start = Date.now();
   const prompt = (req.prompt || '').trim();
@@ -608,10 +633,15 @@ export async function streamLmAi(
   if (requestedProvider === 'gemini' && config.geminiApiKey) {
     const sysPrompt = buildDynamicSystemPrompt();
     const wantLiveWeb = shouldFetchLiveWeb(prompt, req.source);
-    const [attachment, liveWebCtx] = await Promise.all([
+    if (wantLiveWeb) onStatus?.('جارٍ البحث في الويب...');
+    else onStatus?.('جارٍ التفكير...');
+    const [attachment, webBundle] = await Promise.all([
       resolveAttachmentPayload(req.attachmentUrl, req.attachmentName),
-      wantLiveWeb ? gatherLiveWebContext(prompt) : Promise.resolve(null),
+      wantLiveWeb ? gatherLiveWebBundle(prompt) : Promise.resolve({ contextText: null, sources: [] as WebSourceCitation[] }),
     ]);
+    const liveWebCtx = webBundle.contextText;
+    const webSources = webBundle.sources;
+    onStatus?.('جارٍ صياغة الإجابة...');
     const effectiveInlineData =
       req.imageBase64 && req.imageMimeType
         ? { mimeType: req.imageMimeType, data: req.imageBase64 }
@@ -680,6 +710,7 @@ export async function streamLmAi(
           const decoder = new TextDecoder();
           let buf = '';
           let fullText = '';
+          const geminiStreamSources: WebSourceCitation[] = [];
 
           while (true) {
             const { value, done } = await reader.read();
@@ -694,12 +725,28 @@ export async function streamLmAi(
               if (!payload || payload === '[DONE]') continue;
               try {
                 const parsed = JSON.parse(payload) as {
-                  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+                  candidates?: Array<{
+                    content?: { parts?: Array<{ text?: string }> };
+                    groundingMetadata?: {
+                      groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+                    };
+                  }>;
                 };
                 const chunk = (parsed.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
                 if (chunk) {
                   fullText += chunk;
                   onChunk(chunk);
+                }
+                const gChunks = parsed.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+                for (const gc of gChunks) {
+                  const uri = gc.web?.uri;
+                  if (uri && /^https?:\/\//i.test(uri)) {
+                    geminiStreamSources.push({
+                      title: (gc.web?.title || extractSafeHost(uri)).slice(0, 90),
+                      url: uri,
+                      host: extractSafeHost(uri),
+                    });
+                  }
                 }
               } catch {
                 // ignore partial SSE JSON
@@ -715,6 +762,7 @@ export async function streamLmAi(
               modelUsed: model,
               latencyMs: Date.now() - start,
               securityAuditId: auditId,
+              sources: mergeWebSources(geminiStreamSources, webSources),
             };
           }
         } finally {

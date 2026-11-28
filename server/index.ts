@@ -294,7 +294,21 @@ function createNotification(params: {
     INSERT INTO notifications (id, user_id, actor_id, type, text, ref_tab, ref_id, is_read, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'الآن')
   `).run(id, params.userId, params.actorId, params.type, params.text, params.refTab, params.refId || null);
-  broadcast('notification:new', { id, userId: params.userId, type: params.type });
+  const actor = db.prepare('SELECT display_name, avatar_initials, avatar_url FROM users WHERE id = ?').get(params.actorId) as
+    | { display_name?: string; avatar_initials?: string; avatar_url?: string | null }
+    | undefined;
+  broadcast('notification:new', {
+    id,
+    userId: params.userId,
+    actorId: params.actorId,
+    actorName: actor?.display_name || 'LM',
+    actorInitials: actor?.avatar_initials || 'LM',
+    actorAvatarUrl: actor?.avatar_url || null,
+    type: params.type,
+    text: params.text,
+    refTab: params.refTab,
+    refId: params.refId || null,
+  });
 }
 
 app.get('/api/health', (_req, res) => {
@@ -3852,6 +3866,47 @@ app.delete('/api/messages/:id', (req, res) => {
 // ============================================================
 // TIKTOK LIVE STREAMING ENGINE
 // ============================================================
+interface LivePollOptionInternal {
+  id: string;
+  text: string;
+}
+
+interface LivePollInternal {
+  id: string;
+  roomId: string;
+  question: string;
+  options: LivePollOptionInternal[];
+  voters: Record<string, string>; // userId -> optionId
+  isActive: boolean;
+  createdAt: number;
+}
+
+const liveRoomPolls = new Map<string, LivePollInternal>();
+
+function serializeLivePoll(poll: LivePollInternal | undefined, viewerId?: string) {
+  if (!poll || !poll.isActive) return null;
+  const counts: Record<string, number> = {};
+  for (const opt of poll.options) counts[opt.id] = 0;
+  for (const optId of Object.values(poll.voters)) {
+    if (optId in counts) counts[optId] += 1;
+  }
+  const totalVotes = Object.values(counts).reduce((a, b) => a + b, 0);
+  return {
+    id: poll.id,
+    roomId: poll.roomId,
+    question: poll.question,
+    totalVotes,
+    myVote: viewerId ? poll.voters[viewerId] || null : null,
+    options: poll.options.map(o => ({
+      id: o.id,
+      text: o.text,
+      votes: counts[o.id] || 0,
+      percent: totalVotes > 0 ? Math.round(((counts[o.id] || 0) / totalVotes) * 100) : 0,
+    })),
+    createdAt: poll.createdAt,
+  };
+}
+
 app.get('/api/live/rooms', (req, res) => {
   const viewerId = String(req.query.userId || '');
   const rows = db.prepare(`
@@ -3964,6 +4019,7 @@ app.delete('/api/live/rooms/:id', (req, res) => {
     return res.status(403).json({ ok: false, error: 'يمكن للمذيع فقط إنهاء البث.' });
   }
   db.prepare('UPDATE live_rooms SET is_active = 0 WHERE id = ?').run(req.params.id);
+  liveRoomPolls.delete(req.params.id);
   broadcast('live:room_ended', { roomId: req.params.id });
   broadcast('live:rooms_updated', { roomId: req.params.id, action: 'ended' });
   res.json({ ok: true });
@@ -4113,6 +4169,70 @@ app.post('/api/live/rooms/:id/moderate', (req, res) => {
     camOff,
   });
   res.json({ ok: true, state });
+});
+
+app.get('/api/live/rooms/:id/poll', (req, res) => {
+  const viewerId = String(req.query.userId || '');
+  const poll = liveRoomPolls.get(req.params.id);
+  res.json({ ok: true, poll: serializeLivePoll(poll, viewerId) });
+});
+
+app.post('/api/live/rooms/:id/poll', (req, res) => {
+  const { hostId, question, options, close } = req.body as {
+    hostId?: string;
+    question?: string;
+    options?: string[];
+    close?: boolean;
+  };
+  const room = db.prepare('SELECT host_id FROM live_rooms WHERE id = ?').get(req.params.id) as { host_id: string } | undefined;
+  if (!room) return res.status(404).json({ ok: false, error: 'غرفة البث غير موجودة.' });
+  if (hostId && room.host_id !== hostId) {
+    return res.status(403).json({ ok: false, error: 'صاحب البث فقط يمكنه إدارة الاستطلاعات.' });
+  }
+
+  if (close) {
+    liveRoomPolls.delete(req.params.id);
+    broadcast('live:poll', { roomId: req.params.id, poll: null });
+    return res.json({ ok: true, poll: null });
+  }
+
+  const cleanQuestion = String(question || '').trim().slice(0, 120);
+  const cleanOptions = (Array.isArray(options) ? options : [])
+    .map(o => String(o || '').trim().slice(0, 60))
+    .filter(Boolean)
+    .slice(0, 4);
+
+  if (!cleanQuestion || cleanOptions.length < 2) {
+    return res.status(400).json({ ok: false, error: 'أدخل سؤال الاستطلاع وخيارين على الأقل.' });
+  }
+
+  const poll: LivePollInternal = {
+    id: `lpoll_${uuid().slice(0, 8)}`,
+    roomId: req.params.id,
+    question: cleanQuestion,
+    options: cleanOptions.map((text, idx) => ({ id: `opt_${idx + 1}`, text })),
+    voters: {},
+    isActive: true,
+    createdAt: Date.now(),
+  };
+  liveRoomPolls.set(req.params.id, poll);
+  const serialized = serializeLivePoll(poll, hostId);
+  broadcast('live:poll', { roomId: req.params.id, poll: serializeLivePoll(poll) });
+  res.json({ ok: true, poll: serialized });
+});
+
+app.post('/api/live/rooms/:id/poll-vote', (req, res) => {
+  const { userId, optionId } = req.body as { userId?: string; optionId?: string };
+  if (!userId || !optionId) return res.status(400).json({ ok: false, error: 'بيانات التصويت ناقصة.' });
+  const poll = liveRoomPolls.get(req.params.id);
+  if (!poll || !poll.isActive) return res.status(404).json({ ok: false, error: 'لا يوجد استطلاع نشط حاليًا.' });
+  if (!poll.options.some(o => o.id === optionId)) {
+    return res.status(400).json({ ok: false, error: 'خيار غير صالح.' });
+  }
+  poll.voters[userId] = optionId;
+  const serializedForUser = serializeLivePoll(poll, userId);
+  broadcast('live:poll', { roomId: req.params.id, poll: serializeLivePoll(poll) });
+  res.json({ ok: true, poll: serializedForUser });
 });
 
 // ============================================================
@@ -4272,6 +4392,9 @@ app.post('/api/ai/chat/stream', async (req, res) => {
       },
       delta => {
         sendEvent({ type: 'delta', text: delta });
+      },
+      statusText => {
+        sendEvent({ type: 'status', text: statusText });
       }
     );
 
@@ -4319,6 +4442,7 @@ app.post('/api/ai/chat/stream', async (req, res) => {
       modelUsed: result.modelUsed,
       needsApiKey: result.needsApiKey,
       missingProvider: result.missingProvider,
+      sources: result.sources || [],
       sessionId: activeSessionId,
       userMsgId,
       transcribedPrompt: resolvedTranscript,

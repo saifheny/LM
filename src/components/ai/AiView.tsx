@@ -11,11 +11,16 @@ import {
   Plus,
   KeyRound,
   ExternalLink,
+  Globe,
   Image as ImageIcon,
   History,
   Pencil,
+  Pin,
   RefreshCw,
   Search,
+  Sparkles,
+  Volume2,
+  VolumeX,
   Mic,
 } from 'lucide-react';
 
@@ -37,6 +42,12 @@ interface AiViewProps {
   lang: Lang;
 }
 
+interface AiSourceCitation {
+  title: string;
+  url: string;
+  host: string;
+}
+
 interface AiTurn {
   id: string;
   role: 'user' | 'assistant';
@@ -46,12 +57,28 @@ interface AiTurn {
   attachmentUrl?: string | null;
   attachmentName?: string | null;
   streaming?: boolean;
+  statusText?: string;
+  sources?: AiSourceCitation[];
   companyId?: string;
   modelLabel?: string;
   feedback?: 'up' | 'down' | null;
   needsApiKey?: boolean;
   missingProvider?: string;
 }
+
+const SMART_WELCOME_PROMPTS_AR = [
+  { tag: 'بحث حي', title: 'أخبار اليوم', prompt: 'ما هي أبرز أخبار العالم والتكنولوجيا اليوم؟' },
+  { tag: 'تنظيم', title: 'لخّص فكرة بذكاء', prompt: 'رتّب لي خطة عملية وبسيطة لتنظيم يومي وزيادة تركيزي.' },
+  { tag: 'لغات', title: 'ترجمة احترافية', prompt: 'ترجم هذه الجملة للإنجليزية بأسلوب طبيعي واحترافي: يسعدني التواصل معك اليوم لمناقشة أفكارنا الجديدة.' },
+  { tag: 'إبداع', title: 'أفكار محتوى', prompt: 'اقترح لي 5 أفكار منشورات وفيديوهات قصيرة مبتكرة ومفيدة لمجتمع LM.' },
+];
+
+const SMART_WELCOME_PROMPTS_EN = [
+  { tag: 'Live Web', title: "Today's Headlines", prompt: 'What are the biggest world and tech headlines today?' },
+  { tag: 'Focus', title: 'Daily Plan', prompt: 'Help me build a clean, practical daily plan to stay focused.' },
+  { tag: 'Rewrite', title: 'Polish a Message', prompt: 'Rewrite this message to sound warm and clear: Hey, wanted to follow up on our meeting tomorrow.' },
+  { tag: 'Ideas', title: 'Creative Ideas', prompt: 'Give me 5 creative short-video ideas for the LM community.' },
+];
 
 interface AiSessionRow {
   id: string;
@@ -73,6 +100,66 @@ export function AiView({ user, lang }: AiViewProps) {
   });
   const [sessions, setSessions] = useState<AiSessionRow[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [pinnedSessionIds, setPinnedSessionIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('lm_ai_pinned_sessions');
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
+
+  const togglePinSession = useCallback((id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPinnedSessionIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev];
+      try {
+        localStorage.setItem('lm_ai_pinned_sessions', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSpeakTurn = useCallback((turnId: string, rawText: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (speakingTurnId === turnId) {
+      window.speechSynthesis.cancel();
+      setSpeakingTurnId(null);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const clean = rawText
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[*_#`>~]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 2200);
+    if (!clean) return;
+    const utter = new SpeechSynthesisUtterance(clean);
+    const isArabic = /[\u0600-\u06FF]/.test(clean);
+    utter.lang = isArabic ? 'ar-EG' : 'en-US';
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.lang.toLowerCase().startsWith(isArabic ? 'ar' : 'en'));
+    if (preferredVoice) utter.voice = preferredVoice;
+    utter.rate = 1.02;
+    utter.onend = () => setSpeakingTurnId(cur => (cur === turnId ? null : cur));
+    utter.onerror = () => setSpeakingTurnId(cur => (cur === turnId ? null : cur));
+    setSpeakingTurnId(turnId);
+    window.speechSynthesis.speak(utter);
+  }, [speakingTurnId]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   // Persistent draft across refresh AND preserved when clicking "محادثة جديدة"!
   const [prompt, setPromptState] = useState<string>(() => {
@@ -399,20 +486,25 @@ export function AiView({ user, lang }: AiViewProps) {
         if (!jsonStr) continue;
         try {
           const ev = JSON.parse(jsonStr) as {
-            type: 'delta' | 'done' | 'error';
+            type: 'delta' | 'status' | 'done' | 'error';
             text?: string;
             message?: string;
             reply?: string;
             modelUsed?: string;
+            sources?: AiSourceCitation[];
             sessionId?: string | null;
             userMsgId?: string | null;
             transcribedPrompt?: string | null;
             needsApiKey?: boolean;
             missingProvider?: string;
           };
-          if (ev.type === 'delta' && ev.text) {
+          if (ev.type === 'status' && ev.text) {
             setTurns(prev =>
-              prev.map(t => (t.id === assistantId ? { ...t, content: t.content + ev.text } : t))
+              prev.map(t => (t.id === assistantId ? { ...t, statusText: ev.text } : t))
+            );
+          } else if (ev.type === 'delta' && ev.text) {
+            setTurns(prev =>
+              prev.map(t => (t.id === assistantId ? { ...t, content: t.content + ev.text, statusText: undefined } : t))
             );
           } else if (ev.type === 'done') {
             setTurns(prev =>
@@ -422,6 +514,8 @@ export function AiView({ user, lang }: AiViewProps) {
                       ...t,
                       content: t.content || ev.reply || '',
                       streaming: false,
+                      statusText: undefined,
+                      sources: Array.isArray(ev.sources) && ev.sources.length > 0 ? ev.sources : t.sources,
                       modelLabel: shortenModelLabel(ev.modelUsed || activeModel.label),
                       needsApiKey: ev.needsApiKey,
                       missingProvider: ev.missingProvider,
@@ -434,7 +528,7 @@ export function AiView({ user, lang }: AiViewProps) {
             setTurns(prev =>
               prev.map(t =>
                 t.id === assistantId
-                  ? { ...t, content: ev.message || 'تعذر الاتصال بالمساعد.', streaming: false }
+                  ? { ...t, content: ev.message || 'تعذر الاتصال بالمساعد.', streaming: false, statusText: undefined }
                   : t
               )
             );
@@ -912,32 +1006,73 @@ export function AiView({ user, lang }: AiViewProps) {
             </button>
           </div>
 
+          {/* Live Search Inside Saved Conversations */}
+          {sessions.length > 0 && (
+            <div className="px-2.5 py-2 border-b border-white/[0.06]">
+              <div className="h-8 rounded-xl bg-black/40 border border-white/[0.08] px-2.5 flex items-center gap-1.5">
+                <Search className="w-3.5 h-3.5 text-[#7A7A85] shrink-0" />
+                <input
+                  value={historySearch}
+                  onChange={e => setHistorySearch(e.target.value)}
+                  placeholder="بحث في المحادثات..."
+                  className="flex-1 bg-transparent text-[11.5px] text-white placeholder:text-[#666672] outline-none"
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
-            {sessions.length === 0 ? (
-              <div className="px-4 py-8 text-center text-xs text-[#7A7A85]">لا توجد محادثات محفوظة بعد</div>
-            ) : (
-              sessions.map(s => {
+            {(() => {
+              const q = historySearch.trim().toLowerCase();
+              const filtered = (q ? sessions.filter(s => s.title.toLowerCase().includes(q)) : sessions)
+                .slice()
+                .sort((a, b) => {
+                  const ap = pinnedSessionIds.includes(a.id) ? 1 : 0;
+                  const bp = pinnedSessionIds.includes(b.id) ? 1 : 0;
+                  return bp - ap;
+                });
+              if (filtered.length === 0) {
+                return (
+                  <div className="px-4 py-8 text-center text-xs text-[#7A7A85]">
+                    {sessions.length === 0 ? 'لا توجد محادثات محفوظة بعد' : 'لا توجد نتائج مطابقة'}
+                  </div>
+                );
+              }
+              return filtered.map(s => {
                 const comp = AI_COMPANIES.find(c => c.id === s.company_id) || AI_COMPANIES[0];
                 const active = s.id === sessionId;
+                const isPinned = pinnedSessionIds.includes(s.id);
                 return (
                   <div
                     key={s.id}
                     onClick={() => openHistorySession(s)}
-                    className={`px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                    className={`px-3 py-2.5 flex items-center justify-between gap-2 cursor-pointer transition-colors ${
                       active ? 'bg-white/[0.09]' : 'hover:bg-white/[0.05]'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       <span className="shrink-0">{comp.renderLogo(14)}</span>
                       <span className="text-xs text-[#F2F2F5] truncate">{s.title}</span>
                     </div>
-                    <div onClick={e => e.stopPropagation()} className="shrink-0">
+                    <div onClick={e => e.stopPropagation()} className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={e => togglePinSession(s.id, e)}
+                        title={isPinned ? 'إلغاء التثبيت' : 'تثبيت المحادثة'}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                          isPinned
+                            ? 'text-[#FBBF24] bg-[#FBBF24]/15'
+                            : 'text-[#7A7A85] hover:text-white hover:bg-white/[0.08]'
+                        }`}
+                      >
+                        <Pin className="w-3 h-3" />
+                      </button>
                       <QuickRemovePill iconOnly onRemove={() => deleteSession(s.id)} />
                     </div>
                   </div>
                 );
-              })
-            )}
+              });
+            })()}
           </div>
         </div>
       )}
@@ -1053,6 +1188,26 @@ export function AiView({ user, lang }: AiViewProps) {
                   </form>
                 )}
               </div>
+
+              {/* Categorized Smart Welcome Prompt Chips (Everyday Assistant — Live Web, Summaries, Translation, Ideas) */}
+              <div onClick={e => e.stopPropagation()} className="w-full max-w-[720px] grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                {(lang === 'en' ? SMART_WELCOME_PROMPTS_EN : SMART_WELCOME_PROMPTS_AR).map((item, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => sendPrompt(item.prompt)}
+                    className="group rounded-2xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.08] hover:border-white/[0.18] px-3 py-2.5 text-start transition-all cursor-pointer"
+                  >
+                    <div className="inline-flex items-center gap-1 text-[10px] font-bold text-[#25F4EE] mb-1">
+                      <Sparkles className="w-2.5 h-2.5" />
+                      <span>{item.tag}</span>
+                    </div>
+                    <div className="text-xs font-semibold text-white/95 group-hover:text-white leading-snug">
+                      {item.title}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="space-y-7 pt-2">
@@ -1101,7 +1256,7 @@ export function AiView({ user, lang }: AiViewProps) {
                         <RichMessageText text={t.content} />
                       </div>
                     )}
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity px-1 text-[#7A7A85]">
+                    <div className="flex items-center gap-1 opacity-75 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity px-1 text-[#7A7A85]">
                       <button
                         type="button"
                         onClick={e => {
@@ -1118,8 +1273,9 @@ export function AiView({ user, lang }: AiViewProps) {
                         onClick={e => {
                           e.stopPropagation();
                           setPrompt(t.transcript || t.content);
+                          desktopTaRef.current?.focus();
                         }}
-                        title="تعديل وإرسال"
+                        title="تعديل وإعادة السؤال"
                         className="w-6 h-6 rounded-full hover:bg-white/[0.08] hover:text-white flex items-center justify-center cursor-pointer"
                       >
                         <Pencil className="w-3 h-3" />
@@ -1144,10 +1300,18 @@ export function AiView({ user, lang }: AiViewProps) {
                     </div>
                     <div className="flex-1 min-w-0 space-y-2.5">
                       {t.streaming && !t.content ? (
-                        <div className="flex items-center gap-1.5 py-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:0ms]" />
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:150ms]" />
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:300ms]" />
+                        <div className="flex items-center gap-2 py-2">
+                          <div className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:0ms]" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:150ms]" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#FDE68A] animate-bounce [animation-delay:300ms]" />
+                          </div>
+                          {t.statusText && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/[0.05] text-[11px] font-medium text-[#25F4EE]">
+                              <Globe className="w-3 h-3 animate-spin" />
+                              <span>{t.statusText}</span>
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="text-[14.5px] leading-[1.75] text-[#F2F2F5] space-y-2">
@@ -1157,6 +1321,34 @@ export function AiView({ user, lang }: AiViewProps) {
                           {t.streaming && (
                             <span className="inline-block w-1.5 h-4 align-middle bg-[#FDE68A] rounded-full animate-pulse ms-1" />
                           )}
+                        </div>
+                      )}
+
+                      {/* Live Web Source Citation Chips (Perplexity / Gemini Style!) */}
+                      {!t.streaming && t.sources && t.sources.length > 0 && (
+                        <div className="pt-1 space-y-1.5">
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#9E9EA8]">
+                            <Globe className="w-3 h-3 text-[#25F4EE]" />
+                            <span>المصادر الحية ({t.sources.length})</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {t.sources.map((src, sIdx) => (
+                              <a
+                                key={`${t.id}_src_${sIdx}`}
+                                href={src.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="max-w-[230px] px-2.5 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.11] border border-white/[0.09] hover:border-[#25F4EE]/40 flex items-center gap-1.5 text-[11px] text-[#E4E4E7] transition-colors"
+                              >
+                                <span className="w-4 h-4 rounded-full bg-[#25F4EE]/15 text-[#25F4EE] text-[9.5px] font-bold font-mono-num flex items-center justify-center shrink-0">
+                                  {sIdx + 1}
+                                </span>
+                                <span className="truncate font-medium">{src.title || src.host}</span>
+                                <ExternalLink className="w-3 h-3 text-[#8E8E93] shrink-0" />
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -1199,6 +1391,28 @@ export function AiView({ user, lang }: AiViewProps) {
                         >
                           {copiedId === t.id ? <Check className="w-4 h-4 text-[#22C55E]" /> : <Copy className="w-4 h-4" />}
                         </button>
+
+                        {!t.streaming && t.content && typeof window !== 'undefined' && 'speechSynthesis' in window && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              toggleSpeakTurn(t.id, t.content);
+                            }}
+                            title={speakingTurnId === t.id ? 'إيقاف القراءة الصوتية' : 'استمع للرد'}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                              speakingTurnId === t.id
+                                ? 'bg-[#25F4EE]/20 text-[#25F4EE]'
+                                : 'hover:bg-white/[0.08] hover:text-white'
+                            }`}
+                          >
+                            {speakingTurnId === t.id ? (
+                              <VolumeX className="w-4 h-4" />
+                            ) : (
+                              <Volume2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
 
                         <button
                           type="button"

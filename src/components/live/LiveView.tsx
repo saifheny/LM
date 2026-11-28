@@ -9,17 +9,22 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  BarChart3,
+  Check,
+  Clock,
   CornerDownLeft,
   Eye,
   EyeOff,
   Flag,
   Heart,
+  MessageCircle,
   Mic,
   MicOff,
   Monitor,
   Volume2,
   VolumeX,
   Pin,
+  Plus,
   Radio,
   RefreshCw,
   Share2,
@@ -29,6 +34,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Users,
   Video,
   VideoOff,
   X,
@@ -197,6 +203,33 @@ function formatCompact(n: number): string {
   return String(Math.max(0, Math.floor(n)));
 }
 
+function formatLiveDuration(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const rem = s % 60;
+  if (hrs > 0) return `${hrs}:${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+  return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+}
+
+interface LivePollPublic {
+  id: string;
+  roomId: string;
+  question: string;
+  totalVotes: number;
+  myVote: string | null;
+  options: Array<{ id: string; text: string; votes: number; percent: number }>;
+  createdAt: number;
+}
+
+interface PostLiveSummary {
+  title: string;
+  durationSec: number;
+  peakViewers: number;
+  likesCount: number;
+  commentsCount: number;
+}
+
 export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: LiveViewProps) {
   const { setComposerFocused, mobileNavExpanded, setMobileNavExpanded } = useLayout();
   const [rooms, setRooms] = useState<LiveRoomItem[]>([]);
@@ -293,6 +326,20 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
   const [startingLive, setStartingLive] = useState(false);
   const [hostingRoomId, setHostingRoomId] = useState<string | null>(null);
   const [livePeerCount, setLivePeerCount] = useState(0);
+
+  // Phase 2B: Interactive Live Polls + Live Timer + Post-Live Summary Screen
+  const [livePoll, setLivePoll] = useState<LivePollPublic | null>(null);
+  const [myPollVotes, setMyPollVotes] = useState<Record<string, string>>({});
+  const [pollCreatorOpen, setPollCreatorOpen] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [creatingPoll, setCreatingPoll] = useState(false);
+  const [liveSummary, setLiveSummary] = useState<PostLiveSummary | null>(null);
+  const [liveElapsedSec, setLiveElapsedSec] = useState(0);
+  const broadcastStartedAtRef = useRef<number>(0);
+  const broadcastTitleRef = useRef<string>('');
+  const peakViewersRef = useRef<number>(1);
+
   const studioPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const studioPreviewStreamRef = useRef<MediaStream | null>(null);
 
@@ -365,6 +412,19 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     }
   }, [user.id]);
 
+  const loadPoll = useCallback(async (id: string) => {
+    try {
+      const res = await apiGet<{ ok: boolean; poll: LivePollPublic | null }>(`/api/live/rooms/${id}/poll?userId=${encodeURIComponent(user.id)}`);
+      if (activeRoomIdRef.current !== id) return;
+      setLivePoll(res.poll || null);
+      if (res.poll?.myVote) {
+        setMyPollVotes(prev => ({ ...prev, [res.poll!.id]: res.poll!.myVote! }));
+      }
+    } catch {
+      // ignore
+    }
+  }, [user.id]);
+
   useEffect(() => {
     loadRooms();
   }, [loadRooms]);
@@ -378,9 +438,11 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       // Instant zero-lag switch: show cached room state at 0ms OR clear stale previous room comments immediately!
       const cached = roomStateCacheRef.current[activeRoomId];
       setRoomState(cached || null);
+      setLivePoll(null);
       loadState(activeRoomId);
+      loadPoll(activeRoomId);
     }
-  }, [activeRoomId, loadState]);
+  }, [activeRoomId, loadState, loadPoll]);
 
   // Sync Swiper position whenever activeRoomId changes externally
   useEffect(() => {
@@ -428,10 +490,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       if (!navigator.mediaDevices?.getUserMedia) return;
       try {
         const s = await navigator.mediaDevices.getUserMedia({
-          video:
-            goLiveOrientation === 'landscape'
-              ? { facingMode: goLiveFacing, width: { ideal: 1280 }, height: { ideal: 720 } }
-              : { facingMode: goLiveFacing, width: { ideal: 1080 }, height: { ideal: 1920 } },
+          video: { facingMode: goLiveFacing, width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
         if (cancelled) {
@@ -468,6 +527,12 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     }
     if (lastWsEvent.event === 'live:rooms_updated') {
       loadRooms();
+    }
+    if (lastWsEvent.event === 'live:poll') {
+      const p = lastWsEvent.payload as { roomId?: string; poll?: LivePollPublic | null };
+      if (p?.roomId === activeRoomId) {
+        setLivePoll(p.poll || null);
+      }
     }
     if (lastWsEvent.event === 'live:room_ended') {
       const p = lastWsEvent.payload as { roomId?: string };
@@ -591,16 +656,48 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
     setViewerConnecting(false);
   }, [activeRoomId]);
 
+  // Live elapsed broadcast timer while hosting
+  useEffect(() => {
+    if (!hostingRoomId) {
+      setLiveElapsedSec(0);
+      return;
+    }
+    const tick = () => {
+      if (broadcastStartedAtRef.current > 0) {
+        setLiveElapsedSec(Math.max(0, Math.floor((Date.now() - broadcastStartedAtRef.current) / 1000)));
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [hostingRoomId]);
+
   const stopHostingBroadcast = useCallback(
     async (notifyApi = true) => {
       const rid = hostingRoomId;
+      const elapsedSec = broadcastStartedAtRef.current > 0 ? Math.max(1, Math.floor((Date.now() - broadcastStartedAtRef.current) / 1000)) : liveElapsedSec;
+      const roomSnapshot = rooms.find(r => r.id === rid);
+      const stateSnapshot = (rid && roomStateCacheRef.current[rid]) || (roomState?.roomId === rid ? roomState : null);
+      const finalLikes = (stateSnapshot?.likesCount || roomSnapshot?.likesCount || 0) + (rid ? optimisticLikes[rid] || 0 : 0);
+      const finalComments = stateSnapshot?.recentMessages?.length || 0;
+      const finalTitle = broadcastTitleRef.current || roomSnapshot?.title || 'بث مباشر على LM';
+      const finalPeak = Math.max(1, peakViewersRef.current, livePeerCount + 1, stateSnapshot?.viewersCount || 1);
+
       hostPeersRef.current.forEach(pc => pc.close());
       hostPeersRef.current.clear();
       setLivePeerCount(0);
       camStreamRef.current?.getTracks().forEach(t => t.stop());
       camStreamRef.current = null;
       setHostingRoomId(null);
+      setLivePoll(null);
       if (notifyApi && rid) {
+        setLiveSummary({
+          title: finalTitle,
+          durationSec: elapsedSec,
+          peakViewers: finalPeak,
+          likesCount: finalLikes,
+          commentsCount: finalComments,
+        });
         try {
           await api(`/api/live/rooms/${rid}?hostId=${user.id}`, { method: 'DELETE' });
         } catch {
@@ -609,8 +706,60 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         loadRooms();
       }
     },
-    [hostingRoomId, user.id, loadRooms]
+    [hostingRoomId, user.id, loadRooms, liveElapsedSec, rooms, roomState, optimisticLikes, livePeerCount]
   );
+
+  async function handleCreateLivePoll(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeRoom?.id || creatingPoll) return;
+    const cleanOpts = pollOptions.map(o => o.trim()).filter(Boolean);
+    if (!pollQuestion.trim() || cleanOpts.length < 2) {
+      showNotice('أدخل السؤال وخيارين على الأقل');
+      return;
+    }
+    setCreatingPoll(true);
+    try {
+      const res = await apiPost<{ ok: boolean; poll: LivePollPublic }>(`/api/live/rooms/${activeRoom.id}/poll`, {
+        hostId: user.id,
+        question: pollQuestion.trim(),
+        options: cleanOpts,
+      });
+      setLivePoll(res.poll);
+      setPollCreatorOpen(false);
+      setPollQuestion('');
+      setPollOptions(['', '']);
+      showNotice('تم إطلاق الاستطلاع المباشر');
+    } catch (err) {
+      showNotice(err instanceof Error ? err.message : 'تعذر إنشاء الاستطلاع');
+    } finally {
+      setCreatingPoll(false);
+    }
+  }
+
+  async function handleCloseLivePoll() {
+    if (!activeRoom?.id) return;
+    try {
+      await apiPost(`/api/live/rooms/${activeRoom.id}/poll`, { hostId: user.id, close: true });
+      setLivePoll(null);
+      showNotice('تم إنهاء الاستطلاع');
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleVoteLivePoll(optionId: string) {
+    if (!activeRoom?.id || !livePoll) return;
+    setMyPollVotes(prev => ({ ...prev, [livePoll.id]: optionId }));
+    try {
+      const res = await apiPost<{ ok: boolean; poll: LivePollPublic }>(`/api/live/rooms/${activeRoom.id}/poll-vote`, {
+        userId: user.id,
+        optionId,
+      });
+      if (res.poll) setLivePoll(res.poll);
+    } catch (err) {
+      showNotice(err instanceof Error ? err.message : 'تعذر تسجيل صوتك');
+    }
+  }
 
   // Cleanup everything on unmount
   useEffect(() => {
@@ -909,10 +1058,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       if (navigator.mediaDevices?.getUserMedia) {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video:
-              goLiveOrientation === 'landscape'
-                ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
-                : { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } },
+            video: { facingMode: goLiveFacing, width: { ideal: 1280 }, height: { ideal: 720 } },
             audio: true,
           });
         } catch {
@@ -932,6 +1078,11 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       });
 
       camStreamRef.current = stream;
+      broadcastStartedAtRef.current = Date.now();
+      broadcastTitleRef.current = goLiveTitle.trim();
+      peakViewersRef.current = 1;
+      setLiveElapsedSec(0);
+      setLiveSummary(null);
       setHostMicMuted(false);
       setHostCamOff(!stream || stream.getVideoTracks().length === 0);
       setHostFacing(goLiveFacing);
@@ -1099,6 +1250,14 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
       ? roomState.likesCount
       : activeRoom?.likesCount) || 0;
   const displayedLikes = baseLikes + (activeRoom ? optimisticLikes[activeRoom.id] || 0 : 0);
+
+  useEffect(() => {
+    if (isHostingActiveRoom && displayedViewers > peakViewersRef.current) {
+      peakViewersRef.current = displayedViewers;
+    }
+  }, [isHostingActiveRoom, displayedViewers]);
+
+  const activePollMyVote = livePoll ? myPollVotes[livePoll.id] || livePoll.myVote : null;
 
   return (
     <div
@@ -1307,7 +1466,7 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   <div className="text-[10.5px] text-white/75 truncate max-w-[96px] sm:max-w-[122px]">{activeRoom.title}</div>
                 </div>
                 <span className="ms-1 px-2 py-0.5 rounded-full bg-[#FE2C55] text-white text-[10px] font-bold shrink-0">
-                  LIVE
+                  {isHostingActiveRoom ? `LIVE · ${formatLiveDuration(liveElapsedSec)}` : 'LIVE'}
                 </span>
               </button>
 
@@ -1381,7 +1540,76 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           </div>
         </div>
 
-        {/* Active Pinned Comment (Hides in Clear-Display Mode) */}
+        {/* Interactive Floating Live Poll Voting Card (Real-Time WS Sync, Hides in Clear-Display Mode) */}
+        {!cleanView && livePoll && activeRoom && livePoll.roomId === activeRoom.id && (
+          <div
+            onClick={e => e.stopPropagation()}
+            onPointerDown={e => e.stopPropagation()}
+            className="swiper-no-swiping absolute top-[128px] start-3.5 end-16 z-20 max-w-[330px] rounded-2xl bg-black/72 backdrop-blur-md border border-white/[0.14] px-3.5 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.45)] space-y-2"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-1 text-[10px] font-bold text-[#25F4EE] mb-0.5">
+                  <BarChart3 className="w-3 h-3" />
+                  <span>استطلاع مباشر</span>
+                  <span className="text-white/55 font-mono-num">· {livePoll.totalVotes} صوت</span>
+                </div>
+                <div className="text-[12.5px] font-bold text-white leading-snug">{livePoll.question}</div>
+              </div>
+              {isOwnerOfActiveRoom && (
+                <button
+                  type="button"
+                  onClick={handleCloseLivePoll}
+                  title="إنهاء الاستطلاع"
+                  className="shrink-0 px-2 py-0.5 rounded-full bg-white/[0.1] hover:bg-[#EF4444] text-[10px] font-bold text-white/90 cursor-pointer transition-colors"
+                >
+                  إنهاء
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              {livePoll.options.map(opt => {
+                const picked = activePollMyVote === opt.id;
+                const showResults = Boolean(activePollMyVote) || isOwnerOfActiveRoom || livePoll.totalVotes > 0;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleVoteLivePoll(opt.id)}
+                    className={`relative w-full overflow-hidden rounded-xl px-3 py-2 text-start text-[12px] font-semibold transition-all cursor-pointer border ${
+                      picked
+                        ? 'border-[#25F4EE] bg-[#25F4EE]/15 text-white'
+                        : 'border-white/[0.1] bg-white/[0.06] hover:bg-white/[0.12] text-white/95'
+                    }`}
+                  >
+                    {showResults && (
+                      <div
+                        style={{ width: `${Math.max(0, Math.min(100, opt.percent))}%` }}
+                        className={`pointer-events-none absolute inset-y-0 start-0 transition-[width] duration-300 ${
+                          picked ? 'bg-[#25F4EE]/28' : 'bg-white/[0.12]'
+                        }`}
+                      />
+                    )}
+                    <div className="relative z-10 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 truncate">
+                        {picked && <Check className="w-3.5 h-3.5 text-[#25F4EE] shrink-0" />}
+                        <span className="truncate">{opt.text}</span>
+                      </span>
+                      {showResults && (
+                        <span className="text-[11px] font-mono-num font-bold text-white/90 shrink-0">
+                          {opt.percent}%
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Active Pinned Comment (Hides in Clear-Display Mode + Host 1-Tap Unpin) */}
         {!cleanView && roomState && roomState.roomId === activeRoom?.id && roomState.activeHighlight && (
           <div
             onClick={e => e.stopPropagation()}
@@ -1398,6 +1626,19 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
               </button>
               <span className="text-white/90">{roomState.activeHighlight.text}</span>
             </div>
+            {isOwnerOfActiveRoom && (
+              <button
+                type="button"
+                onClick={() => {
+                  moderateActiveRoom('delete_active');
+                  showNotice('تمت إزالة التعليق المثبت');
+                }}
+                title="إزالة التثبيت"
+                className="w-6 h-6 rounded-full hover:bg-white/15 text-white/75 hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
 
@@ -1545,17 +1786,30 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
           )}
 
           {isOwnerOfActiveRoom && (
-            <button
-              type="button"
-              onClick={() => {
-                loadBlockedUsers();
-                setHostControlsOpen(true);
-              }}
-              title="لوحة تحكم المذيع"
-              className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-[#25F4EE] flex items-center justify-center cursor-pointer transition-colors"
-            >
-              <SlidersHorizontal className="w-5 h-5" strokeWidth={2} />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setPollCreatorOpen(true)}
+                title="إنشاء استطلاع مباشر"
+                className={`w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  livePoll ? 'bg-[#25F4EE] text-black' : 'bg-black/55 hover:bg-black/75 text-white'
+                }`}
+              >
+                <BarChart3 className="w-5 h-5" strokeWidth={2} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  loadBlockedUsers();
+                  setHostControlsOpen(true);
+                }}
+                title="لوحة تحكم المذيع"
+                className="w-10 h-10 rounded-full bg-black/55 hover:bg-black/75 text-[#25F4EE] flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <SlidersHorizontal className="w-5 h-5" strokeWidth={2} />
+              </button>
+            </>
           )}
 
           <button
@@ -2196,6 +2450,18 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                   <span>إزالة التعليق المثبت الحالي</span>
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setHostControlsOpen(false);
+                  setPollCreatorOpen(true);
+                }}
+                className="w-full h-10 rounded-xl bg-[#25F4EE]/15 hover:bg-[#25F4EE]/25 border border-[#25F4EE]/30 text-xs font-bold text-[#25F4EE] flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                <BarChart3 className="w-4 h-4" />
+                <span>{livePoll ? 'تحديث الاستطلاع المباشر' : 'إطلاق استطلاع مباشر للمشاهدين'}</span>
+              </button>
             </div>
 
             {/* Blocked Users List with 1-Tap Unblock */}
@@ -2237,6 +2503,187 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* HOST INTERACTIVE LIVE POLL CREATOR SHEET */}
+      {pollCreatorOpen && activeRoom && (
+        <div
+          onClick={() => setPollCreatorOpen(false)}
+          className="fixed inset-0 z-[76] bg-black/68 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <form
+            onSubmit={handleCreateLivePoll}
+            onClick={e => e.stopPropagation()}
+            style={{ paddingBottom: 'max(22px, calc(env(safe-area-inset-bottom) + 14px))' }}
+            className="w-full max-w-[460px] rounded-t-[24px] sm:rounded-2xl bg-[#181920] border border-white/[0.1] px-5 pt-4 space-y-4"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <BarChart3 className="w-4 h-4 text-[#25F4EE]" />
+                <span>إنشاء استطلاع مباشر</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPollCreatorOpen(false)}
+                className="w-8 h-8 rounded-full bg-white/[0.08] text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-[#A1A1AA]">سؤال الاستطلاع</label>
+              <input
+                value={pollQuestion}
+                onChange={e => setPollQuestion(e.target.value)}
+                maxLength={120}
+                placeholder="مثال: نكمل الموضوع ده ولا نبدأ فقرة الأسئلة؟"
+                className="w-full h-11 rounded-xl bg-black/45 border border-white/[0.1] focus:border-[#25F4EE] px-3.5 text-sm text-white placeholder:text-[#7A7A85] outline-none"
+              />
+              {/* Quick 1-Tap Poll Presets */}
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {[
+                  { q: 'رأيكم في موضوع البث النهاردة؟', opts: ['جامد جدًا 🔥', 'ممتاز ومفيد 👍'] },
+                  { q: 'الفقرة الجاية تكون إيه؟', opts: ['أسئلة وأجوبة 💬', 'دردشة مفتوحة 🎙️'] },
+                ].map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setPollQuestion(preset.q);
+                      setPollOptions(preset.opts);
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-[#D4D4D8] cursor-pointer"
+                  >
+                    {preset.q}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[#A1A1AA]">الخيارات ({pollOptions.length}/4)</label>
+                {pollOptions.length < 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setPollOptions(prev => [...prev, ''])}
+                    className="text-[11px] font-bold text-[#25F4EE] inline-flex items-center gap-1 cursor-pointer hover:underline"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>إضافة خيار</span>
+                  </button>
+                )}
+              </div>
+              {pollOptions.map((opt, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <input
+                    value={opt}
+                    onChange={e =>
+                      setPollOptions(prev => prev.map((v, i) => (i === idx ? e.target.value : v)))
+                    }
+                    maxLength={60}
+                    placeholder={`الخيار ${idx + 1}`}
+                    className="flex-1 h-10 rounded-xl bg-black/45 border border-white/[0.1] focus:border-[#25F4EE] px-3 text-xs text-white placeholder:text-[#7A7A85] outline-none"
+                  />
+                  {pollOptions.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setPollOptions(prev => prev.filter((_, i) => i !== idx))}
+                      className="w-9 h-9 rounded-xl bg-white/[0.06] hover:bg-[#EF4444]/20 text-[#A1A1AA] hover:text-[#EF4444] flex items-center justify-center cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              {livePoll && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleCloseLivePoll();
+                    setPollCreatorOpen(false);
+                  }}
+                  className="h-11 px-4 rounded-xl bg-[#EF4444]/15 hover:bg-[#EF4444]/25 text-xs font-bold text-[#FF595A] cursor-pointer"
+                >
+                  إنهاء الحالي
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={creatingPoll || !pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2}
+                className="flex-1 h-11 rounded-xl bg-[#25F4EE] hover:bg-[#1BE3DD] disabled:opacity-45 text-black text-xs font-extrabold cursor-pointer transition-colors"
+              >
+                {creatingPoll ? 'جارٍ الإطلاق...' : 'إطلاق الاستطلاع الآن'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* POST-LIVE BROADCAST SUMMARY SCREEN (Duration, Peak Viewers, Likes, Comments!) */}
+      {liveSummary && (
+        <div className="fixed inset-0 z-[78] bg-black/82 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-[400px] rounded-[26px] bg-gradient-to-b from-[#1B1D26] to-[#121319] border border-white/[0.12] p-6 text-center space-y-5 shadow-[0_24px_64px_rgba(0,0,0,0.7)]">
+            <div className="flex flex-col items-center gap-2.5">
+              <div className="p-1 rounded-full bg-gradient-to-tr from-[#FE2C55] to-[#25F4EE]">
+                <div className="p-0.5 rounded-full bg-[#121319]">
+                  <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={68} />
+                </div>
+              </div>
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-white/[0.08] text-[11px] font-bold text-[#25F4EE] mb-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>ملخص البث المباشر</span>
+                </div>
+                <h3 className="text-lg font-extrabold text-white">انتهى البث بنجاح</h3>
+                <p className="text-xs text-[#9E9EA8] mt-0.5 line-clamp-1">{liveSummary.title}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="rounded-2xl bg-white/[0.05] border border-white/[0.07] p-3.5 flex flex-col items-center gap-1">
+                <Clock className="w-4 h-4 text-[#25F4EE]" />
+                <span className="text-lg font-extrabold font-mono-num text-white">
+                  {formatLiveDuration(liveSummary.durationSec)}
+                </span>
+                <span className="text-[11px] text-[#9E9EA8]">مدة البث</span>
+              </div>
+              <div className="rounded-2xl bg-white/[0.05] border border-white/[0.07] p-3.5 flex flex-col items-center gap-1">
+                <Users className="w-4 h-4 text-[#A78BFA]" />
+                <span className="text-lg font-extrabold font-mono-num text-white">
+                  {liveSummary.peakViewers.toLocaleString('en-US')}
+                </span>
+                <span className="text-[11px] text-[#9E9EA8]">ذروة المشاهدين</span>
+              </div>
+              <div className="rounded-2xl bg-white/[0.05] border border-white/[0.07] p-3.5 flex flex-col items-center gap-1">
+                <Heart className="w-4 h-4 text-[#FE2C55] fill-current" />
+                <span className="text-lg font-extrabold font-mono-num text-white">
+                  {formatCompact(liveSummary.likesCount)}
+                </span>
+                <span className="text-[11px] text-[#9E9EA8]">إجمالي الإعجابات</span>
+              </div>
+              <div className="rounded-2xl bg-white/[0.05] border border-white/[0.07] p-3.5 flex flex-col items-center gap-1">
+                <MessageCircle className="w-4 h-4 text-[#34D399]" />
+                <span className="text-lg font-extrabold font-mono-num text-white">
+                  {liveSummary.commentsCount.toLocaleString('en-US')}
+                </span>
+                <span className="text-[11px] text-[#9E9EA8]">التعليقات</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setLiveSummary(null)}
+              className="w-full h-11 rounded-full bg-white hover:bg-[#E4E4E7] text-black text-sm font-extrabold cursor-pointer transition-colors"
+            >
+              تم — العودة للبثوث
+            </button>
           </div>
         </div>
       )}

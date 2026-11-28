@@ -52,6 +52,7 @@ export function SmartVoicePill({
   recordId,
   table,
   title,
+  onPlayActive,
   compact = false,
 }: {
   url: string;
@@ -60,6 +61,7 @@ export function SmartVoicePill({
   recordId?: string;
   table?: 'messages' | 'post_comments' | 'video_comments' | 'ai_messages';
   title?: string | null;
+  onPlayActive?: (el: HTMLAudioElement) => void;
   isMine?: boolean;
   compact?: boolean;
   accent?: 'default' | 'ai';
@@ -200,9 +202,10 @@ export function SmartVoicePill({
         ref={audioRef}
         src={url}
         preload="metadata"
-        onPlaying={() => {
+        onPlaying={e => {
           setLoadingAudio(false);
           setPlaying(true);
+          onPlayActive?.(e.currentTarget);
         }}
         onPause={() => {
           setLoadingAudio(false);

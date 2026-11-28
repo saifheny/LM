@@ -30,6 +30,7 @@ import {
   Trash2,
   Palette,
   Play,
+  Pause,
   ExternalLink,
   FileText,
 } from 'lucide-react';
@@ -230,7 +231,7 @@ export function ChatView({
     [activeConvId]
   );
 
-  // Signature LM Cosmic Space Wallpaper Preset (Persisted across refresh)
+  // Authentic Telegram Wallpaper Preset (Persisted across refresh)
   const [chatWallpaper, setChatWallpaperState] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('lm_chat_wallpaper');
@@ -240,6 +241,43 @@ export function ChatView({
     }
     return 'lm-wp-space';
   });
+
+  // Telegram Top Floating Audio Player Bar (Stays visible while scrolling the chat!)
+  const [floatingVoice, setFloatingVoice] = useState<{
+    msgId: string;
+    senderLabel: string;
+    timeLabel: string;
+    playing: boolean;
+    speed: number;
+    progressPct: number;
+  } | null>(null);
+  const floatingAudioElRef = useRef<HTMLAudioElement | null>(null);
+
+  // Shared Media Hub Tab inside Info Sheet (Photos | Videos | Links | Voice)
+  const [sharedMediaTab, setSharedMediaTab] = useState<'photos' | 'videos' | 'links' | 'audio'>('photos');
+
+  useEffect(() => {
+    const el = floatingAudioElRef.current;
+    if (!el || !floatingVoice) return;
+    const onTime = () => {
+      const dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+      const pct = dur > 0 ? Math.min(100, (el.currentTime / dur) * 100) : 0;
+      setFloatingVoice(prev => (prev ? { ...prev, progressPct: pct, playing: !el.paused } : null));
+    };
+    const onPause = () => setFloatingVoice(prev => (prev ? { ...prev, playing: false } : null));
+    const onPlay = () => setFloatingVoice(prev => (prev ? { ...prev, playing: true } : null));
+    const onEnd = () => setFloatingVoice(null);
+    el.addEventListener('timeupdate', onTime);
+    el.addEventListener('pause', onPause);
+    el.addEventListener('play', onPlay);
+    el.addEventListener('ended', onEnd);
+    return () => {
+      el.removeEventListener('timeupdate', onTime);
+      el.removeEventListener('pause', onPause);
+      el.removeEventListener('play', onPlay);
+      el.removeEventListener('ended', onEnd);
+    };
+  }, [floatingVoice?.msgId]);
   const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
 
   const setChatWallpaper = useCallback((wp: string) => {
@@ -1644,6 +1682,64 @@ export function ChatView({
           )
         )}
 
+        {/* Persistent Top Floating Audio Bar (Like Telegram — keep scrolling while voice plays!) */}
+        {floatingVoice && !msgSearchOpen && (
+          <div className="pointer-events-none absolute top-[62px] inset-x-3 md:inset-x-5 z-20 flex justify-center">
+            <div className="pointer-events-auto relative w-full max-w-[540px] rounded-full bg-[#151B27]/92 backdrop-blur-xl px-3 py-1.5 flex items-center gap-2.5 overflow-hidden shadow-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  const el = floatingAudioElRef.current;
+                  if (!el) return;
+                  if (el.paused) el.play().catch(() => {});
+                  else el.pause();
+                }}
+                className="w-7 h-7 rounded-full bg-[#38BDF8]/20 text-[#38BDF8] flex items-center justify-center shrink-0 cursor-pointer"
+              >
+                {floatingVoice.playing ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ms-0.5" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => jumpToMessage(floatingVoice.msgId)}
+                className="flex-1 min-w-0 text-start cursor-pointer"
+              >
+                <div className="text-xs font-semibold text-white truncate">
+                  {floatingVoice.senderLabel}{' '}
+                  <span className="font-normal text-[#9CA3AF] font-mono-num">{floatingVoice.timeLabel}</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const el = floatingAudioElRef.current;
+                  if (!el) return;
+                  const next = floatingVoice.speed === 1 ? 1.5 : floatingVoice.speed === 1.5 ? 2 : 1;
+                  el.playbackRate = next;
+                  setFloatingVoice(prev => (prev ? { ...prev, speed: next } : null));
+                }}
+                className="px-2 py-0.5 rounded-full bg-white/[0.1] text-[10.5px] font-mono-num font-bold text-white cursor-pointer shrink-0"
+              >
+                {floatingVoice.speed}X
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  floatingAudioElRef.current?.pause();
+                  floatingAudioElRef.current = null;
+                  setFloatingVoice(null);
+                }}
+                className="w-6 h-6 rounded-full hover:bg-white/[0.1] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <span
+                style={{ width: `${floatingVoice.progressPct}%` }}
+                className="pointer-events-none absolute bottom-0 start-0 h-[2px] bg-[#38BDF8] transition-[width] duration-150"
+              />
+            </div>
+          </div>
+        )}
+
         {/* Stationary Multi-Layer Telegram/WhatsApp Gradient-Masked Doodle Wallpaper Behind Scrolling Thread! */}
         <div className={`lm-chat-backdrop ${chatWallpaper}`} />
 
@@ -1717,7 +1813,7 @@ export function ChatView({
             </div>
           )}
 
-          {messages.map(msg => {
+          {messages.map((msg, idx) => {
             const isMine = msg.senderId === user.id;
             const isAi = msg.senderId === 'lm_ai' || msg.msgType === 'ai_reply';
             const reactionEntries = Object.entries(msg.reactions || {}).filter(([, arr]) => arr.length > 0);
@@ -1729,9 +1825,40 @@ export function ChatView({
             const swipeDx = swipeReplyState?.msgId === msg.id ? swipeReplyState.offset : 0;
             const swipePct = Math.min(1, Math.abs(swipeDx) / 42);
 
+            // Telegram Date Divider Label + Consecutive Same-Sender Grouping
+            const getDateBucket = (raw?: string) => {
+              const s = (raw || '').trim();
+              if (!s || /^\d{1,2}:\d{2}/.test(s) || s === 'الآن' || s.includes('منذ')) {
+                return lang === 'en' ? 'Today' : 'اليوم';
+              }
+              const datePart = s.split(' ')[0];
+              return datePart || (lang === 'en' ? 'Today' : 'اليوم');
+            };
+            const curDateBucket = getDateBucket(msg.createdAt);
+            const prevMsg = idx > 0 ? messages[idx - 1] : null;
+            const nextMsg = idx < messages.length - 1 ? messages[idx + 1] : null;
+            const showDateDivider = !prevMsg || getDateBucket(prevMsg.createdAt) !== curDateBucket;
+            const isGroupedWithPrev =
+              Boolean(prevMsg) &&
+              !showDateDivider &&
+              prevMsg!.senderId === msg.senderId &&
+              Object.values(prevMsg!.reactions || {}).every(arr => arr.length === 0);
+            const isLastInBurst =
+              !nextMsg ||
+              getDateBucket(nextMsg.createdAt) !== curDateBucket ||
+              nextMsg.senderId !== msg.senderId ||
+              reactionEntries.length > 0;
+
             return (
+              <React.Fragment key={msg.id}>
+                {showDateDivider && (
+                  <div className="flex justify-center py-2">
+                    <span className="px-3 py-1 rounded-full bg-[#121620]/75 backdrop-blur-md text-[11px] font-semibold text-white/85">
+                      {curDateBucket}
+                    </span>
+                  </div>
+                )}
               <div
-                key={msg.id}
                 ref={el => {
                   msgNodeMapRef.current[msg.id] = el;
                 }}
@@ -1749,6 +1876,8 @@ export function ChatView({
                   openMessageContext(msg, 'main');
                 }}
                 className={`relative flex flex-col rounded-2xl transition-colors duration-200 select-none ${
+                  isGroupedWithPrev ? 'mt-0.5' : 'mt-2'
+                } ${
                   isMine ? 'items-end' : 'items-start'
                 } ${
                   isHighlighted
@@ -1784,7 +1913,9 @@ export function ChatView({
                   }`}
                 >
                   {!isMine && (
-                    isAi ? (
+                    !isLastInBurst ? (
+                      <div className="w-7 shrink-0" />
+                    ) : isAi ? (
                       <UserAvatar initials={msg.avatarInitials} avatarUrl={msg.avatarUrl} size={28} />
                     ) : (
                       <button
@@ -2056,6 +2187,17 @@ export function ChatView({
                             table="messages"
                             accent={msg.aiSummoned ? 'ai' : 'default'}
                             isMine={isMine}
+                            onPlayActive={el => {
+                              floatingAudioElRef.current = el;
+                              setFloatingVoice({
+                                msgId: msg.id,
+                                senderLabel: isMine ? (lang === 'en' ? 'You' : 'أنت') : msg.displayName,
+                                timeLabel: msg.createdAt,
+                                playing: true,
+                                speed: el.playbackRate || 1,
+                                progressPct: 0,
+                              });
+                            }}
                           />
                         ) : msg.isSpoiler && !revealedSpoilers[msg.id] ? (
                           <button
@@ -2216,6 +2358,7 @@ export function ChatView({
                   </div>
                 )}
               </div>
+              </React.Fragment>
             );
           })}
           {/* Live LM AI Typing Indicator inside Chat Stream */}
@@ -3080,6 +3223,110 @@ export function ChatView({
                 </button>
               </div>
             </div>
+
+            {/* SHARED MEDIA, VIDEOS, LINKS & AUDIO HUB */}
+            {(() => {
+              const sharedPhotos = messages
+                .filter(m => m.msgType === 'image' && m.mediaUrl)
+                .flatMap(m => parseMediaUrls(m.mediaUrl).map((url, i) => ({ id: `${m.id}_${i}`, url })));
+              const sharedVideos = messages.filter(m => (m.msgType === 'video' || m.msgType === 'video_note') && m.mediaUrl);
+              const sharedAudio = messages.filter(m => m.msgType === 'audio' && m.mediaUrl);
+              const sharedLinks = messages
+                .map(m => ({ msg: m, embed: extractChatRichEmbed(m) }))
+                .filter(x => x.embed !== null);
+
+              return (
+                <div className="rounded-2xl bg-[#11131B] border border-white/[0.08] overflow-hidden">
+                  <div className="flex items-center border-b border-white/[0.07] px-2 pt-2 gap-1 overflow-x-auto no-scrollbar">
+                    {[
+                      { id: 'photos' as const, label: `الصور (${sharedPhotos.length})` },
+                      { id: 'videos' as const, label: `الفيديوهات (${sharedVideos.length})` },
+                      { id: 'links' as const, label: `الروابط (${sharedLinks.length})` },
+                      { id: 'audio' as const, label: `الصوتيات (${sharedAudio.length})` },
+                    ].map(tItem => (
+                      <button
+                        key={tItem.id}
+                        type="button"
+                        onClick={() => setSharedMediaTab(tItem.id)}
+                        className={`px-3 py-2 text-xs font-semibold border-b-2 transition-colors cursor-pointer shrink-0 ${
+                          sharedMediaTab === tItem.id
+                            ? 'border-[#25F4EE] text-white'
+                            : 'border-transparent text-[#8E8E93] hover:text-white'
+                        }`}
+                      >
+                        {tItem.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="p-3 max-h-[260px] overflow-y-auto">
+                    {sharedMediaTab === 'photos' ? (
+                      sharedPhotos.length === 0 ? (
+                        <div className="py-6 text-center text-xs text-[#7A7A85]">لا توجد صور مشتركة</div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {sharedPhotos.map((ph, idx) => (
+                            <button
+                              key={ph.id}
+                              type="button"
+                              onClick={() => setChatLightbox({ urls: sharedPhotos.map(x => x.url), idx })}
+                              className="aspect-square rounded-xl overflow-hidden bg-black cursor-pointer"
+                            >
+                              <img src={ph.url} alt="" className="w-full h-full object-cover" />
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    ) : sharedMediaTab === 'videos' ? (
+                      sharedVideos.length === 0 ? (
+                        <div className="py-6 text-center text-xs text-[#7A7A85]">لا توجد فيديوهات مشتركة</div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {sharedVideos.map(v => (
+                            <div key={v.id} className="rounded-xl overflow-hidden bg-black border border-white/[0.08]">
+                              <video src={v.mediaUrl!} controls playsInline preload="metadata" className="w-full h-28 object-cover" />
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    ) : sharedMediaTab === 'links' ? (
+                      sharedLinks.length === 0 ? (
+                        <div className="py-6 text-center text-xs text-[#7A7A85]">لا توجد روابط مشتركة</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {sharedLinks.map(({ msg, embed }) => (
+                            <a
+                              key={msg.id}
+                              href={embed!.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block p-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
+                            >
+                              <div className="text-xs font-semibold text-[#38BDF8] truncate" dir="ltr">
+                                {embed!.url}
+                              </div>
+                              <div className="text-[10.5px] text-[#8E8E93] mt-0.5">
+                                {msg.displayName} · {msg.createdAt}
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      )
+                    ) : sharedAudio.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-[#7A7A85]">لا توجد رسائل صوتية مشتركة</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {sharedAudio.map(a => (
+                          <div key={a.id} className="p-2.5 rounded-xl bg-white/[0.04]">
+                            <SmartVoicePill url={a.mediaUrl!} transcript={a.transcript} compact />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ONE-TIME PERMANENT LM AI MEMBER ACTIVATION (Owner-Only Inside Group Info!) */}
             {activeConv.type !== 'dm' && (

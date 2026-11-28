@@ -1,4 +1,5 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Bell, X } from 'lucide-react';
 import { Lang, NavTab, NotificationItem, UserProfile } from './types';
 import { apiGet, apiPost, setAuthToken } from './lib/api';
 import { registerWsUser, subscribeWs, subscribeWsStatus } from './lib/wsHub';
@@ -79,6 +80,14 @@ export function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [outgoingCall, setOutgoingCall] = useState<CallLaunchRequest | null>(null);
+  const [liveToast, setLiveToast] = useState<{
+    id: string;
+    actorName: string;
+    text: string;
+    refTab: NavTab;
+    refId: string | null;
+  } | null>(null);
+  const liveToastTimerRef = useRef<number | null>(null);
 
   const shareApp = useCallback(() => {
     setSharePayload({
@@ -333,12 +342,39 @@ export function App() {
 
   useEffect(() => {
     if (lastWsEvent?.event === 'notification:new' && currentUser?.id) {
-      const payload = lastWsEvent.payload as { userId?: string };
+      const payload = lastWsEvent.payload as {
+        id?: string;
+        userId?: string;
+        actorName?: string;
+        text?: string;
+        refTab?: NavTab;
+        refId?: string | null;
+      };
       if (!payload?.userId || payload.userId === currentUser.id) {
         loadNotifications(currentUser.id);
+        // Show floating Dynamic Notification Banner when event isn't already open in current tab!
+        if (payload?.text && !(payload.refTab === 'chat' && activeTab === 'chat')) {
+          if (liveToastTimerRef.current) window.clearTimeout(liveToastTimerRef.current);
+          setLiveToast({
+            id: payload.id || `toast_${Date.now()}`,
+            actorName: payload.actorName || 'LM',
+            text: payload.text,
+            refTab: payload.refTab || 'social',
+            refId: payload.refId || null,
+          });
+          liveToastTimerRef.current = window.setTimeout(() => {
+            setLiveToast(null);
+          }, 4600);
+        }
       }
     }
-  }, [lastWsEvent, currentUser?.id, loadNotifications]);
+  }, [lastWsEvent, currentUser?.id, activeTab, loadNotifications]);
+
+  useEffect(() => {
+    return () => {
+      if (liveToastTimerRef.current) window.clearTimeout(liveToastTimerRef.current);
+    };
+  }, []);
 
   // Keep outer landing page strictly LTR/English and inside app synchronized with user language
   const showingLanding = !currentUser || loggedOut;
@@ -512,6 +548,56 @@ export function App() {
         outgoingRequest={outgoingCall}
         onClearOutgoing={() => setOutgoingCall(null)}
       />
+
+      {/* Global In-App Dynamic Notification Banner (Tapping Jumps Directly to the Event!) */}
+      {liveToast && (
+        <div
+          style={{ top: 'max(14px, calc(env(safe-area-inset-top) + 10px))' }}
+          className="fixed inset-x-3 z-[92] flex justify-center pointer-events-none"
+        >
+          <div
+            onClick={() => {
+              const target = liveToast;
+              setLiveToast(null);
+              markNotificationsRead(target.id);
+              if (target.refTab === 'chat' && target.refId) {
+                setPendingChatConvId(target.refId);
+                try {
+                  localStorage.setItem('lm_chat_conv_id', target.refId);
+                  localStorage.setItem('lm_chat_in_thread', '1');
+                } catch {
+                  // ignore
+                }
+                setActiveTab('chat');
+              } else if (target.refTab === 'profile' && target.refId) {
+                openProfile(target.refId);
+              } else {
+                setActiveTab(target.refTab || 'social');
+              }
+            }}
+            className="pointer-events-auto w-full max-w-[390px] rounded-full bg-[#181922]/94 backdrop-blur-2xl border border-white/[0.16] shadow-[0_18px_46px_rgba(0,0,0,0.65)] px-3.5 py-2.5 flex items-center gap-2.5 cursor-pointer hover:bg-[#222430] transition-all"
+          >
+            <span className="w-8 h-8 rounded-full bg-[#25F4EE]/15 text-[#25F4EE] flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4" />
+            </span>
+            <div className="min-w-0 flex-1 text-start">
+              <div className="text-xs font-bold text-white truncate">{liveToast.actorName}</div>
+              <div className="text-[11.5px] text-[#D4D4D8] truncate">{liveToast.text}</div>
+            </div>
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                setLiveToast(null);
+              }}
+              aria-label="إغلاق الإشعار"
+              className="w-7 h-7 rounded-full hover:bg-white/10 text-[#9E9EA8] hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Global Universal Context-Aware Share Sheet */}
       <ShareSheetModal

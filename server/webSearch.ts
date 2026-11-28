@@ -13,6 +13,20 @@ export interface LiveWebSnippet {
   source: string;
 }
 
+export interface WebSourceCitation {
+  title: string;
+  url: string;
+  host: string;
+}
+
+export function extractSafeHost(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./i, '');
+  } catch {
+    return 'web';
+  }
+}
+
 const SKIP_SEARCH_RX = /^(اهلا|أهلا|مرحبا|مرحبًا|سلام|السلام عليكم|ازيك|إزيك|عامل ايه|شكرا|شكرًا|تمام|حاضر|ماشي|hi|hello|hey|thanks|ok|okay|good morning|good night)[\s!؟?.]*$/i;
 
 const LIVE_INFO_TRIGGERS = [
@@ -145,18 +159,45 @@ async function searchWikipedia(query: string): Promise<LiveWebSnippet[]> {
   }
 }
 
-export async function gatherLiveWebContext(query: string): Promise<string | null> {
+export async function gatherLiveWebBundle(query: string): Promise<{
+  contextText: string | null;
+  sources: WebSourceCitation[];
+}> {
   const clean = query.trim().slice(0, 180);
-  if (!clean) return null;
+  if (!clean) return { contextText: null, sources: [] };
 
   const [ddg, wiki] = await Promise.all([searchDuckDuckGoLite(clean), searchWikipedia(clean)]);
-  const combined = [...ddg, ...wiki].filter(item => item.title && (item.snippet || item.url)).slice(0, 5);
-  if (combined.length === 0) return null;
+  const seenUrls = new Set<string>();
+  const combined: LiveWebSnippet[] = [];
+  for (const item of [...ddg, ...wiki]) {
+    if (!item.title || (!item.snippet && !item.url)) continue;
+    if (item.url && seenUrls.has(item.url)) continue;
+    if (item.url) seenUrls.add(item.url);
+    combined.push(item);
+    if (combined.length >= 5) break;
+  }
+  if (combined.length === 0) return { contextText: null, sources: [] };
 
   const lines = combined.map(
     (item, idx) =>
       `${idx + 1}. [${item.title}](${item.url}) (${item.source}): ${item.snippet || 'راجع المصدر للتفاصيل.'}`
   );
 
-  return `[نتائج بحث حية من الإنترنت بتاريخ اليوم — استخدمها لتقديم معلومات حديثة ودقيقة مع ذكر المصادر بإيجاز عند الحاجة]:\n${lines.join('\n')}`;
+  const sources: WebSourceCitation[] = combined
+    .filter(item => /^https?:\/\//i.test(item.url))
+    .map(item => ({
+      title: item.title.slice(0, 90),
+      url: item.url,
+      host: extractSafeHost(item.url),
+    }));
+
+  return {
+    contextText: `[نتائج بحث حية من الإنترنت بتاريخ اليوم — استخدمها لتقديم معلومات حديثة ودقيقة مع ذكر المصادر بإيجاز عند الحاجة]:\n${lines.join('\n')}`,
+    sources,
+  };
+}
+
+export async function gatherLiveWebContext(query: string): Promise<string | null> {
+  const bundle = await gatherLiveWebBundle(query);
+  return bundle.contextText;
 }
