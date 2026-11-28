@@ -720,7 +720,7 @@ export function AppShell({
             exit={{ y: '110%', opacity: 0 }}
             transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             onClick={e => e.stopPropagation()}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#121212]/97 border-t border-white/[0.08] px-2 pt-2"
+            className="lm-mobile-dock md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#121212]/97 border-t border-white/[0.08] px-2 pt-2"
           >
             <div className="flex items-center justify-around gap-0.5 max-w-full">
               {NAV_ITEMS.map(item => {
@@ -1343,89 +1343,101 @@ export function AppShell({
         )}
       </AnimatePresence>
 
-      {/* Search Overlay */}
-      {searchOpen && (
-        <div
-          onClick={() => setSearchOpen(false)}
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-start justify-center pt-16 px-4"
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="w-full max-w-[540px] bg-[#131318] border border-white/[0.12] rounded-2xl overflow-hidden text-start"
+      {/* Search Overlay (Desktop: Top Modal | Mobile: Smoothly Glides Down Above Virtual Keyboard!) */}
+      <AnimatePresence>
+        {searchOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSearchOpen(false)}
+            style={{ paddingBottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex flex-col justify-end md:justify-start md:pt-16 md:pb-4 items-center px-3.5 md:px-4 transition-[padding] duration-150"
           >
-            <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-3">
-              <Search className="w-4 h-4 text-[#7A7A85]" />
-              <input
-                autoFocus
-                value={searchQ}
-                onChange={e => setSearchQ(e.target.value)}
-                placeholder={lang === 'ar' ? 'ابحث...' : 'Search...'}
-                className="flex-1 bg-transparent text-sm text-white placeholder:text-[#585860] outline-none"
-              />
-              <CloseOrbButton size="sm" onClick={() => setSearchOpen(false)} />
-            </div>
+            <motion.div
+              initial={{ opacity: 0, y: -64, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-[540px] flex flex-col-reverse md:flex-col gap-2"
+            >
+              <div className="bg-[#181920] border border-white/[0.12] focus-within:border-[#25F4EE]/45 rounded-full md:rounded-2xl px-4 py-2.5 md:py-3 flex items-center gap-3 shadow-2xl">
+                <Search className="w-4 h-4 text-[#8E8E93] shrink-0" />
+                <input
+                  autoFocus
+                  value={searchQ}
+                  onChange={e => setSearchQ(e.target.value)}
+                  placeholder={lang === 'ar' ? 'ابحث في LM...' : 'Search...'}
+                  className="flex-1 bg-transparent text-sm text-white placeholder:text-[#8E8E93] outline-none"
+                />
+                <CloseOrbButton size="sm" onClick={() => setSearchOpen(false)} />
+              </div>
 
-            <div className="max-h-[60vh] overflow-y-auto divide-y divide-white/[0.08]">
-              {searchRes?.users && searchRes.users.length > 0 && (
-                <div className="py-2">
-                  {searchRes.users.map(u => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => {
-                        onOpenProfile(u.id);
-                        setSearchOpen(false);
-                      }}
-                      className="w-full px-4 py-2 flex items-center gap-3 hover:bg-white/[0.04] cursor-pointer text-start"
-                    >
-                      <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={32} />
-                      <div>
-                        <div className="text-xs font-semibold text-white">{u.displayName}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+              {(searchRes?.users?.length || searchRes?.posts?.length || searchRes?.videos?.length) ? (
+                <div className="bg-[#131318] border border-white/[0.12] rounded-2xl overflow-hidden text-start max-h-[44vh] md:max-h-[60vh] overflow-y-auto divide-y divide-white/[0.08] shadow-2xl">
+                  {searchRes?.users && searchRes.users.length > 0 && (
+                    <div className="py-2">
+                      {searchRes.users.map(u => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            onOpenProfile(u.id);
+                            setSearchOpen(false);
+                          }}
+                          className="w-full px-4 py-2 flex items-center gap-3 hover:bg-white/[0.04] cursor-pointer text-start"
+                        >
+                          <UserAvatar initials={u.avatarInitials} avatarUrl={u.avatarUrl} size={32} />
+                          <div>
+                            <div className="text-xs font-semibold text-white">{u.displayName}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
-              {searchRes?.posts && searchRes.posts.length > 0 && (
-                <div className="py-2">
-                  {searchRes.posts.map(p => (
-                    <button
-                      key={String(p.id)}
-                      type="button"
-                      onClick={() => {
-                        onSelectTab('social');
-                        setSearchOpen(false);
-                      }}
-                      className="w-full px-4 py-2 hover:bg-white/[0.04] cursor-pointer text-start"
-                    >
-                      <div className="text-xs text-[#E4E4E7] line-clamp-1">{String(p.content)}</div>
-                    </button>
-                  ))}
-                </div>
-              )}
+                  {searchRes?.posts && searchRes.posts.length > 0 && (
+                    <div className="py-2">
+                      {searchRes.posts.map(p => (
+                        <button
+                          key={String(p.id)}
+                          type="button"
+                          onClick={() => {
+                            onSelectTab('social');
+                            setSearchOpen(false);
+                          }}
+                          className="w-full px-4 py-2 hover:bg-white/[0.04] cursor-pointer text-start"
+                        >
+                          <div className="text-xs text-[#E4E4E7] line-clamp-1">{String(p.content)}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
-              {searchRes?.videos && searchRes.videos.length > 0 && (
-                <div className="py-2">
-                  {searchRes.videos.map(v => (
-                    <button
-                      key={String(v.id)}
-                      type="button"
-                      onClick={() => {
-                        onSelectTab('videos');
-                        setSearchOpen(false);
-                      }}
-                      className="w-full px-4 py-2 hover:bg-white/[0.04] cursor-pointer text-start"
-                    >
-                      <div className="text-xs text-[#E4E4E7] line-clamp-1">{String(v.title)}</div>
-                    </button>
-                  ))}
+                  {searchRes?.videos && searchRes.videos.length > 0 && (
+                    <div className="py-2">
+                      {searchRes.videos.map(v => (
+                        <button
+                          key={String(v.id)}
+                          type="button"
+                          onClick={() => {
+                            onSelectTab('videos');
+                            setSearchOpen(false);
+                          }}
+                          className="w-full px-4 py-2 hover:bg-white/[0.04] cursor-pointer text-start"
+                        >
+                          <div className="text-xs text-[#E4E4E7] line-clamp-1">{String(v.title)}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+              ) : null}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Floating Simple Notifications Drawer */}
       {notifsOpen && (
         <div

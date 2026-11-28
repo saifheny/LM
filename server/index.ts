@@ -21,6 +21,7 @@ import {
 import { flushCloudDbBeforeExit, getCloudDbSyncMeta, scheduleCloudDbSync } from './cloudPersistence.ts';
 import { liveEngine } from './liveEngine.ts';
 import { runLmAi, streamLmAi } from './aiGateway.ts';
+import { gatherLiveWebBundle } from './webSearch.ts';
 import {
   buildUserInterestProfile,
   LICENSED_MUSIC_LIBRARY,
@@ -3342,6 +3343,120 @@ app.delete('/api/video-comments/:id', (req, res) => {
 // ============================================================
 // MONOCHROME MESSAGING
 // ============================================================
+function getConvAiCompanionState(convId: string, viewerId?: string) {
+  const conv = db.prepare(`
+    SELECT id, type, creator_id, dm_key, peer_user_id, ai_enabled, ai_companion_requested_by, ai_companion_status
+    FROM conversations WHERE id = ?
+  `).get(convId) as Record<string, unknown> | undefined;
+
+  if (!conv) {
+    return {
+      status: 'off' as const,
+      active: false,
+      requestedBy: null,
+      requestedByName: null,
+      acceptedUserIds: [] as string[],
+      declinedUserIds: [] as string[],
+      myDecision: null as 'accepted' | 'declined' | null,
+      needsMyApproval: false,
+    };
+  }
+
+  const rows = db.prepare(
+    'SELECT user_id, status FROM conversation_ai_consents WHERE conversation_id = ?'
+  ).all(convId) as Array<{ user_id: string; status: string }>;
+
+  const acceptedUserIds = rows.filter(r => r.status === 'accepted').map(r => r.user_id);
+  const declinedUserIds = rows.filter(r => r.status === 'declined').map(r => r.user_id);
+
+  let participants: string[] = [];
+  if (conv.type === 'dm') {
+    if (conv.dm_key) {
+      participants = String(conv.dm_key).split('::').filter(Boolean);
+    } else {
+      participants = [conv.creator_id, conv.peer_user_id]
+        .filter((v): v is string => Boolean(v && String(v) !== 'lm_ai'));
+    }
+  }
+
+  let active = false;
+  if (declinedUserIds.length === 0) {
+    if (conv.type === 'dm') {
+      active = participants.length >= 2 && participants.every(uid => acceptedUserIds.includes(uid));
+    } else {
+      active = acceptedUserIds.length >= 2 || (Boolean(conv.ai_enabled) && acceptedUserIds.length >= 1);
+    }
+  }
+
+  const requestedBy = conv.ai_companion_requested_by ? String(conv.ai_companion_requested_by) : null;
+  const reqUser = requestedBy ? getUserOrNull(requestedBy) : null;
+
+  let status: 'off' | 'pending' | 'active' | 'declined' = 'off';
+  if (active) status = 'active';
+  else if (declinedUserIds.length > 0 || conv.ai_companion_status === 'declined') status = 'declined';
+  else if (acceptedUserIds.length > 0) status = 'pending';
+
+  const myDecision: 'accepted' | 'declined' | null = viewerId
+    ? acceptedUserIds.includes(viewerId)
+      ? 'accepted'
+      : declinedUserIds.includes(viewerId)
+        ? 'declined'
+        : null
+    : null;
+
+  const isDmParticipant = conv.type !== 'dm' || !viewerId || participants.includes(viewerId);
+  const needsMyApproval = Boolean(
+    viewerId &&
+    isDmParticipant &&
+    status === 'pending' &&
+    requestedBy &&
+    requestedBy !== viewerId &&
+    !acceptedUserIds.includes(viewerId) &&
+    !declinedUserIds.includes(viewerId)
+  );
+
+  return {
+    status,
+    active,
+    requestedBy,
+    requestedByName: reqUser?.displayName || null,
+    acceptedUserIds,
+    declinedUserIds,
+    myDecision,
+    needsMyApproval,
+  };
+}
+
+function pickAiReactionForMessage(text: string, allowFrequent = false): string | null {
+  const clean = (text || '').trim();
+  if (!clean || clean.length < 3) return null;
+  if (/([😂🤣😹]|هه+|هههه|نكته|موتني|ضحك|\b(haha+|lol|lmao)\b)/i.test(clean)) return 'haha';
+  if (/([❤️😍🥰💕]|بحب|وحشتني|تسلم|شكرا|شكرًا|حبيبي|جميل|ربنا يبارك|عظيم|\b(love|thanks|awesome)\b)/i.test(clean)) return 'love';
+  if (/([🔥💪🚀👏]|مبروك|نجحت|جامد|عاش|اسطور|مذهل|فخم)/i.test(clean)) return 'fire';
+  if (/([🤯😱😲]|مستحيل|بجد|يا نهار|واو|\b(wow|omg|really)\b)/i.test(clean)) return 'wow';
+  if (/([😔😢😞💔]|زعلان|تعبان|مضايق|للاسف|مشكله|زهقان)/i.test(clean)) return 'sad';
+  if (allowFrequent && clean.length >= 12 && Math.random() < 0.45) return 'like';
+  if (clean.length >= 16 && Math.random() < 0.3) return 'like';
+  return null;
+}
+
+function applyAiReactionToMessage(msgId: string, convId: string, emoji: string) {
+  const row = db.prepare('SELECT reactions_json FROM messages WHERE id = ?').get(msgId) as
+    | { reactions_json?: string }
+    | undefined;
+  if (!row) return;
+  let reactions: Record<string, string[]> = {};
+  try { reactions = JSON.parse(row.reactions_json || '{}'); } catch { reactions = {}; }
+  for (const key of Object.keys(reactions)) {
+    const filtered = (reactions[key] || []).filter(u => u !== 'lm_ai');
+    if (filtered.length === 0) delete reactions[key];
+    else reactions[key] = filtered;
+  }
+  reactions[emoji] = [...(reactions[emoji] || []), 'lm_ai'];
+  db.prepare('UPDATE messages SET reactions_json = ? WHERE id = ?').run(JSON.stringify(reactions), msgId);
+  broadcast('chat:message', { conversationId: convId, msgId });
+}
+
 app.get('/api/conversations', (req, res) => {
   const viewerId = String(req.query.userId || '');
   const convs = db.prepare('SELECT * FROM conversations ORDER BY is_pinned DESC, created_at DESC').all() as Array<Record<string, unknown>>;
@@ -3381,6 +3496,7 @@ app.get('/api/conversations', (req, res) => {
       memberCount: Number(c.member_count),
       maxMembers: Number(c.max_members || (c.type === 'community' ? 100000 : c.type === 'group' ? 1000 : 2)),
       aiEnabled: Boolean(c.ai_enabled),
+      aiCompanion: getConvAiCompanionState(String(c.id), viewerId),
       creatorId: String(c.creator_id || 'u_youssef'),
       peerUserId,
       lastMessage: last ? String(last.content) : '',
@@ -3534,6 +3650,77 @@ app.post('/api/conversations/:id/ai-mode', (req, res) => {
   db.prepare('UPDATE conversations SET ai_enabled = ? WHERE id = ?').run(nextVal, req.params.id);
   broadcast('chat:message', { conversationId: req.params.id, aiEnabled: Boolean(nextVal) });
   res.json({ ok: true, aiEnabled: Boolean(nextVal) });
+});
+
+app.post('/api/conversations/:id/ai-companion/consent', (req, res) => {
+  const { userId, decision } = req.body as {
+    userId?: string;
+    decision?: 'accept' | 'decline' | 'disable';
+  };
+  if (!userId || !decision) {
+    return res.status(400).json({ ok: false, error: 'بيانات الموافقة غير مكتملة.' });
+  }
+  const conv = db.prepare(
+    'SELECT id, type, dm_key, peer_user_id, creator_id, ai_companion_status FROM conversations WHERE id = ?'
+  ).get(req.params.id) as Record<string, unknown> | undefined;
+  if (!conv) return res.status(404).json({ ok: false, error: 'المحادثة غير موجودة.' });
+
+  const actor = getUserOrNull(userId);
+  if (!actor) return res.status(404).json({ ok: false, error: 'المستخدم غير موجود.' });
+
+  if (decision === 'disable') {
+    db.prepare('DELETE FROM conversation_ai_consents WHERE conversation_id = ?').run(req.params.id);
+    db.prepare("UPDATE conversations SET ai_companion_requested_by = NULL, ai_companion_status = 'off' WHERE id = ?").run(req.params.id);
+  } else if (decision === 'decline') {
+    db.prepare(`
+      INSERT INTO conversation_ai_consents (conversation_id, user_id, status, updated_at)
+      VALUES (?, ?, 'declined', datetime('now'))
+      ON CONFLICT(conversation_id, user_id) DO UPDATE SET status = 'declined', updated_at = datetime('now')
+    `).run(req.params.id, userId);
+    db.prepare("UPDATE conversations SET ai_companion_status = 'declined' WHERE id = ?").run(req.params.id);
+  } else {
+    const curStatus = String(conv.ai_companion_status || 'off');
+    if (curStatus === 'off' || curStatus === 'declined') {
+      db.prepare('DELETE FROM conversation_ai_consents WHERE conversation_id = ?').run(req.params.id);
+      db.prepare("UPDATE conversations SET ai_companion_requested_by = ?, ai_companion_status = 'pending' WHERE id = ?").run(
+        userId,
+        req.params.id
+      );
+    }
+    db.prepare(`
+      INSERT INTO conversation_ai_consents (conversation_id, user_id, status, updated_at)
+      VALUES (?, ?, 'accepted', datetime('now'))
+      ON CONFLICT(conversation_id, user_id) DO UPDATE SET status = 'accepted', updated_at = datetime('now')
+    `).run(req.params.id, userId);
+  }
+
+  const aiCompanion = getConvAiCompanionState(req.params.id, userId);
+  db.prepare('UPDATE conversations SET ai_companion_status = ? WHERE id = ?').run(aiCompanion.status, req.params.id);
+
+  // If DM friend needs to approve, notify friend in real time!
+  if (decision === 'accept' && conv.type === 'dm' && conv.dm_key && !aiCompanion.active) {
+    const partnerId = String(conv.dm_key).split('::').find(uid => uid !== userId);
+    if (partnerId) {
+      createNotification({
+        userId: partnerId,
+        actorId: userId,
+        type: 'message',
+        text: `${actor.displayName} وافق على تفعيل رفيق LM الذكي المتفاعل في الدردشة — بانتظار موافقتك`,
+        refTab: 'chat',
+        refId: req.params.id,
+      });
+    }
+  }
+
+  broadcast('chat:ai_consent', {
+    conversationId: req.params.id,
+    decision,
+    actorId: userId,
+    actorName: actor.displayName,
+    aiCompanion,
+  });
+  broadcast('chat:message', { conversationId: req.params.id, consentUpdated: true });
+  res.json({ ok: true, aiCompanion });
 });
 
 // ============================================================
@@ -3869,7 +4056,118 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
       nowStr
     );
     broadcast('chat:message', { conversationId: req.params.id, msgId: aiMsgId });
+    const directRx = pickAiReactionForMessage(rawPrompt, true);
+    if (directRx) applyAiReactionToMessage(msgId, req.params.id, directRx);
     aiReply = aiResult;
+  } else if (senderId !== 'lm_ai') {
+    // Interactive 3rd-Person AI Companion (ONLY active when BOTH friends agreed!)
+    const companionState = getConvAiCompanionState(req.params.id, senderId);
+    const bodyText = cleanTranscript || (content || '').trim();
+    if (companionState.active && bodyText) {
+      void (async () => {
+        try {
+          const rx = pickAiReactionForMessage(bodyText, false);
+          if (rx) {
+            await new Promise(r => setTimeout(r, 650));
+            applyAiReactionToMessage(msgId, req.params.id, rx);
+          }
+
+          const recent = db.prepare(`
+            SELECT m.id, m.sender_id, m.content, m.transcript, m.msg_type, u.display_name
+            FROM messages m LEFT JOIN users u ON m.sender_id = u.id
+            WHERE m.conversation_id = ? AND m.msg_type IN ('text', 'ai_reply', 'audio')
+            ORDER BY m.rowid DESC LIMIT 12
+          `).all(req.params.id) as Array<{
+            id: string;
+            sender_id: string;
+            content: string;
+            transcript?: string | null;
+            msg_type?: string;
+            display_name?: string;
+          }>;
+
+          let msgsSinceAi = 0;
+          for (const item of recent) {
+            if (item.sender_id === 'lm_ai') break;
+            msgsSinceAi += 1;
+          }
+
+          const isQuestionOrPuzzle =
+            /[؟?]$/.test(bodyText) ||
+            /\b(يعني ايه|يعنى ايه|ايه هو|إيه هو|ازاي|إزاي|مين يعرف|حد فاهم|حد عارف|مش فاهم|مش عارف|تفتكر|ايه رأيكم|اي رأيك|ايه الحل|تفسير|اشرح|what is|why|how does|anyone know)\b/i.test(
+              bodyText
+            );
+
+          const shouldReplyNow =
+            (isQuestionOrPuzzle && Math.random() < 0.88) ||
+            (msgsSinceAi === 1 && bodyText.length >= 22 && Math.random() < 0.16) ||
+            (msgsSinceAi >= 2 && msgsSinceAi <= 3 && Math.random() < 0.52) ||
+            (msgsSinceAi >= 4 && Math.random() < 0.85);
+
+          if (!shouldReplyNow) return;
+
+          broadcast('chat:ai_typing', { conversationId: req.params.id, typing: true });
+          await new Promise(r => setTimeout(r, 700));
+
+          const senderRow = getUserOrNull(senderId);
+          const historyText = [...recent]
+            .reverse()
+            .map(r => `${r.sender_id === 'lm_ai' ? 'LM AI (أنت)' : r.display_name || 'صديق'}: ${r.transcript || r.content}`)
+            .join('\n');
+
+          const companionPrompt = [
+            'أنت رفيق ذكي لطيف وخفيف الظل تتواجد كشخص ثالث داخل دردشة بين أصدقاء بموافقتهم.',
+            'تحدّث بالعربية المصرية الطبيعية أو نفس لغة المحادثة بجملة أو جملتين فقط وبأسلوب بشري تلقائي بدون تكلف أو عبارات مثل "بصفتي ذكاء اصطناعي".',
+            isQuestionOrPuzzle
+              ? 'الأصدقاء لديهم سؤال أو شيء غير واضح — أجبهم بإجابة دقيقة ومباشرة ومختصرة تفيدهم فورًا.'
+              : 'شارك برأي خفيف أو تعليق ذكي مرتبط بما يتحدثون عنه الآن.',
+            `آخر رسالة من ${senderRow?.displayName || 'أحد الأصدقاء'}: "${bodyText}"`,
+          ].join('\n');
+
+          const aiOut = await runLmAi({
+            userId: senderId,
+            prompt: companionPrompt,
+            source: 'chat',
+            explicitUserConsent: true,
+            groupHistoryContext: historyText,
+          });
+
+          let finalReply = !aiOut.needsApiKey && !aiOut.blocked && aiOut.reply ? aiOut.reply.trim() : '';
+          if (!finalReply && isQuestionOrPuzzle) {
+            const web = await gatherLiveWebBundle(bodyText);
+            if (web.contextText) {
+              const firstLine = web.contextText
+                .split('\n')
+                .find(line => line.trim().length > 25 && !line.startsWith('['));
+              if (firstLine) finalReply = firstLine.trim().slice(0, 220);
+            }
+          }
+
+          if (finalReply) {
+            const aiMsgId = `m_${uuid().slice(0, 8)}`;
+            const aiNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+            db.prepare(`
+              INSERT INTO messages (id, conversation_id, sender_id, content, msg_type, reply_to_id, reply_sender, reply_text, ai_consent_ref, created_at)
+              VALUES (?, ?, 'lm_ai', ?, 'ai_reply', ?, ?, ?, ?, ?)
+            `).run(
+              aiMsgId,
+              req.params.id,
+              finalReply,
+              isQuestionOrPuzzle ? msgId : null,
+              isQuestionOrPuzzle ? (senderRow?.displayName || 'صديق') : null,
+              isQuestionOrPuzzle ? bodyText.slice(0, 60) : null,
+              aiOut.securityAuditId || 'companion_3p',
+              aiNow
+            );
+            broadcast('chat:message', { conversationId: req.params.id, msgId: aiMsgId });
+          } else {
+            broadcast('chat:ai_typing', { conversationId: req.params.id, typing: false });
+          }
+        } catch {
+          broadcast('chat:ai_typing', { conversationId: req.params.id, typing: false });
+        }
+      })();
+    }
   }
 
   res.json({ ok: true, id: msgId, aiReply });

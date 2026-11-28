@@ -1331,7 +1331,8 @@ export function ProfileView({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setEditOpen(false)}
-            className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-center justify-center p-4"
+            style={{ paddingBottom: 'var(--lm-kb-offset, 0px)' }}
+            className="fixed inset-0 z-50 bg-black/82 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 transition-[padding] duration-150"
           >
             <motion.form
               initial={{ opacity: 0, scale: 0.94, y: 14 }}
@@ -1340,7 +1341,8 @@ export function ProfileView({
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
               onClick={e => e.stopPropagation()}
               onSubmit={saveProfile}
-              className="w-full max-w-[490px] max-h-[90vh] overflow-y-auto rounded-[28px] bg-[#131319] border border-white/[0.13] shadow-2xl"
+              style={{ maxHeight: 'calc(var(--lm-vv-h, 100dvh) - 16px)' }}
+              className="w-full max-w-[490px] overflow-y-auto rounded-t-[28px] sm:rounded-[28px] bg-[#131319] border border-white/[0.13] shadow-2xl"
             >
               <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => handleImageUpload('avatar', e)} className="hidden" />
               <input ref={coverInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => handleImageUpload('cover', e)} className="hidden" />

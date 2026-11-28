@@ -1429,8 +1429,23 @@ export function SocialView({
           </div>
         )}
 
-        {/* Inline Post Composer with Expand-to-Full-Page Trigger & Licensed Music Picker */}
-        <form onSubmit={submitPost} className="px-4 py-4 border-b border-white/[0.07] flex gap-3 relative">
+        {/* Inline Post Composer — On mobile when active, floats cleanly above the keyboard just like Telegram/WhatsApp! */}
+        <form
+          onSubmit={submitPost}
+          style={
+            composerActive && !composerExpanded
+              ? {
+                  bottom: 'max(10px, env(safe-area-inset-bottom) + 8px)',
+                  transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+                }
+              : undefined
+          }
+          className={`px-4 py-3.5 border-b border-white/[0.07] flex gap-3 relative transition-all duration-200 ease-out ${
+            composerActive && !composerExpanded
+              ? 'max-md:fixed max-md:inset-x-3 max-md:z-45 max-md:max-h-[46vh] max-md:overflow-y-auto max-md:rounded-2xl max-md:bg-[#181920]/98 max-md:backdrop-blur-2xl max-md:border max-md:border-white/[0.14] max-md:shadow-2xl'
+              : ''
+          }`}
+        >
           <button
             type="button"
             onClick={() => onOpenProfile?.(user.id)}
@@ -1439,7 +1454,7 @@ export function SocialView({
             <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={38} />
           </button>
           <div className="flex-1 min-w-0">
-            {/* Top Row with Expand Icon when Typing / Active */}
+            {/* Top Row with Collapse/Expand Icon when Typing / Active */}
             <div className="flex items-start gap-2">
               <textarea
                 rows={2}
@@ -1453,16 +1468,28 @@ export function SocialView({
                 className="flex-1 bg-transparent resize-none text-[15px] text-[#F2F2F5] placeholder:text-[#63636C] outline-none leading-relaxed"
               />
 
-              {showExpandIcon && (
-                <button
-                  type="button"
-                  onClick={() => setComposerExpanded(true)}
-                  title="توسيع لصفحة كاملة"
-                  className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-[#C4C4CC] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
-                >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <div className="flex items-center gap-1 shrink-0">
+                {composerActive && !composerExpanded && (
+                  <button
+                    type="button"
+                    onClick={() => setComposerActive(false)}
+                    title="إخفاء"
+                    className="md:hidden w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-[#A1A1AA] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {showExpandIcon && (
+                  <button
+                    type="button"
+                    onClick={() => setComposerExpanded(true)}
+                    title="توسيع لصفحة كاملة"
+                    className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-[#C4C4CC] hover:text-white flex items-center justify-center cursor-pointer shrink-0 transition-colors"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Live @mention Autocomplete Popover */}
@@ -3309,8 +3336,11 @@ export function SocialView({
             {/* Borderless Floating Comment Composer — ONLY input pill lifts cleanly above mobile keyboard! */}
             {dPost && (
               <div
-                style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom) + 6px) + var(--lm-kb-offset, 0px))' }}
-                className="pointer-events-none fixed inset-x-3 sm:inset-x-4 z-[58] transition-[bottom] duration-150"
+                style={{
+                  bottom: 'max(10px, env(safe-area-inset-bottom) + 6px)',
+                  transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+                }}
+                className="pointer-events-none fixed inset-x-3 sm:inset-x-4 z-[58] transition-transform duration-200 ease-out"
               >
                 <div className="pointer-events-auto max-w-[660px] mx-auto space-y-2">
                   {replyParentByPost[dPost.id] && (
@@ -3426,7 +3456,10 @@ export function SocialView({
           </div>
 
           {/* Spacious Full-Height Writing Area */}
-          <div className="flex-1 overflow-y-auto px-4 sm:px-5 pt-5 pb-28 max-w-[780px] w-full mx-auto">
+          <div
+            style={{ paddingBottom: 'calc(7rem + var(--lm-kb-offset, 0px))' }}
+            className="flex-1 overflow-y-auto px-4 sm:px-5 pt-5 max-w-[780px] w-full mx-auto"
+          >
             <textarea
               autoFocus
               value={draft}
@@ -3488,8 +3521,11 @@ export function SocialView({
 
           {/* Floating Borderless Icon Tools Lifting Cleanly Above Keyboard (ZERO Container Box, ZERO 4/4 or Char Counters!) */}
           <div
-            style={{ bottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
-            className="fixed inset-x-4 z-50 transition-[bottom] duration-150"
+            style={{
+              bottom: 'max(12px, env(safe-area-inset-bottom) + 8px)',
+              transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+            }}
+            className="fixed inset-x-4 z-50 transition-transform duration-200 ease-out"
           >
             <div className="max-w-[780px] mx-auto flex items-center gap-3">
               <button
@@ -4314,7 +4350,10 @@ export function SocialView({
           </header>
 
           {/* Open Spacious Composer + Full Original Post with Likes, Comments & Shares Below */}
-          <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-3 pb-24 max-w-[760px] w-full mx-auto space-y-6">
+          <div
+            style={{ paddingBottom: 'calc(6rem + var(--lm-kb-offset, 0px))' }}
+            className="flex-1 overflow-y-auto px-4 sm:px-6 pt-3 max-w-[760px] w-full mx-auto space-y-6"
+          >
             {/* User Quote / Moment Writing Area */}
             <div className="flex items-start gap-3">
               <UserAvatar initials={user.avatarInitials} avatarUrl={user.avatarUrl} size={42} />

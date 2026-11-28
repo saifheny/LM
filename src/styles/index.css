@@ -542,3 +542,14 @@ html[data-theme='light'] .bg-black\/30 { background-color: rgba(0, 0, 0, 0.3) !i
 html[data-theme='light'] [class*="bg-\[\#FE2C55"] {
   background-color: #FE2C55 !important;
 }
+
+/* Auto-hide mobile bottom dock smoothly whenever any keyboard/editable input is active across ANY section */
+@media (max-width: 767px) {
+  html[data-kb-focus='1'] .lm-mobile-dock,
+  html[data-kb-open='1'] .lm-mobile-dock {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translate3d(0, 120%, 0) !important;
+    transition: transform 0.18s ease, opacity 0.16s ease !important;
+  }
+}

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -33,6 +34,7 @@ import {
   Pause,
   ExternalLink,
   FileText,
+  LayoutGrid,
 } from 'lucide-react';
 
 import { ChatMessageItem, ConversationItem, Lang, UserProfile, VoiceCallLogItem } from '../../types';
@@ -278,7 +280,10 @@ export function ChatView({
       el.removeEventListener('ended', onEnd);
     };
   }, [floatingVoice?.msgId]);
-  const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
+  const [hubOpen, setHubOpen] = useState(false);
+  const [consentLoading, setConsentLoading] = useState(false);
+  const [dismissedConsentIds, setDismissedConsentIds] = useState<Record<string, boolean>>({});
+  const [sidebarSearchFocused, setSidebarSearchFocused] = useState(false);
 
   const setChatWallpaper = useCallback((wp: string) => {
     setChatWallpaperState(wp);
@@ -448,7 +453,7 @@ export function ChatView({
       setDeleteConfirmMsg(null);
       setReplyTarget(null);
       setSharedForAi(null);
-      setWallpaperMenuOpen(false);
+      setHubOpen(false);
     }
   }, [activeConvId, loadMessages]);
 
@@ -457,7 +462,7 @@ export function ChatView({
       if (ev.key !== 'Escape') return;
       if (deleteConfirmMsg) setDeleteConfirmMsg(null);
       else if (contextMsg) setContextMsg(null);
-      else if (wallpaperMenuOpen) setWallpaperMenuOpen(false);
+      else if (hubOpen) setHubOpen(false);
       else if (editingMsg) {
         setEditingMsg(null);
         setDraft(draftBeforeEditRef.current || '');
@@ -466,7 +471,7 @@ export function ChatView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteConfirmMsg, contextMsg, wallpaperMenuOpen, editingMsg, setDraft]);
+  }, [deleteConfirmMsg, contextMsg, hubOpen, editingMsg, setDraft]);
 
   useEffect(() => {
     if (!msgSearchOpen) {
@@ -491,6 +496,28 @@ export function ChatView({
         if (typingClearTimerRef.current) window.clearTimeout(typingClearTimerRef.current);
         typingClearTimerRef.current = window.setTimeout(() => setRemoteTypingName(null), 3200);
       }
+    } else if (lastWsEvent?.event === 'chat:ai_typing') {
+      const payload = lastWsEvent.payload as { conversationId?: string; typing?: boolean };
+      if (payload.conversationId) {
+        setAiTypingConvId(payload.typing ? payload.conversationId : null);
+      }
+    } else if (lastWsEvent?.event === 'chat:ai_consent') {
+      const payload = lastWsEvent.payload as {
+        conversationId?: string;
+        decision?: 'accept' | 'decline' | 'disable';
+        actorId?: string;
+        actorName?: string;
+        aiCompanion?: ConversationItem['aiCompanion'];
+      };
+      loadConversations();
+      if (payload.conversationId && payload.decision === 'accept' && payload.actorId !== user.id) {
+        setDismissedConsentIds(prev => ({ ...prev, [payload.conversationId!]: false }));
+      }
+      if (payload.aiCompanion?.active) {
+        showChatToast('تم تفعيل رفيق LM الذكي بموافقة الطرفين ✓');
+      } else if (payload.decision === 'decline' && payload.actorId !== user.id) {
+        showChatToast(`لم يوافق ${payload.actorName || 'الطرف الثاني'} على تفعيل AI التلقائي`);
+      }
     }
   }, [lastWsEvent, activeConvId, user.id, loadMessages, loadConversations, loadCalls]);
 
@@ -511,7 +538,41 @@ export function ChatView({
 
   function showChatToast(msg: string) {
     setChatToast(msg);
-    window.setTimeout(() => setChatToast(cur => (cur === msg ? '' : cur)), 2000);
+    window.setTimeout(() => setChatToast(cur => (cur === msg ? '' : cur)), 2400);
+  }
+
+  async function submitAiCompanionConsent(convId: string, decision: 'accept' | 'decline' | 'disable') {
+    if (consentLoading) return;
+    setConsentLoading(true);
+    try {
+      const res = await apiPost<{ ok: boolean; aiCompanion?: ConversationItem['aiCompanion'] }>(
+        `/api/conversations/${convId}/ai-companion/consent`,
+        { userId: user.id, decision }
+      );
+      if (res.aiCompanion) {
+        setConversations(prev =>
+          prev.map(c => (c.id === convId ? { ...c, aiCompanion: res.aiCompanion } : c))
+        );
+      } else {
+        await loadConversations();
+      }
+      if (decision === 'accept') {
+        showChatToast(
+          res.aiCompanion?.active
+            ? 'تم تفعيل رفيق LM الذكي بموافقة الطرفين ✓'
+            : 'تم تسجيل موافقتك — بانتظار موافقة الطرف الثاني'
+        );
+      } else if (decision === 'decline') {
+        setDismissedConsentIds(prev => ({ ...prev, [convId]: true }));
+        showChatToast('تم الرفض — لن يتم تفعيل الميزة التلقائية');
+      } else {
+        showChatToast('تم إيقاف رفيق AI التلقائي');
+      }
+    } catch (err) {
+      showChatToast(err instanceof Error ? err.message : 'تعذر حفظ القرار');
+    } finally {
+      setConsentLoading(false);
+    }
   }
 
   function openMessageContext(msg: ChatMessageItem, submenu: 'main' | 'translate' = 'main') {
@@ -545,6 +606,9 @@ export function ChatView({
 
   function handleBubbleTouchStart(e: React.TouchEvent, msg: ChatMessageItem) {
     if (e.touches.length !== 1) return;
+    if ((e.target as HTMLElement | null)?.closest('a, button, audio, video, input, textarea, [data-no-msg-menu="true"]')) {
+      return;
+    }
     const touch = e.touches[0];
     bubbleLongPressedRef.current = false;
     swipeTouchRef.current = {
@@ -611,8 +675,8 @@ export function ChatView({
       bubbleLongPressedRef.current = false;
       return;
     }
-    // Don't hijack clicks on links, buttons, or audio/video controls inside the bubble
-    if ((e.target as HTMLElement | null)?.closest('a, button, audio, video')) return;
+    // Don't hijack clicks on links, buttons, voice scrubbers, or media controls
+    if ((e.target as HTMLElement | null)?.closest('a, button, audio, video, input, textarea, [data-no-msg-menu="true"]')) return;
 
     const now = Date.now();
     const last = bubbleLastTapRef.current;
@@ -1235,14 +1299,40 @@ export function ChatView({
       >
         <div className="px-3.5 pt-3.5 pb-1 space-y-2.5">
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-10 rounded-full bg-[#1E1F26] border border-[#F1F1F2]/[0.12] focus-within:border-[#FE2C55]/60 px-3.5 flex items-center gap-2 transition-colors">
-              <Search className="w-3.5 h-3.5 text-[#8E8E93]" />
+            <div
+              style={
+                sidebarSearchFocused
+                  ? {
+                      bottom: 'max(12px, env(safe-area-inset-bottom) + 8px)',
+                      transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+                    }
+                  : undefined
+              }
+              className={`flex-1 h-10 rounded-full bg-[#1E1F26] border border-[#F1F1F2]/[0.12] focus-within:border-[#FE2C55]/60 px-3.5 flex items-center gap-2 transition-all duration-200 ${
+                sidebarSearchFocused
+                  ? 'max-md:fixed max-md:inset-x-3.5 max-md:z-40 max-md:h-11 max-md:bg-[#181920]/96 max-md:backdrop-blur-2xl max-md:shadow-2xl max-md:border-[#FE2C55]/45'
+                  : ''
+              }`}
+            >
+              <Search className="w-3.5 h-3.5 text-[#8E8E93] shrink-0" />
               <input
                 value={search}
+                onFocus={() => setSidebarSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSidebarSearchFocused(false), 180)}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={lang === 'ar' ? 'بحث في المحادثات...' : 'Search chats...'}
                 className="flex-1 bg-transparent text-[13px] text-white placeholder:text-[#8E8E93] outline-none"
               />
+              {search.trim() && (
+                <button
+                  type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => setSearch('')}
+                  className="w-5 h-5 rounded-full bg-white/[0.1] text-white/75 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -1448,11 +1538,18 @@ export function ChatView({
         {/* FLOATING HEADER — Replaced cleanly by WhatsApp-Style Search Bar (Back Arrow, NO X, Jump-to-Message!) */}
         {activeConv && (
           msgSearchOpen ? (
-            <header
+            <motion.header
+              initial={{ opacity: 0, y: -120 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -60 }}
+              transition={{ type: 'spring', stiffness: 360, damping: 28 }}
               onClick={e => e.stopPropagation()}
-              className="absolute top-3 inset-x-3.5 md:inset-x-5 z-30 flex flex-col items-center gap-2"
+              style={{
+                ['--lm-search-y' as string]: 'calc(-1 * var(--lm-kb-offset, 0px))',
+              }}
+              className="pointer-events-none fixed md:absolute inset-x-3.5 md:inset-x-5 bottom-[calc(max(12px,env(safe-area-inset-bottom)+8px)+var(--lm-kb-offset,0px))] md:bottom-auto md:top-3 z-40 flex flex-col-reverse md:flex-col items-center gap-2 transition-[bottom] duration-150"
             >
-              <div className="w-full max-w-[680px] h-11 rounded-full bg-[#181920]/96 backdrop-blur-2xl border border-[#34D399]/35 px-2 flex items-center gap-2 shadow-2xl">
+              <div className="pointer-events-auto w-full max-w-[680px] h-11 rounded-full bg-[#181920]/96 backdrop-blur-2xl border border-[#25F4EE]/35 px-2 flex items-center gap-2 shadow-2xl">
                 <button
                   type="button"
                   onClick={() => {
@@ -1481,11 +1578,11 @@ export function ChatView({
                     }
                   }}
                   placeholder={lang === 'en' ? 'Search messages in this chat...' : 'ابحث داخل رسائل هذه المحادثة...'}
-                  className="flex-1 bg-transparent text-xs text-white placeholder:text-[#63636C] outline-none"
+                  className="flex-1 bg-transparent text-xs text-white placeholder:text-[#8E8E93] outline-none"
                 />
                 {msgSearchQ.trim() && (
                   <div className="flex items-center gap-1 shrink-0 pe-1">
-                    <span className="text-[11px] font-mono-num text-[#6EE7B7] px-1">
+                    <span className="text-[11px] font-mono-num text-[#25F4EE] px-1">
                       {searchMatches.length > 0 ? `${searchMatchIdx + 1}/${searchMatches.length}` : '0'}
                     </span>
                     <button
@@ -1518,9 +1615,9 @@ export function ChatView({
                 )}
               </div>
 
-              {/* Clickable WhatsApp-Style Search Matches Dropdown */}
+              {/* Clickable WhatsApp-Style Search Matches Dropdown (Stays cleanly ABOVE bar on mobile!) */}
               {msgSearchQ.trim() && (
-                <div className="w-full max-w-[680px] max-h-[240px] overflow-y-auto rounded-2xl bg-[#181920]/97 backdrop-blur-2xl border border-white/[0.12] shadow-2xl divide-y divide-white/[0.06]">
+                <div className="pointer-events-auto w-full max-w-[680px] max-h-[38vh] md:max-h-[240px] overflow-y-auto rounded-2xl bg-[#181920]/97 backdrop-blur-2xl border border-white/[0.12] shadow-2xl divide-y divide-white/[0.06]">
                   {searchMatches.length === 0 ? (
                     <div className="py-5 text-center text-xs text-[#8E8E93]">
                       {lang === 'en' ? 'No matching messages' : 'لا توجد رسائل مطابقة للبحث'}
@@ -1535,11 +1632,11 @@ export function ChatView({
                           jumpToMessage(m.id);
                         }}
                         className={`w-full px-3.5 py-2.5 text-start flex items-center justify-between gap-3 hover:bg-white/[0.06] cursor-pointer transition-colors ${
-                          idx === searchMatchIdx ? 'bg-[#10B981]/12' : ''
+                          idx === searchMatchIdx ? 'bg-[#FE2C55]/12' : ''
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="text-[11px] font-semibold text-[#34D399] truncate">{m.displayName}</div>
+                          <div className="text-[11px] font-semibold text-[#25F4EE] truncate">{m.displayName}</div>
                           <div className="text-xs text-white/90 truncate">{m.transcript || m.content}</div>
                         </div>
                         <span className="text-[10px] font-mono-num text-[#7A7A85] shrink-0">{m.createdAt}</span>
@@ -1548,7 +1645,7 @@ export function ChatView({
                   )}
                 </div>
               )}
-            </header>
+            </motion.header>
           ) : (
             <header className="pointer-events-none absolute top-3 inset-x-3 md:inset-x-5 z-20 flex items-center justify-between gap-2">
               <div className="pointer-events-auto flex items-center gap-2.5 ps-1.5 pe-3.5 py-1.5 rounded-full bg-[#181920]/78 backdrop-blur-xl min-w-0">
@@ -1585,10 +1682,10 @@ export function ChatView({
                     online={activeConv.onlineText.includes('متصل')}
                   />
                   <div className="min-w-0">
-                    <div className="text-[13px] font-semibold text-white group-hover:underline truncate max-w-[175px] sm:max-w-[260px] flex items-center gap-1.5">
+                    <div className="text-[13px] font-semibold text-white group-hover:underline truncate max-w-[165px] sm:max-w-[260px] flex items-center gap-1.5">
                       <span className="truncate">{activeConv.title}</span>
-                      {activeConv.type !== 'dm' && activeConv.aiEnabled && (
-                        <Sparkles className="w-3 h-3 text-[#34D399] shrink-0" />
+                      {(activeConv.aiCompanion?.active || (activeConv.type !== 'dm' && activeConv.aiEnabled)) && (
+                        <Sparkles className="w-3 h-3 text-[#25F4EE] shrink-0" />
                       )}
                     </div>
                     <div className={`text-[10.5px] truncate ${remoteTypingName ? 'text-[#34D399] font-medium' : 'text-[#9E9EA8]'}`}>
@@ -1604,35 +1701,29 @@ export function ChatView({
                 </button>
               </div>
 
-              {/* Borderless Floating Header Controls: Cosmic Space Theme + Search + Voice Call */}
+              {/* Unified Header Hub Icon ("المجمع": Search + Wallpapers + Info + AI Companion) + Voice Call */}
               <div className="pointer-events-auto relative flex items-center gap-1 p-1 rounded-full bg-[#181920]/78 backdrop-blur-xl">
                 <button
                   type="button"
-                  onClick={() => setWallpaperMenuOpen(v => !v)}
-                  title={lang === 'en' ? 'Chat wallpaper' : 'خلفية الدردشة'}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
-                    wallpaperMenuOpen ? 'bg-white/[0.14] text-[#25F4EE]' : 'hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white'
+                  onClick={() => setHubOpen(true)}
+                  title={lang === 'en' ? 'Chat Hub' : 'المجمع (البحث والألوان وAI)'}
+                  className={`relative w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                    hubOpen ? 'bg-white/[0.14] text-[#25F4EE]' : 'hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white'
                   }`}
                 >
-                  <Palette className="w-[18px] h-[18px]" strokeWidth={1.85} />
+                  <LayoutGrid className="w-[18px] h-[18px]" strokeWidth={1.85} />
+                  {activeConv.aiCompanion?.needsMyApproval ? (
+                    <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-[#FE2C55] animate-ping" />
+                  ) : activeConv.aiCompanion?.active ? (
+                    <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-[#25F4EE]" />
+                  ) : activeConv.aiCompanion?.status === 'pending' ? (
+                    <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-[#FBBF24]" />
+                  ) : null}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setWallpaperMenuOpen(false);
-                    setMsgSearchOpen(true);
-                    setMsgSearchQ('');
-                    setSearchMatchIdx(0);
-                  }}
-                  title={lang === 'en' ? 'Search in chat' : 'بحث داخل المحادثة'}
-                  className="w-9 h-9 rounded-full hover:bg-white/[0.09] text-[#D4D4D8] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
-                >
-                  <Search className="w-[18px] h-[18px]" strokeWidth={1.85} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWallpaperMenuOpen(false);
+                    setHubOpen(false);
                     startVoiceCall();
                   }}
                   title={t(lang, 'voice_call')}
@@ -1640,43 +1731,6 @@ export function ChatView({
                 >
                   <Phone className="w-[18px] h-[18px]" strokeWidth={1.85} />
                 </button>
-
-                {/* Sleek 4-Theme Telegram / WhatsApp Dark Doodle Wallpaper Picker */}
-                {wallpaperMenuOpen && (
-                  <div
-                    onClick={e => e.stopPropagation()}
-                    className="absolute top-full end-0 mt-2 z-40 w-[215px] rounded-2xl bg-[#1E1F28]/98 border border-white/[0.1] p-2 space-y-1 shadow-2xl"
-                  >
-                    <div className="px-2.5 py-1 text-[11px] font-semibold text-[#8E8E93]">
-                      {lang === 'en' ? 'Chat Wallpaper' : 'خلفية المحادثة'}
-                    </div>
-                    {CHAT_WALLPAPERS.map(wp => {
-                      const active = chatWallpaper === wp.id;
-                      return (
-                        <button
-                          key={wp.id}
-                          type="button"
-                          onClick={() => {
-                            setChatWallpaper(wp.id);
-                            setWallpaperMenuOpen(false);
-                          }}
-                          className={`w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2.5 text-xs cursor-pointer transition-colors ${
-                            active ? 'bg-white/[0.1] text-white font-semibold' : 'text-[#D4D4D8] hover:bg-white/[0.06]'
-                          }`}
-                        >
-                          <span className="flex items-center gap-2.5">
-                            <span
-                              style={{ backgroundColor: wp.swatch, borderColor: wp.accent }}
-                              className="w-5 h-5 rounded-full border-2 shrink-0 block"
-                            />
-                            <span>{lang === 'en' ? wp.labelEn : wp.label}</span>
-                          </span>
-                          {active && <Check className="w-3.5 h-3.5 text-[#25F4EE]" strokeWidth={2.5} />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             </header>
           )
@@ -1746,7 +1800,7 @@ export function ChatView({
         {/* Open Message Stream Floating Cleanly Above Stationary Wallpaper */}
         <div
           onClick={() => {
-            setWallpaperMenuOpen(false);
+            setHubOpen(false);
             setShowQuickRecordHint(false);
             setComposerFocused(false);
             setMobileNavExpanded(false);
@@ -1931,8 +1985,30 @@ export function ChatView({
                     )
                   )}
 
-                  {/* Frameless Telegram-Style Media + Clean Message Bubbles */}
-                  <div className="relative max-w-[84%] sm:max-w-[72%] min-w-0">
+                  {/* Detached Floating Reply Quote ABOVE Bubble (Question/Message stays cleanly inside its own compact bubble!) */}
+                  {msg.replyText && (
+                    <div className={`mb-1 flex ${isMine ? 'justify-end' : 'justify-start ps-9'}`}>
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (msg.replyToId) jumpToMessage(msg.replyToId);
+                        }}
+                        className={`max-w-[235px] sm:max-w-[300px] px-2.5 py-1 rounded-xl bg-[#1A1B23]/88 backdrop-blur-md border border-white/[0.08] text-start text-[11px] flex items-center gap-1.5 cursor-pointer hover:bg-[#252731] transition-colors ${
+                          isMine ? 'border-e-2 border-e-[#FE2C55]' : 'border-s-2 border-s-[#38BDF8]'
+                        }`}
+                      >
+                        <CornerUpLeft className="w-3 h-3 text-[#8E8E93] shrink-0" />
+                        <div className="min-w-0 truncate">
+                          <span className="font-semibold text-white/90 me-1">{msg.replySender}:</span>
+                          <span className="text-[#A6A7B2]">{msg.replyText}</span>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Compact Message Container */}
+                  <div className="relative max-w-[78%] sm:max-w-[66%] min-w-0">
                     {(() => {
                       const richEmbed = extractChatRichEmbed(msg);
                       const isSharedPulseCard = richEmbed?.kind === 'pulse';
@@ -2119,23 +2195,23 @@ export function ChatView({
                         );
                       }
 
-                      // 5. Standard Text / Voice / AI / Link Messages
+                      // 5. Compact Text / Voice / AI / Link Messages
                       return (
                       <div
                         onClick={e => handleBubbleClick(e, msg)}
                         style={{ WebkitTouchCallout: 'none' }}
-                        className={`cursor-pointer px-3.5 py-2 text-[14.5px] leading-[1.55] break-words ${
+                        className={`cursor-pointer px-2.5 py-1.5 text-[13.5px] leading-[1.48] break-words ${
                           isAi
-                            ? 'rounded-[18px] rounded-es-[5px] bg-[#1E1F28] border border-[#FE2C55]/30 text-[#EEF2F7]'
+                            ? 'rounded-[16px] rounded-es-[5px] bg-[#1E1F28] border border-[#FE2C55]/25 text-[#EEF2F7]'
                             : msg.aiSummoned
-                            ? `rounded-[18px] ${isMine ? 'rounded-ee-[5px]' : 'rounded-es-[5px]'} border lm-ai-summon-ring text-white`
+                            ? `rounded-[16px] ${isMine ? 'rounded-ee-[5px]' : 'rounded-es-[5px]'} border lm-ai-summon-ring text-white`
                             : isMine
-                            ? 'rounded-[18px] rounded-ee-[5px] lm-msg-out'
-                            : 'rounded-[18px] rounded-es-[5px] lm-msg-in'
+                            ? 'rounded-[16px] rounded-ee-[5px] lm-msg-out'
+                            : 'rounded-[16px] rounded-es-[5px] lm-msg-in'
                         }`}
                       >
                         {isAi && (
-                          <div className="mb-1.5 flex items-center gap-1.5">
+                          <div className="mb-1 flex items-center gap-1.5">
                             <AiSummonBadge label="LM AI" compact />
                           </div>
                         )}
@@ -2147,40 +2223,21 @@ export function ChatView({
                               e.stopPropagation();
                               onOpenProfile?.(msg.senderId);
                             }}
-                            className="mb-1 block text-[11.5px] font-semibold text-[#60A5FA] hover:underline cursor-pointer"
+                            className="mb-0.5 block text-[11px] font-semibold text-[#60A5FA] hover:underline cursor-pointer"
                           >
                             {msg.displayName}
                           </button>
                         )}
 
                         {!isAi && msg.aiSummoned && (
-                          <div className="mb-1.5 flex items-center justify-end">
+                          <div className="mb-1 flex items-center justify-end">
                             <AiSummonBadge label="AI" compact />
                           </div>
                         )}
 
-                        {msg.replyText && (
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              if (msg.replyToId) jumpToMessage(msg.replyToId);
-                            }}
-                            className={`w-full text-start mb-1.5 px-2.5 py-1 rounded-lg border-s-[2.5px] text-xs cursor-pointer transition-colors ${
-                              isMine
-                                ? 'bg-black/15 border-white/80 text-white/90 hover:bg-black/25'
-                                : 'bg-white/[0.05] border-[#38BDF8] text-[#B8CAE0] hover:bg-white/[0.09]'
-                            }`}
-                          >
-                            <div className={`font-semibold text-[11px] truncate ${isMine ? 'text-white' : 'text-[#38BDF8]'}`}>
-                              {msg.replySender}
-                            </div>
-                            <div className="truncate opacity-85">{msg.replyText}</div>
-                          </button>
-                        )}
-
                         {msg.msgType === 'audio' && msg.mediaUrl ? (
                           <SmartVoicePill
+                            compact
                             url={msg.mediaUrl}
                             transcript={msg.transcript}
                             recordId={msg.id}
@@ -2283,53 +2340,11 @@ export function ChatView({
                               </a>
                             )}
 
-                            {translated && (
-                              <div
-                                className={`mt-1.5 pt-1.5 border-t flex items-center justify-between gap-2 text-[10.5px] ${
-                                  isMine ? 'border-white/20 text-white/85' : 'border-white/10 text-[#8E8E93]'
-                                }`}
-                              >
-                                <span className="inline-flex items-center gap-1">
-                                  <Languages className="w-3 h-3" />
-                                  <span>{translated.loading ? 'جارٍ الترجمة...' : `مترجم (${translated.langLabel})`}</span>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    setTranslations(prev => {
-                                      const copy = { ...prev };
-                                      delete copy[msg.id];
-                                      return copy;
-                                    });
-                                  }}
-                                  className="underline font-semibold hover:text-white cursor-pointer"
-                                >
-                                  إظهار الأصل
-                                </button>
-                              </div>
-                            )}
                           </div>
                         )}
 
-                        {showAutoTranslateChip && (
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              translateMessage(msg, lang === 'en' ? 'en' : 'ar', lang === 'en' ? 'English' : 'العربية');
-                            }}
-                            className={`mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium cursor-pointer ${
-                              isMine ? 'text-white/85 hover:text-white' : 'text-[#38BDF8] hover:underline'
-                            }`}
-                          >
-                            <Languages className="w-3 h-3" />
-                            <span>ترجمة سريعة</span>
-                          </button>
-                        )}
-
                         <div
-                          className={`mt-1 flex items-center justify-end gap-1 text-[10.5px] font-mono-num ${
+                          className={`mt-1 flex items-center justify-end gap-1 text-[10px] font-mono-num ${
                             isMine ? 'text-white/80' : 'text-[#8E8E93]'
                           }`}
                         >
@@ -2343,18 +2358,59 @@ export function ChatView({
                   </div>
                 </div>
 
-                {/* Telegram Reaction Pills Below Bubble */}
-                {reactionEntries.length > 0 && (
-                  <div className={`mt-1 flex flex-wrap gap-1 ${isMine ? 'pe-1' : 'ps-9'}`}>
+                {/* Floating Below-Bubble Horizontally Scrollable Reactions + Quick Translate Pill */}
+                {(reactionEntries.length > 0 || showAutoTranslateChip || Boolean(translated)) && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    className={`mt-1 max-w-[82vw] sm:max-w-[360px] flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 ${
+                      isMine ? 'pe-0.5' : 'ps-9'
+                    }`}
+                  >
                     {reactionEntries.map(([rKey, usersList]) => (
                       <TelegramReactionPill
                         key={rKey}
                         reactionKey={rKey}
                         count={usersList.length}
                         active={usersList.includes(user.id)}
+                        hasAi={usersList.includes('lm_ai')}
                         onToggle={() => toggleReaction(msg.id, rKey)}
                       />
                     ))}
+
+                    {(showAutoTranslateChip || Boolean(translated)) && (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (translated) {
+                            setTranslations(prev => {
+                              const copy = { ...prev };
+                              delete copy[msg.id];
+                              return copy;
+                            });
+                          } else {
+                            translateMessage(msg, lang === 'en' ? 'en' : 'ar', lang === 'en' ? 'English' : 'العربية');
+                          }
+                        }}
+                        title={translated ? 'إظهار النص الأصلي' : 'ترجمة سريعة'}
+                        className={`shrink-0 h-7 rounded-full border flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                          translated
+                            ? 'px-2.5 bg-[#25F4EE]/15 border-[#25F4EE]/35 text-[#25F4EE]'
+                            : reactionEntries.length > 0
+                              ? 'w-7 px-0 bg-[#181920]/90 border-white/[0.12] text-[#38BDF8] hover:bg-white/[0.1]'
+                              : 'px-2.5 bg-[#181920]/90 border-white/[0.1] text-[#38BDF8] hover:bg-white/[0.1]'
+                        }`}
+                      >
+                        <Languages className="w-3.5 h-3.5 shrink-0" />
+                        {translated ? (
+                          <span className="text-[10.5px] font-semibold">
+                            {translated.loading ? '...' : 'الأصل'}
+                          </span>
+                        ) : reactionEntries.length === 0 ? (
+                          <span className="text-[11px] font-medium">ترجمة سريعة</span>
+                        ) : null}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2421,11 +2477,14 @@ export function ChatView({
           </div>
         )}
 
-        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (Lifts ONLY composer above mobile keyboard!) */}
-        {!mobileNavExpanded && (
+        {/* FLOATING AUTO-EXPANDING COMPOSER + SPLIT ORB (GPU-lifted above mobile keyboard — zero layout jitter!) */}
+        {!mobileNavExpanded && !msgSearchOpen && (
           <div
-            style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
-            className="pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center transition-[bottom] duration-150"
+            style={{
+              bottom: 'max(14px, env(safe-area-inset-bottom) + 10px)',
+              transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+            }}
+            className="pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex flex-col items-center transition-transform duration-200 ease-out"
           >
             <div className="pointer-events-auto w-full max-w-[780px] flex flex-col gap-2">
               {/* Authentic Telegram Context Bar Above Bottom Composer: Edit Message / Reply / Ask LM AI */}
@@ -3515,6 +3574,272 @@ export function ChatView({
           </div>
         </div>
       )}
+
+      {/* Unified Chat Hub Bottom Sheet ("المجمع": Search + Wallpapers + Info + Mutual-Consent AI Companion) */}
+      <AnimatePresence>
+        {hubOpen && activeConv && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setHubOpen(false)}
+            className="fixed inset-0 z-[72] bg-black/62 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 36 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 28 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+              onClick={e => e.stopPropagation()}
+              style={{ paddingBottom: 'max(18px, calc(env(safe-area-inset-bottom) + 12px))' }}
+              className="w-full sm:max-w-[440px] max-h-[82dvh] rounded-t-[26px] sm:rounded-[26px] bg-[#16171D] border-t sm:border border-white/[0.1] overflow-y-auto text-start shadow-2xl"
+            >
+              <div className="px-4 pt-3 pb-3 border-b border-white/[0.08] flex items-center justify-between gap-2 sticky top-0 bg-[#16171D]/96 backdrop-blur-xl z-10">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-full bg-white/[0.08] flex items-center justify-center text-[#25F4EE]">
+                    <LayoutGrid className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <div className="text-sm font-bold text-white">المجمع</div>
+                    <div className="text-[11px] text-[#8E8E93] truncate max-w-[220px]">{activeConv.title}</div>
+                  </div>
+                </div>
+                <CloseOrbButton size="sm" onClick={() => setHubOpen(false)} />
+              </div>
+
+              <div className="p-4 space-y-4">
+                {/* 1. Quick Hub Actions: Search + Details */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHubOpen(false);
+                      setMsgSearchOpen(true);
+                      setMsgSearchQ('');
+                      setSearchMatchIdx(0);
+                    }}
+                    className="h-12 px-3.5 rounded-2xl bg-[#1E1F28] hover:bg-[#252731] border border-white/[0.08] flex items-center gap-2.5 text-xs font-semibold text-white cursor-pointer transition-colors"
+                  >
+                    <Search className="w-4 h-4 text-[#25F4EE] shrink-0" />
+                    <span>البحث في المحادثة</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHubOpen(false);
+                      if (activeConv.type !== 'dm') {
+                        setEditConvTitle(activeConv.title);
+                        setEditConvDesc(activeConv.description || '');
+                        setEditingInfo(false);
+                        setConfirmClearChat(false);
+                        setConfirmDeleteConv(false);
+                        setInfoOpen(true);
+                      } else if (activeConv.peerUserId && onOpenProfile) {
+                        onOpenProfile(activeConv.peerUserId);
+                      }
+                    }}
+                    className="h-12 px-3.5 rounded-2xl bg-[#1E1F28] hover:bg-[#252731] border border-white/[0.08] flex items-center gap-2.5 text-xs font-semibold text-white cursor-pointer transition-colors"
+                  >
+                    <Users className="w-4 h-4 text-[#FE2C55] shrink-0" />
+                    <span>{activeConv.type !== 'dm' ? 'تفاصيل المجموعة' : 'الملف الشخصي'}</span>
+                  </button>
+                </div>
+
+                {/* 2. Wallpapers & Colors */}
+                <div className="rounded-2xl bg-[#1E1F28] border border-white/[0.08] p-3.5 space-y-2.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white">
+                    <Palette className="w-4 h-4 text-[#25F4EE]" />
+                    <span>ألوان وخلفية المحادثة</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {CHAT_WALLPAPERS.map(wp => {
+                      const active = chatWallpaper === wp.id;
+                      return (
+                        <button
+                          key={wp.id}
+                          type="button"
+                          onClick={() => setChatWallpaper(wp.id)}
+                          className={`p-2 rounded-xl border flex flex-col items-center gap-1.5 text-[11px] cursor-pointer transition-colors ${
+                            active
+                              ? 'bg-white/[0.1] border-[#25F4EE]/55 text-white font-semibold'
+                              : 'bg-[#16171D] border-white/[0.08] text-[#A6A7B2] hover:text-white'
+                          }`}
+                        >
+                          <span
+                            style={{ backgroundColor: wp.swatch, borderColor: wp.accent }}
+                            className="w-6 h-6 rounded-full border-2 block"
+                          />
+                          <span className="truncate max-w-full">{lang === 'en' ? wp.labelEn : wp.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. Mutual-Consent 3rd-Person AI Companion Experience */}
+                <div className="rounded-2xl bg-[#1E1F28] border border-white/[0.08] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-[#25F4EE]" />
+                      <span className="text-xs font-bold text-white">تجربة الـ AI المتفاعل كشخص ثالث</span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                        activeConv.aiCompanion?.active
+                          ? 'bg-[#25F4EE]/15 text-[#25F4EE]'
+                          : activeConv.aiCompanion?.status === 'pending'
+                            ? 'bg-[#FBBF24]/15 text-[#FBBF24]'
+                            : activeConv.aiCompanion?.status === 'declined'
+                              ? 'bg-[#FE2C55]/15 text-[#FE2C55]'
+                              : 'bg-white/[0.08] text-[#8E8E93]'
+                      }`}
+                    >
+                      {activeConv.aiCompanion?.active
+                        ? 'مفعّل بموافقة الطرفين ✓'
+                        : activeConv.aiCompanion?.status === 'pending'
+                          ? 'بانتظار موافقة الطرف الثاني'
+                          : activeConv.aiCompanion?.status === 'declined'
+                            ? 'غير مفعّل (تم الرفض)'
+                            : 'متوقف'}
+                    </span>
+                  </div>
+
+                  <p className="text-[11.5px] text-[#A6A7B2] leading-relaxed">
+                    عند الموافقة، يشارك معكما LM AI كشخص ثالث طبيعي: يتفاعل بالإيموجي على الرسائل ويجيب عند الحاجة على فترات متقطعة. يتطلب موافقة الطرف الثاني دائمًا (بينما سؤاله عبر @LM متاح لك فورًا في أي وقت بدون إذن).
+                  </p>
+
+                  {activeConv.aiCompanion?.active ? (
+                    <button
+                      type="button"
+                      disabled={consentLoading}
+                      onClick={() => submitAiCompanionConsent(activeConv.id, 'disable')}
+                      className="w-full h-10 rounded-xl bg-white/[0.08] hover:bg-[#FE2C55]/20 text-xs font-semibold text-white hover:text-[#FE2C55] cursor-pointer transition-colors disabled:opacity-50"
+                    >
+                      إيقاف التفاعل التلقائي في هذه المحادثة
+                    </button>
+                  ) : activeConv.aiCompanion?.needsMyApproval ? (
+                    <div className="p-3 rounded-xl bg-[#16171D] border border-[#25F4EE]/30 space-y-2.5">
+                      <div className="text-xs font-semibold text-white">
+                        {activeConv.aiCompanion.requestedByName || activeConv.title} وافق على التجربة — هل توافق أنت أيضًا؟
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={consentLoading}
+                          onClick={() => submitAiCompanionConsent(activeConv.id, 'accept')}
+                          className="h-9 rounded-xl bg-[#FE2C55] hover:bg-[#E5254B] text-xs font-bold text-white cursor-pointer disabled:opacity-50"
+                        >
+                          موافق
+                        </button>
+                        <button
+                          type="button"
+                          disabled={consentLoading}
+                          onClick={() => submitAiCompanionConsent(activeConv.id, 'decline')}
+                          className="h-9 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-xs font-semibold text-[#D4D4D8] cursor-pointer disabled:opacity-50"
+                        >
+                          رفض
+                        </button>
+                      </div>
+                    </div>
+                  ) : activeConv.aiCompanion?.myDecision === 'accepted' ? (
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <span className="text-[11px] text-[#FBBF24] font-medium">
+                        وافقت ✓ — في انتظار موافقة الطرف الثاني
+                      </span>
+                      <button
+                        type="button"
+                        disabled={consentLoading}
+                        onClick={() => submitAiCompanionConsent(activeConv.id, 'disable')}
+                        className="px-3 py-1.5 rounded-lg bg-white/[0.08] text-[11px] text-white cursor-pointer"
+                      >
+                        إلغاء الطلب
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={consentLoading}
+                      onClick={() => submitAiCompanionConsent(activeConv.id, 'accept')}
+                      className="w-full h-10 rounded-xl bg-[#FE2C55] hover:bg-[#E5254B] text-xs font-bold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-50"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>موافق — إرسال دعوة التفعيل للطرف الثاني</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Real-Time Bottom-Up Consent Notification Popup when Friend Requests Mutual Interactive AI */}
+      <AnimatePresence>
+        {(() => {
+          const pendingConv =
+            activeConv?.aiCompanion?.needsMyApproval && !dismissedConsentIds[activeConv.id]
+              ? activeConv
+              : conversations.find(c => c.aiCompanion?.needsMyApproval && !dismissedConsentIds[c.id]) || null;
+          if (!pendingConv || hubOpen) return null;
+          return (
+            <motion.div
+              key={`consent_${pendingConv.id}`}
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 36 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+              style={{
+                bottom: 'max(14px, env(safe-area-inset-bottom) + 10px)',
+                transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+              }}
+              className="fixed inset-x-3 sm:inset-x-auto sm:end-5 z-[68] sm:w-[390px] rounded-2xl bg-[#181920]/98 backdrop-blur-2xl border border-[#25F4EE]/35 p-4 shadow-2xl space-y-3 text-start"
+            >
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-9 h-9 rounded-full bg-[#25F4EE]/15 text-[#25F4EE] flex items-center justify-center shrink-0">
+                    <Sparkles className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-white truncate">
+                      دعوة لتفعيل الـ AI المتفاعل
+                    </div>
+                    <div className="text-[11px] text-[#A6A7B2] leading-snug mt-0.5">
+                      <span className="font-semibold text-white">
+                        {pendingConv.aiCompanion?.requestedByName || pendingConv.title}
+                      </span>{' '}
+                      وافق على مشاركة AI معكما كشخص ثالث في الدردشة. لو موافق على التجربة اضغط موافق.
+                    </div>
+                  </div>
+                </div>
+                <CloseOrbButton
+                  size="xs"
+                  onClick={() => setDismissedConsentIds(prev => ({ ...prev, [pendingConv.id]: true }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={consentLoading}
+                  onClick={() => submitAiCompanionConsent(pendingConv.id, 'accept')}
+                  className="h-9 rounded-xl bg-[#FE2C55] hover:bg-[#E5254B] text-xs font-bold text-white cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  موافق، فعّل الآن
+                </button>
+                <button
+                  type="button"
+                  disabled={consentLoading}
+                  onClick={() => submitAiCompanionConsent(pendingConv.id, 'decline')}
+                  className="h-9 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-xs font-semibold text-[#D4D4D8] cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  رفض
+                </button>
+              </div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
 
       {/* Full-Screen Telegram-Style Photo Collage Lightbox */}
       {chatLightbox && (

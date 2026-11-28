@@ -69,7 +69,7 @@ export function SmartVoicePill({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
-  const bars = useMemo(() => buildDeterministicBars(url || 'lm-voice', compact ? 24 : 32), [url, compact]);
+  const bars = useMemo(() => buildDeterministicBars(url || 'lm-voice', compact ? 22 : 28), [url, compact]);
 
   const [playing, setPlaying] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState(false);
@@ -114,6 +114,8 @@ export function SmartVoicePill({
     }
   }
 
+  const justScrubbedUntilRef = useRef<number>(0);
+
   function seekToClientX(clientX: number) {
     const audio = audioRef.current;
     const box = waveformRef.current;
@@ -130,6 +132,7 @@ export function SmartVoicePill({
   function handleWavePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     e.stopPropagation();
     draggingRef.current = true;
+    justScrubbedUntilRef.current = Date.now() + 350;
     setDragging(true);
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -142,12 +145,15 @@ export function SmartVoicePill({
   function handleWavePointerMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!draggingRef.current) return;
     e.stopPropagation();
+    justScrubbedUntilRef.current = Date.now() + 350;
     seekToClientX(e.clientX);
   }
 
   function handleWavePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    e.stopPropagation();
     if (!draggingRef.current) return;
     draggingRef.current = false;
+    justScrubbedUntilRef.current = Date.now() + 350;
     setDragging(false);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
@@ -197,7 +203,18 @@ export function SmartVoicePill({
   const progressRatio = totalSec > 0 ? Math.min(1, curSec / totalSec) : 0;
 
   return (
-    <div className={`space-y-1.5 ${compact ? 'min-w-[195px]' : 'min-w-[225px] sm:min-w-[260px]'}`}>
+    <div
+      data-no-msg-menu="true"
+      onTouchStart={e => e.stopPropagation()}
+      onTouchMove={e => e.stopPropagation()}
+      onTouchEnd={e => e.stopPropagation()}
+      onPointerDown={e => e.stopPropagation()}
+      onClick={e => {
+        e.stopPropagation();
+        if (Date.now() < justScrubbedUntilRef.current) return;
+      }}
+      className={`space-y-1 ${compact ? 'min-w-[168px] max-w-[235px]' : 'min-w-[185px] sm:min-w-[225px]'}`}
+    >
       <audio
         ref={audioRef}
         src={url}
@@ -241,32 +258,37 @@ export function SmartVoicePill({
         </div>
       )}
 
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={togglePlay}
-          className="w-9 h-9 rounded-full bg-[#F5F5F7] text-black flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90"
+          className={`${compact ? 'w-8 h-8' : 'w-9 h-9'} rounded-full bg-[#F5F5F7] text-black flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90`}
         >
           {loadingAudio ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
           ) : playing ? (
-            <Pause className="w-4 h-4 fill-current" />
+            <Pause className="w-3.5 h-3.5 fill-current" />
           ) : (
-            <Play className="w-4 h-4 fill-current ms-0.5" />
+            <Play className="w-3.5 h-3.5 fill-current ms-0.5" />
           )}
         </button>
 
         <div className="flex-1 min-w-0">
-          {/* Interactive Smooth Scrubber Track with Visible Playhead Knob (Drag or Tap Anywhere!) */}
+          {/* Interactive Smooth Scrubber Track with Visible Playhead Knob (Isolated from Parent Message Long-Press!) */}
           <div
             ref={waveformRef}
             dir="ltr"
+            data-no-msg-menu="true"
+            onTouchStart={e => e.stopPropagation()}
+            onTouchMove={e => e.stopPropagation()}
+            onTouchEnd={e => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
             onPointerDown={handleWavePointerDown}
             onPointerMove={handleWavePointerMove}
             onPointerUp={handleWavePointerUp}
             onPointerCancel={handleWavePointerUp}
             style={{ touchAction: 'none' }}
-            className={`relative ${compact ? 'h-6' : 'h-8'} flex items-center gap-[2.5px] cursor-pointer select-none group`}
+            className={`relative ${compact ? 'h-6' : 'h-7'} flex items-center gap-[2px] cursor-pointer select-none group`}
           >
             {bars.map((pct, i) => {
               const barRatio = (i + 1) / bars.length;

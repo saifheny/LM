@@ -1855,8 +1855,11 @@ export function LiveView({ user, lang, lastWsEvent, onOpenProfile, onShare }: Li
         {!mobileNavExpanded && !cleanView && (
           <div
             onClick={e => e.stopPropagation()}
-            style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
-            className="absolute inset-x-3.5 z-20 flex flex-col gap-2 transition-[bottom] duration-150"
+            style={{
+              bottom: 'max(14px, env(safe-area-inset-bottom) + 10px)',
+              transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+            }}
+            className="absolute inset-x-3.5 z-20 flex flex-col gap-2 transition-transform duration-200 ease-out"
           >
             {replyToLiveComment && (
               <div className="w-fit max-w-[85%] self-start rounded-xl bg-black/78 backdrop-blur-md border-s-2 border-white/55 px-3 py-1.5 flex items-center gap-2.5">

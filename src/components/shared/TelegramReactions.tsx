@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ThumbsUp } from 'lucide-react';
+import { Sparkles, ThumbsUp } from 'lucide-react';
 
 export interface ReactionDef {
   id: string;
@@ -696,11 +696,13 @@ export function TelegramReactionPill({
   reactionKey,
   count,
   active,
+  hasAi = false,
   onToggle,
 }: {
   reactionKey: string;
   count: number;
   active: boolean;
+  hasAi?: boolean;
   onToggle: () => void;
 }) {
   const def = resolveReaction(reactionKey);
@@ -722,14 +724,18 @@ export function TelegramReactionPill({
       whileHover={{ scale: 1.08 }}
       whileTap={{ scale: 0.9 }}
       onClick={handleClick}
-      className={`relative ps-1.5 pe-2.5 py-0.5 rounded-full text-xs flex items-center gap-1.5 transition-colors cursor-pointer select-none ${
+      title={hasAi ? 'تفاعل معه LM AI أيضًا' : undefined}
+      className={`relative shrink-0 ps-1.5 pe-2.5 py-0.5 rounded-full text-xs flex items-center gap-1 transition-colors cursor-pointer select-none ${
         active
           ? 'bg-white/[0.16] border border-white/[0.26] text-white'
-          : 'bg-[#131318] border border-white/[0.08] text-[#A1A1AA] hover:border-white/[0.18]'
+          : hasAi
+            ? 'bg-[#1B1D26] border border-[#25F4EE]/35 text-[#E4E4E7]'
+            : 'bg-[#131318] border border-white/[0.08] text-[#A1A1AA] hover:border-white/[0.18]'
       }`}
     >
       <ReactionBurstEffect bursts={bursts} />
       <span className="flex items-center justify-center">{def.renderIcon(15)}</span>
+      {hasAi && <Sparkles className="w-2.5 h-2.5 text-[#25F4EE] shrink-0" />}
       <span className="text-[11px] font-mono-num font-semibold">{count}</span>
     </motion.button>
   );

@@ -2272,8 +2272,11 @@ export function ShortVideosView({
 
             {/* FLOATING Comment Composer + Side-Aligned Reply Card (Lifts ONLY composer above mobile keyboard!) */}
             <div
-              style={{ bottom: 'calc(max(12px, env(safe-area-inset-bottom) + 8px) + var(--lm-kb-offset, 0px))' }}
-              className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2 transition-[bottom] duration-150"
+              style={{
+                bottom: 'max(12px, env(safe-area-inset-bottom) + 8px)',
+                transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+              }}
+              className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2 transition-transform duration-200 ease-out"
             >
               {replyTo && (
                 <div className="pointer-events-auto w-fit max-w-[280px] self-start rounded-2xl bg-[#16161D]/96 backdrop-blur-xl border border-white/[0.12] px-3 py-1.5 flex items-center gap-2.5 shadow-xl">

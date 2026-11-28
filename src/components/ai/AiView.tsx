@@ -1459,8 +1459,11 @@ export function AiView({ user, lang }: AiViewProps) {
       {!mobileNavExpanded && (
         <div
           onClick={e => e.stopPropagation()}
-          style={{ bottom: 'calc(max(14px, env(safe-area-inset-bottom) + 10px) + var(--lm-kb-offset, 0px))' }}
-          className={`pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex justify-center transition-[bottom] duration-150 ${
+          style={{
+            bottom: 'max(14px, env(safe-area-inset-bottom) + 10px)',
+            transform: 'translate3d(0, calc(-1 * var(--lm-kb-offset, 0px)), 0)',
+          }}
+          className={`pointer-events-none absolute inset-x-3.5 md:inset-x-6 z-20 flex justify-center transition-transform duration-200 ease-out ${
             turns.length === 0 ? 'md:hidden' : ''
           }`}
         >

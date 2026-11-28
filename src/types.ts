@@ -186,6 +186,17 @@ export interface ShortVideoItem {
   createdAt: string;
 }
 
+export interface AiCompanionConsentState {
+  status: 'off' | 'pending' | 'active' | 'declined';
+  active: boolean;
+  requestedBy: string | null;
+  requestedByName?: string | null;
+  acceptedUserIds: string[];
+  declinedUserIds: string[];
+  myDecision: 'accepted' | 'declined' | null;
+  needsMyApproval: boolean;
+}
+
 export interface ConversationItem {
   id: string;
   type: 'dm' | 'group' | 'community';
@@ -202,6 +213,7 @@ export interface ConversationItem {
   memberCount: number;
   maxMembers?: number;
   aiEnabled?: boolean;
+  aiCompanion?: AiCompanionConsentState;
   creatorId?: string;
   peerUserId?: string | null;
   lastMessage: string;

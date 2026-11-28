@@ -441,6 +441,14 @@ export function initDatabase() {
       created_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (comment_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS conversation_ai_consents (
+      conversation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (conversation_id, user_id)
+    );
   `);
 
   // Safe non-destructive migrations for Phase 1 Profile Pinning, Privacy, and V15–V21 columns
@@ -506,6 +514,16 @@ export function initDatabase() {
   }
   try {
     db.exec('ALTER TABLE conversations ADD COLUMN max_members INTEGER DEFAULT 1000;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec('ALTER TABLE conversations ADD COLUMN ai_companion_requested_by TEXT;');
+  } catch {
+    // column already exists
+  }
+  try {
+    db.exec("ALTER TABLE conversations ADD COLUMN ai_companion_status TEXT DEFAULT 'off';");
   } catch {
     // column already exists
   }
