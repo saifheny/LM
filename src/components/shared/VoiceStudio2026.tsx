@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, Mic, X, Captions, Loader2, AlertCircle, Sparkles, RotateCcw, RotateCw, Music } from 'lucide-react';
+import { Play, Pause, Mic, X, Captions, Loader2, AlertCircle, Sparkles, Music } from 'lucide-react';
 import { ChromeArrowButton } from './HardwareUI';
 import { apiPost } from '../../lib/api';
 
@@ -38,9 +38,8 @@ function buildDeterministicBars(seedStr: string, count = 28): number[] {
 }
 
 /**
- * Zero-Latency 2026 Monochrome Smart Voice Pill & Post Audio Player:
- * - Instant 0ms deterministic waveform bars (ZERO multi-file WaveSurfer decode freeze on mobile!)
- * - Streams lazily via native HTMLAudio (`preload="none"`) with click + smooth drag scrubbing AND -5s/+5s skip!
+ * Zero-Latency 2026 Smart Voice Pill & Post Audio Player:
+ * - Instant 0ms deterministic waveform bars + tactile draggable playhead scrubber (works before & during playback!)
  * - Slow-down & Speed-up toggle (`0.5x / 0.75x / 1x / 1.5x / 2x`) + REAL Voice-to-Text transcription
  */
 const SPEED_STEPS = [0.5, 0.75, 1, 1.5, 2] as const;
@@ -53,7 +52,6 @@ export function SmartVoicePill({
   recordId,
   table,
   title,
-  showSkipButtons = false,
   compact = false,
 }: {
   url: string;
@@ -62,7 +60,6 @@ export function SmartVoicePill({
   recordId?: string;
   table?: 'messages' | 'post_comments' | 'video_comments' | 'ai_messages';
   title?: string | null;
-  showSkipButtons?: boolean;
   isMine?: boolean;
   compact?: boolean;
   accent?: 'default' | 'ai';
@@ -70,10 +67,11 @@ export function SmartVoicePill({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
-  const bars = useMemo(() => buildDeterministicBars(url || 'lm-voice', compact ? 22 : 30), [url, compact]);
+  const bars = useMemo(() => buildDeterministicBars(url || 'lm-voice', compact ? 24 : 32), [url, compact]);
 
   const [playing, setPlaying] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [totalSec, setTotalSec] = useState<number>(durationSec && durationSec > 0 ? durationSec : 0);
   const [curSec, setCurSec] = useState<number>(0);
   const [speed, setSpeed] = useState<SpeedStep>(1);
@@ -130,6 +128,7 @@ export function SmartVoicePill({
   function handleWavePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     e.stopPropagation();
     draggingRef.current = true;
+    setDragging(true);
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -147,21 +146,12 @@ export function SmartVoicePill({
   function handleWavePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     if (!draggingRef.current) return;
     draggingRef.current = false;
+    setDragging(false);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
       // ignore
     }
-  }
-
-  function skipBy(deltaSec: number, e: React.MouseEvent) {
-    e.stopPropagation();
-    const audio = audioRef.current;
-    if (!audio) return;
-    const targetDur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : totalSec;
-    const next = Math.max(0, targetDur > 0 ? Math.min(targetDur, audio.currentTime + deltaSec) : audio.currentTime + deltaSec);
-    audio.currentTime = next;
-    setCurSec(next);
   }
 
   function cycleSpeed(e: React.MouseEvent) {
@@ -209,7 +199,7 @@ export function SmartVoicePill({
       <audio
         ref={audioRef}
         src={url}
-        preload="none"
+        preload="metadata"
         onPlaying={() => {
           setLoadingAudio(false);
           setPlaying(true);
@@ -264,6 +254,7 @@ export function SmartVoicePill({
         </button>
 
         <div className="flex-1 min-w-0">
+          {/* Interactive Smooth Scrubber Track with Visible Playhead Knob (Drag or Tap Anywhere!) */}
           <div
             ref={waveformRef}
             dir="ltr"
@@ -272,7 +263,7 @@ export function SmartVoicePill({
             onPointerUp={handleWavePointerUp}
             onPointerCancel={handleWavePointerUp}
             style={{ touchAction: 'none' }}
-            className={`${compact ? 'h-5' : 'h-7'} flex items-center gap-[2.5px] cursor-pointer select-none`}
+            className={`relative ${compact ? 'h-6' : 'h-8'} flex items-center gap-[2.5px] cursor-pointer select-none group`}
           >
             {bars.map((pct, i) => {
               const barRatio = (i + 1) / bars.length;
@@ -281,12 +272,19 @@ export function SmartVoicePill({
                 <span
                   key={i}
                   style={{ height: `${Math.min(100, Math.max(20, pct))}%` }}
-                  className={`flex-1 rounded-full transition-colors duration-100 ${
-                    filled ? 'bg-[#25F4EE]' : 'bg-white/22'
+                  className={`flex-1 rounded-full transition-colors duration-75 ${
+                    filled ? 'bg-[#25F4EE]' : 'bg-white/24 group-hover:bg-white/35'
                   }`}
                 />
               );
             })}
+            {/* Tactile Draggable Playhead Thumb */}
+            <span
+              style={{ left: `${progressRatio * 100}%` }}
+              className={`pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 rounded-full bg-white shadow-md transition-transform ${
+                dragging ? 'w-3.5 h-3.5 scale-110' : 'w-2.5 h-2.5 group-hover:scale-110'
+              }`}
+            />
           </div>
 
           <div className="flex items-center justify-between text-[10.5px] font-mono-num text-[#9E9EA8] mt-1 gap-2">
@@ -298,28 +296,6 @@ export function SmartVoicePill({
                   : 'صوتي'}
             </span>
             <div className="flex items-center gap-1.5">
-              {showSkipButtons && (
-                <>
-                  <button
-                    type="button"
-                    onClick={e => skipBy(-5, e)}
-                    title="تأخير 5 ثوانٍ"
-                    className="h-5 px-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-[#D4D4D8] hover:text-white inline-flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <RotateCcw className="w-2.5 h-2.5" />
-                    <span>5</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={e => skipBy(5, e)}
-                    title="تقديم 5 ثوانٍ"
-                    className="h-5 px-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-[#D4D4D8] hover:text-white inline-flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>5</span>
-                    <RotateCw className="w-2.5 h-2.5" />
-                  </button>
-                </>
-              )}
               <button
                 type="button"
                 onClick={cycleSpeed}

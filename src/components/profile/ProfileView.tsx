@@ -795,7 +795,6 @@ export function ProfileView({
                       <SmartVoicePill
                         url={post.musicUrl}
                         title={post.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
-                        showSkipButtons
                       />
                     </div>
                   )}

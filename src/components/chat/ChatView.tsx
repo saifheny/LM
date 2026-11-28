@@ -1031,13 +1031,15 @@ export function ChatView({
     if (picked.length === 0 || !activeConvId) return;
     try {
       // Telegram-Style Multi-Photo Collage Album Support (select up to 6 photos at once!)
+      const caption = draft.trim();
       const imageFiles = picked.filter(f => f.type.startsWith('image/')).slice(0, 6);
       if (imageFiles.length > 1) {
         const uploaded = await Promise.all(imageFiles.map(f => apiUploadFile(f, 'chat_media')));
         const urls = uploaded.map(u => u.url);
+        if (caption) setDraft('');
         await apiPost(`/api/conversations/${activeConvId}/messages`, {
           senderId: user.id,
-          content: '',
+          content: caption,
           msgType: 'image',
           mediaUrl: JSON.stringify(urls),
         });
@@ -1050,10 +1052,11 @@ export function ChatView({
       const isVideo = up.category === 'video' || f.type.startsWith('video/');
       const isImage = up.category === 'image' || f.type.startsWith('image/');
       const isAudio = up.category === 'audio' || f.type.startsWith('audio/');
+      if ((isImage || isVideo) && caption) setDraft('');
       await apiPost(`/api/conversations/${activeConvId}/messages`, {
         senderId: user.id,
-        content: isImage ? '' : isVideo ? 'فيديو' : isAudio ? 'ملف صوتي' : f.name,
-        msgType: isImage ? 'image' : isVideo ? 'video_note' : isAudio ? 'audio' : 'file',
+        content: isImage || isVideo ? caption : isAudio ? 'ملف صوتي' : f.name,
+        msgType: isImage ? 'image' : isVideo ? 'video' : isAudio ? 'audio' : 'file',
         mediaUrl: up.url,
       });
       loadMessages(activeConvId);
@@ -1797,13 +1800,24 @@ export function ChatView({
                     )
                   )}
 
-                  {/* Clean Message Bubble + Rich Interactive Pulse Video Cards, Post Cards & Colored Link Previews */}
+                  {/* Frameless Telegram-Style Media + Clean Message Bubbles */}
                   <div className="relative max-w-[84%] sm:max-w-[72%] min-w-0">
                     {(() => {
                       const richEmbed = extractChatRichEmbed(msg);
                       const isSharedPulseCard = richEmbed?.kind === 'pulse';
                       const isCircularVideoNote = msg.msgType === 'video_note' && msg.mediaUrl && !isSharedPulseCard;
+                      const isStandardVideo = msg.msgType === 'video' && Boolean(msg.mediaUrl);
+                      const imgUrls = msg.msgType === 'image' ? parseMediaUrls(msg.mediaUrl) : [];
+                      const trimmedText = (msg.content || '').trim();
+                      const mediaCaption =
+                        trimmedText && trimmedText !== 'صورة' && trimmedText !== 'Photo' && trimmedText !== 'فيديو'
+                          ? trimmedText
+                          : '';
+                      const thumbIsVideo = Boolean(
+                        richEmbed && 'thumbUrl' in richEmbed && richEmbed.thumbUrl && /\.(mp4|webm|mov)(\?|$)/i.test(richEmbed.thumbUrl)
+                      );
 
+                      // 1. Circular Recorded Video Note (Stays Circular with Soft Rim)
                       if (isCircularVideoNote) {
                         return (
                           <div
@@ -1811,7 +1825,7 @@ export function ChatView({
                               e.stopPropagation();
                               setExpandedVideoNote(expandedVideoNote === msg.id ? null : msg.id);
                             }}
-                            className={`rounded-full overflow-hidden border border-white/[0.16] cursor-pointer transition-all duration-200 ${
+                            className={`rounded-full overflow-hidden lm-media-rim cursor-pointer transition-all duration-200 ${
                               expandedVideoNote === msg.id ? 'w-60 h-60' : 'w-44 h-44'
                             }`}
                           >
@@ -1827,21 +1841,159 @@ export function ChatView({
                         );
                       }
 
-                      const imgUrls = msg.msgType === 'image' ? parseMediaUrls(msg.mediaUrl) : [];
-                      const trimmedText = (msg.content || '').trim();
-                      const isPurePhoto =
-                        imgUrls.length > 0 &&
-                        (!trimmedText || trimmedText === 'صورة' || trimmedText === 'Photo') &&
-                        !translated &&
-                        !msg.replyText &&
-                        !msg.isSpoiler;
-                      const thumbIsVideo = Boolean(richEmbed && 'thumbUrl' in richEmbed && richEmbed.thumbUrl && /\.(mp4|webm|mov)(\?|$)/i.test(richEmbed.thumbUrl));
+                      // 2. Frameless Shared Pulse Video (ZERO outer bubble container — subtle glowing edge directly on wallpaper!)
+                      if (isSharedPulseCard && richEmbed) {
+                        return (
+                          <div className="space-y-1.5">
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                onOpenVideo?.(richEmbed.id);
+                              }}
+                              className="relative w-[245px] sm:w-[280px] aspect-[10/13] max-h-[340px] rounded-[20px] overflow-hidden lm-media-rim bg-[#0D1018] cursor-pointer group block text-start"
+                            >
+                              {richEmbed.thumbUrl ? (
+                                thumbIsVideo ? (
+                                  <video
+                                    src={richEmbed.thumbUrl}
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                    className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                  />
+                                ) : (
+                                  <img
+                                    src={richEmbed.thumbUrl}
+                                    alt=""
+                                    className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                  />
+                                )
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-br from-[#191C26] to-[#0B0E15] flex items-center justify-center">
+                                  <LmBrandMark size={44} />
+                                </div>
+                              )}
+                              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/82 via-black/10 to-black/25" />
+                              <span className="absolute top-3 start-3 px-2.5 py-0.5 rounded-full bg-black/55 backdrop-blur-md text-[10.5px] font-bold text-white flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#FE2C55]" />
+                                <span>نبض</span>
+                              </span>
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="w-13 h-13 rounded-full bg-black/55 backdrop-blur-md border border-white/30 text-white flex items-center justify-center group-hover:scale-110 transition-transform">
+                                  <Play className="w-6 h-6 fill-current ms-0.5" />
+                                </span>
+                              </div>
+                              <div className="absolute inset-x-3 bottom-2.5 flex items-end justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[12.5px] font-semibold text-white line-clamp-2 leading-snug drop-shadow">
+                                    {richEmbed.title}
+                                  </div>
+                                </div>
+                                <div className="px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-md flex items-center gap-1 text-[10px] font-mono-num text-white/95 shrink-0">
+                                  <span>{msg.createdAt}</span>
+                                  {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#BAE6FD]" strokeWidth={2.2} />}
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+                        );
+                      }
 
+                      // 3. Frameless Normal Uploaded Video (ZERO outer bubble — plays directly on wallpaper, caption floats separately!)
+                      if (isStandardVideo && msg.mediaUrl) {
+                        return (
+                          <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} gap-1.5`}>
+                            <div
+                              onClick={e => e.stopPropagation()}
+                              className="relative w-[255px] sm:w-[305px] rounded-[20px] overflow-hidden lm-media-rim bg-black"
+                            >
+                              <video
+                                src={msg.mediaUrl}
+                                controls
+                                playsInline
+                                preload="metadata"
+                                className="w-full max-h-[360px] object-contain bg-black block"
+                              />
+                              <div className="pointer-events-none absolute top-2.5 end-2.5 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md flex items-center gap-1 text-[10px] font-mono-num text-white/95">
+                                <span>{msg.createdAt}</span>
+                                {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#BAE6FD]" strokeWidth={2.2} />}
+                              </div>
+                            </div>
+                            {mediaCaption && (
+                              <div
+                                onClick={e => handleBubbleClick(e, msg)}
+                                className="lm-floating-caption rounded-2xl px-3.5 py-2 text-[14px] text-[#F1F1F2] leading-relaxed max-w-[295px] cursor-pointer"
+                              >
+                                <RichMessageText
+                                  text={translated ? translated.text : mediaCaption}
+                                  maxChars={320}
+                                  lang={lang}
+                                  onMentionClick={onOpenProfileByUsername}
+                                  onHashtagClick={onOpenHashtag}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // 4. Frameless Photos & Photo Collages (ZERO outer bubble container — subtle gleaming thin edge, caption floats separately below!)
+                      if (imgUrls.length > 0 && !msg.isSpoiler) {
+                        return (
+                          <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} gap-1.5`}>
+                            {!isMine && !isAi && activeConv?.type !== 'dm' && (
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  onOpenProfile?.(msg.senderId);
+                                }}
+                                className="px-1 text-[11.5px] font-semibold text-[#60A5FA] hover:underline cursor-pointer"
+                              >
+                                {msg.displayName}
+                              </button>
+                            )}
+                            <div
+                              onClick={e => e.stopPropagation()}
+                              className="w-[260px] sm:w-[310px] rounded-[20px] overflow-hidden lm-media-rim"
+                            >
+                              <MediaCollageGrid
+                                urls={imgUrls}
+                                compact
+                                onSelect={idx => setChatLightbox({ urls: imgUrls, idx })}
+                                overlayBadge={
+                                  <div className="pointer-events-none absolute bottom-2 end-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md flex items-center gap-1 text-[10px] font-mono-num text-white/95">
+                                    <span>{msg.createdAt}</span>
+                                    {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#BAE6FD]" strokeWidth={2.2} />}
+                                  </div>
+                                }
+                              />
+                            </div>
+                            {mediaCaption && (
+                              <div
+                                onClick={e => handleBubbleClick(e, msg)}
+                                className="lm-floating-caption rounded-2xl px-3.5 py-2 text-[14px] text-[#F1F1F2] leading-relaxed max-w-[305px] cursor-pointer"
+                              >
+                                <RichMessageText
+                                  text={translated ? translated.text : mediaCaption}
+                                  maxChars={320}
+                                  lang={lang}
+                                  onMentionClick={onOpenProfileByUsername}
+                                  onHashtagClick={onOpenHashtag}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // 5. Standard Text / Voice / AI / Link Messages
                       return (
                       <div
                         onClick={e => handleBubbleClick(e, msg)}
                         style={{ WebkitTouchCallout: 'none' }}
-                        className={`cursor-pointer ${isPurePhoto ? 'p-1.5 w-[265px] sm:w-[310px]' : 'px-3.5 py-2'} text-[14.5px] leading-[1.55] break-words ${
+                        className={`cursor-pointer px-3.5 py-2 text-[14.5px] leading-[1.55] break-words ${
                           isAi
                             ? 'rounded-[18px] rounded-es-[5px] bg-[#182534] border border-[#7C5CFF]/30 text-[#EEF2F7]'
                             : msg.aiSummoned
@@ -1864,9 +2016,7 @@ export function ChatView({
                               e.stopPropagation();
                               onOpenProfile?.(msg.senderId);
                             }}
-                            className={`mb-1 block text-[11.5px] font-semibold text-[#60A5FA] hover:underline cursor-pointer ${
-                              isPurePhoto ? 'px-2 pt-1' : ''
-                            }`}
+                            className="mb-1 block text-[11.5px] font-semibold text-[#60A5FA] hover:underline cursor-pointer"
                           >
                             {msg.displayName}
                           </button>
@@ -1898,25 +2048,7 @@ export function ChatView({
                           </button>
                         )}
 
-                        {imgUrls.length > 0 && (
-                          <div className={isPurePhoto ? '' : 'mb-2'}>
-                            <MediaCollageGrid
-                              urls={imgUrls}
-                              compact
-                              onSelect={idx => setChatLightbox({ urls: imgUrls, idx })}
-                              overlayBadge={
-                                isPurePhoto ? (
-                                  <div className="pointer-events-none absolute bottom-2 end-2 px-2 py-0.5 rounded-full bg-[#091018]/70 flex items-center gap-1 text-[10px] font-mono-num text-white/95">
-                                    <span>{msg.createdAt}</span>
-                                    {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#BAE6FD]" strokeWidth={2.2} />}
-                                  </div>
-                                ) : undefined
-                              }
-                            />
-                          </div>
-                        )}
-
-                        {isPurePhoto ? null : msg.msgType === 'audio' && msg.mediaUrl ? (
+                        {msg.msgType === 'audio' && msg.mediaUrl ? (
                           <SmartVoicePill
                             url={msg.mediaUrl}
                             transcript={msg.transcript}
@@ -1935,58 +2067,6 @@ export function ChatView({
                             className="px-2.5 py-1 rounded bg-white/[0.12] text-xs text-white/90 cursor-pointer"
                           >
                             محتوى مخفي
-                          </button>
-                        ) : isSharedPulseCard && richEmbed ? (
-                          /* Interactive Shared Pulse Video Card (Tap -> Jumps directly to that Pulse Video!) */
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              onOpenVideo?.(richEmbed.id);
-                            }}
-                            className="w-[238px] sm:w-[272px] text-start rounded-2xl overflow-hidden bg-black/45 border border-white/[0.12] hover:border-[#25F4EE]/60 transition-colors cursor-pointer group block my-0.5"
-                          >
-                            <div className="relative w-full aspect-[16/10] bg-[#0D0F16] overflow-hidden flex items-center justify-center">
-                              {richEmbed.thumbUrl ? (
-                                thumbIsVideo ? (
-                                  <video
-                                    src={richEmbed.thumbUrl}
-                                    muted
-                                    playsInline
-                                    preload="metadata"
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                  />
-                                ) : (
-                                  <img
-                                    src={richEmbed.thumbUrl}
-                                    alt=""
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                  />
-                                )
-                              ) : (
-                                <div className="w-full h-full bg-gradient-to-br from-[#191C26] to-[#0B0E15] flex items-center justify-center">
-                                  <LmBrandMark size={38} />
-                                </div>
-                              )}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-transparent" />
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="w-12 h-12 rounded-full bg-black/65 backdrop-blur-md border border-white/30 text-white flex items-center justify-center group-hover:scale-110 transition-transform">
-                                  <Play className="w-5 h-5 fill-current ms-0.5" />
-                                </span>
-                              </div>
-                              <span className="absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-[#FE2C55] text-[10px] font-bold text-white">
-                                فيديو نبض
-                              </span>
-                            </div>
-                            <div className="p-2.5 space-y-1">
-                              <div className="text-[13px] font-semibold text-white line-clamp-2 leading-snug">
-                                {richEmbed.title}
-                              </div>
-                              <div className="text-[11px] font-medium text-[#38BDF8] flex items-center gap-1">
-                                <Play className="w-3 h-3 fill-current" />
-                                <span>اضغط لمشاهدة الفيديو في نبض</span>
-                              </div>
-                            </div>
                           </button>
                         ) : (
                           <div>
@@ -2090,7 +2170,7 @@ export function ChatView({
                           </div>
                         )}
 
-                        {!isPurePhoto && showAutoTranslateChip && !isSharedPulseCard && (
+                        {showAutoTranslateChip && (
                           <button
                             type="button"
                             onClick={e => {
@@ -2106,17 +2186,15 @@ export function ChatView({
                           </button>
                         )}
 
-                        {!isPurePhoto && (
-                          <div
-                            className={`mt-1 flex items-center justify-end gap-1 text-[10.5px] font-mono-num ${
-                              isMine ? 'text-white/80' : 'text-[#8DA2BC]'
-                            }`}
-                          >
-                            {msg.isEdited && <span>معدّلة ·</span>}
-                            <span>{msg.createdAt}</span>
-                            {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#E0F2FE]" strokeWidth={2.2} />}
-                          </div>
-                        )}
+                        <div
+                          className={`mt-1 flex items-center justify-end gap-1 text-[10.5px] font-mono-num ${
+                            isMine ? 'text-white/80' : 'text-[#8DA2BC]'
+                          }`}
+                        >
+                          {msg.isEdited && <span>معدّلة ·</span>}
+                          <span>{msg.createdAt}</span>
+                          {isMine && <CheckCheck className="w-3.5 h-3.5 text-[#E0F2FE]" strokeWidth={2.2} />}
+                        </div>
                       </div>
                       );
                     })()}
@@ -2441,11 +2519,13 @@ export function ChatView({
               <div className="whitespace-pre-wrap">
                 {contextMsg.msgType === 'audio'
                   ? `🎤 ${contextMsg.transcript || 'رسالة صوتية'}`
-                  : contextMsg.msgType === 'video_note'
-                    ? '🎥 رسالة فيديو دائرية'
-                    : contextMsg.msgType === 'image' && !contextMsg.content.trim()
-                      ? '🖼️ صورة'
-                      : translations[contextMsg.id]?.text || contextMsg.content}
+                  : contextMsg.msgType === 'video'
+                    ? '🎬 فيديو'
+                    : contextMsg.msgType === 'video_note'
+                      ? '🎥 رسالة فيديو دائرية'
+                      : contextMsg.msgType === 'image' && !contextMsg.content.trim()
+                        ? '🖼️ صورة'
+                        : translations[contextMsg.id]?.text || contextMsg.content}
               </div>
               <div className={`mt-1 text-[10.5px] font-mono-num text-end ${isMineCtx ? 'text-white/80' : 'text-[#8DA2BC]'}`}>
                 {contextMsg.isEdited && 'معدّلة · '}

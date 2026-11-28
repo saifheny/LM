@@ -233,7 +233,7 @@ export interface ChatMessageItem {
   isAi?: boolean;
   aiSummoned?: boolean;
   content: string;
-  msgType: 'text' | 'image' | 'audio' | 'video_note' | 'file' | 'ai_reply';
+  msgType: 'text' | 'image' | 'audio' | 'video' | 'video_note' | 'file' | 'ai_reply';
   mediaUrl: string | null;
   transcript: string | null;
   isSpoiler: boolean;

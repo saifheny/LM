@@ -45,19 +45,13 @@ import { NavAiIcon, PulsePlayGlyph, SharePlatformIcons, StylusEditIcon } from '.
 import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
+import { TranslateSheetModal, TRANSLATE_SHEET_LANGUAGES } from '../shared/TranslateSheetModal';
 import { CommentListSkeleton, EmptyState2026 } from '../shared/EmptyState2026';
 import { useLayout } from '../../context/LayoutContext';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
-const PULSE_TRANSLATE_LANGS = [
-  { code: 'ar', label: 'العربية' },
-  { code: 'en', label: 'English' },
-  { code: 'fr', label: 'Français' },
-  { code: 'es', label: 'Español' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'tr', label: 'Türkçe' },
-];
+const PULSE_TRANSLATE_LANGS = TRANSLATE_SHEET_LANGUAGES.map(l => ({ code: l.code, label: l.native }));
 
 interface ShortVideosViewProps {
   user: UserProfile;
@@ -434,14 +428,14 @@ export function ShortVideosView({
   const [revealedVideos, setRevealedVideos] = useState<Record<string, boolean>>({});
   const [revealedComments, setRevealedComments] = useState<Record<string, boolean>>({});
 
-  // Inline Multi-Language Comment Translation
+  // Inline Multi-Language Comment Translation (Scrollable Bottom Sheet)
   const [commentTranslations, setCommentTranslations] = useState<Record<string, { text: string; lang: string }>>({});
   const [translatingCommentId, setTranslatingCommentId] = useState<string | null>(null);
-  const [commentLangMenuId, setCommentLangMenuId] = useState<string | null>(null);
+  const [translateTargetComment, setTranslateTargetComment] = useState<{ id: string; content: string } | null>(null);
 
   async function translatePulseComment(commentId: string, text: string, targetLang: string) {
     if (!text.trim()) return;
-    setCommentLangMenuId(null);
+    setTranslateTargetComment(null);
     setTranslatingCommentId(commentId);
     try {
       const res = await apiPost<{ ok: boolean; translated: string }>('/api/translate', { text, targetLang });
@@ -1872,31 +1866,15 @@ export function ShortVideosView({
                           </button>
 
                           {!c.audioUrl && c.content.trim() && (
-                            <div className="relative">
-                              <button
-                                type="button"
-                                disabled={translatingCommentId === c.id}
-                                onClick={() => setCommentLangMenuId(cur => (cur === c.id ? null : c.id))}
-                                className="text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 py-0.5"
-                              >
-                                <Languages className="w-4 h-4" />
-                                <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
-                              </button>
-                              {commentLangMenuId === c.id && (
-                                <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
-                                  {PULSE_TRANSLATE_LANGS.map(lg => (
-                                    <button
-                                      key={lg.code}
-                                      type="button"
-                                      onClick={() => translatePulseComment(c.id, c.content, lg.code)}
-                                      className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
-                                    >
-                                      {lg.label}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                            <button
+                              type="button"
+                              disabled={translatingCommentId === c.id}
+                              onClick={() => setTranslateTargetComment({ id: c.id, content: c.content })}
+                              className="text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 py-0.5"
+                            >
+                              <Languages className="w-4 h-4" />
+                              <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                            </button>
                           )}
 
                           {c.userId === user.id && !c.audioUrl && (
@@ -2096,31 +2074,15 @@ export function ShortVideosView({
                                 </button>
 
                                 {!rep.audioUrl && rep.content.trim() && (
-                                  <div className="relative">
-                                    <button
-                                      type="button"
-                                      disabled={translatingCommentId === rep.id}
-                                      onClick={() => setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))}
-                                      className="text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 py-0.5"
-                                    >
-                                      <Languages className="w-3.5 h-3.5" />
-                                      <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
-                                    </button>
-                                    {commentLangMenuId === rep.id && (
-                                      <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
-                                        {PULSE_TRANSLATE_LANGS.map(lg => (
-                                          <button
-                                            key={lg.code}
-                                            type="button"
-                                            onClick={() => translatePulseComment(rep.id, rep.content, lg.code)}
-                                            className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
-                                          >
-                                            {lg.label}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={translatingCommentId === rep.id}
+                                    onClick={() => setTranslateTargetComment({ id: rep.id, content: rep.content })}
+                                    className="text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 py-0.5"
+                                  >
+                                    <Languages className="w-3.5 h-3.5" />
+                                    <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
+                                  </button>
                                 )}
 
                                 {rep.userId === user.id && !rep.audioUrl && (
@@ -2686,6 +2648,18 @@ export function ShortVideosView({
           </form>
         </StudioModalOverlay>
       )}
+
+      {/* Smooth Scrollable Bottom Language Sheet for Pulse Comment Translation */}
+      <TranslateSheetModal
+        open={Boolean(translateTargetComment)}
+        lang={lang}
+        onClose={() => setTranslateTargetComment(null)}
+        onSelectLanguage={code => {
+          if (translateTargetComment) {
+            translatePulseComment(translateTargetComment.id, translateTargetComment.content, code);
+          }
+        }}
+      />
 
       {/* Universal Discreet Content Reporting Sheet/Modal */}
       <ReportContentModal

@@ -53,18 +53,12 @@ import { ActionMenuOrb, QuickRemovePill } from '../shared/ActionOrb2026';
 import { CloseOrbButton, PublishActionButton, StudioModalOverlay } from '../shared/ModalChrome2026';
 import type { SharePayload } from '../shared/ShareSheetModal';
 import { ReportContentModal, ReportRequest, SensitiveCommentShield, SensitiveMediaShield } from '../shared/SensitiveShield';
+import { TranslateSheetModal, TRANSLATE_SHEET_LANGUAGES } from '../shared/TranslateSheetModal';
 import { CommentListSkeleton, EmptyState2026 } from '../shared/EmptyState2026';
 import { api, apiGet, apiPost, apiUploadFile } from '../../lib/api';
 import { t } from '../../lib/i18n';
 
-const COMMENT_TRANSLATE_LANGS = [
-  { code: 'ar', label: 'العربية' },
-  { code: 'en', label: 'English' },
-  { code: 'fr', label: 'Français' },
-  { code: 'es', label: 'Español' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'tr', label: 'Türkçe' },
-];
+const COMMENT_TRANSLATE_LANGS = TRANSLATE_SHEET_LANGUAGES.map(l => ({ code: l.code, label: l.native }));
 
 function formatDurationMMSS(sec: number): string {
   const s = Math.max(0, Math.round(sec));
@@ -156,7 +150,7 @@ export function SocialView({
   const [loadingCommentsByPost, setLoadingCommentsByPost] = useState<Record<string, boolean>>({});
   const [commentTranslations, setCommentTranslations] = useState<Record<string, { text: string; lang: string }>>({});
   const [translatingCommentId, setTranslatingCommentId] = useState<string | null>(null);
-  const [commentLangMenuId, setCommentLangMenuId] = useState<string | null>(null);
+  const [translateTargetComment, setTranslateTargetComment] = useState<{ id: string; content: string } | null>(null);
 
   // 2026 Repost Menu & Quote Repost Studio
   const [repostMenuPostId, setRepostMenuPostId] = useState<string | null>(null);
@@ -921,7 +915,7 @@ export function SocialView({
 
   async function translateCommentText(commentId: string, text: string, targetLang: string) {
     if (!text.trim()) return;
-    setCommentLangMenuId(null);
+    setTranslateTargetComment(null);
     setTranslatingCommentId(commentId);
     try {
       const res = await apiPost<{ ok: boolean; translated: string }>('/api/translate', { text, targetLang });
@@ -1688,7 +1682,7 @@ export function SocialView({
                       )
                     )}
 
-                    {/* Voice-Note-Style Interactive Audio Player for Text+Audio Posts (Play/Pause, Scrub, -5s/+5s, Speed 0.5x–2x!) */}
+                    {/* Voice-Note-Style Interactive Audio Player for Text+Audio Posts (Play/Pause, Smooth Track Scrubbing, Speed 0.5x–2x!) */}
                     {post.musicUrl && post.mediaUrls.length === 0 && (
                       <div
                         onClick={e => e.stopPropagation()}
@@ -1697,7 +1691,6 @@ export function SocialView({
                         <SmartVoicePill
                           url={post.musicUrl}
                           title={post.musicTitle || (lang === 'en' ? 'Audio Post' : 'مقطع صوتي')}
-                          showSkipButtons
                         />
                       </div>
                     )}
@@ -2035,33 +2028,15 @@ export function SocialView({
                                       </button>
 
                                       {!c.audioUrl && c.content.trim() && (
-                                        <div className="relative">
-                                          <button
-                                            type="button"
-                                            disabled={translatingCommentId === c.id}
-                                            onClick={() =>
-                                              setCommentLangMenuId(cur => (cur === c.id ? null : c.id))
-                                            }
-                                            className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer disabled:opacity-50 py-0.5"
-                                          >
-                                            <Languages className="w-4 h-4" />
-                                            <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
-                                          </button>
-                                          {commentLangMenuId === c.id && (
-                                            <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
-                                              {COMMENT_TRANSLATE_LANGS.map(lg => (
-                                                <button
-                                                  key={lg.code}
-                                                  type="button"
-                                                  onClick={() => translateCommentText(c.id, c.content, lg.code)}
-                                                  className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
-                                                >
-                                                  {lg.label}
-                                                </button>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
+                                        <button
+                                          type="button"
+                                          disabled={translatingCommentId === c.id}
+                                          onClick={() => setTranslateTargetComment({ id: c.id, content: c.content })}
+                                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer disabled:opacity-50 py-0.5"
+                                        >
+                                          <Languages className="w-4 h-4" />
+                                          <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                                        </button>
                                       )}
 
                                       {c.userId === user.id && (
@@ -2210,33 +2185,15 @@ export function SocialView({
                                             </button>
 
                                             {!rep.audioUrl && rep.content.trim() && (
-                                              <div className="relative">
-                                                <button
-                                                  type="button"
-                                                  disabled={translatingCommentId === rep.id}
-                                                  onClick={() =>
-                                                    setCommentLangMenuId(cur => (cur === rep.id ? null : rep.id))
-                                                  }
-                                                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer disabled:opacity-50 py-0.5"
-                                                >
-                                                  <Languages className="w-3.5 h-3.5" />
-                                                  <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
-                                                </button>
-                                                {commentLangMenuId === rep.id && (
-                                                  <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#16161E] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
-                                                    {COMMENT_TRANSLATE_LANGS.map(lg => (
-                                                      <button
-                                                        key={lg.code}
-                                                        type="button"
-                                                        onClick={() => translateCommentText(rep.id, rep.content, lg.code)}
-                                                        className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-[11px] text-white cursor-pointer"
-                                                      >
-                                                        {lg.label}
-                                                      </button>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                              </div>
+                                              <button
+                                                type="button"
+                                                disabled={translatingCommentId === rep.id}
+                                                onClick={() => setTranslateTargetComment({ id: rep.id, content: rep.content })}
+                                                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer disabled:opacity-50 py-0.5"
+                                              >
+                                                <Languages className="w-3.5 h-3.5" />
+                                                <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
+                                              </button>
                                             )}
 
                                             {rep.userId === user.id && (
@@ -2532,7 +2489,6 @@ export function SocialView({
                           <SmartVoicePill
                             url={dPost.musicUrl}
                             title={dPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
-                            showSkipButtons
                           />
                         </div>
                       )}
@@ -2789,31 +2745,15 @@ export function SocialView({
                                     </button>
 
                                     {!c.audioUrl && c.content.trim() && (
-                                      <div className="relative">
-                                        <button
-                                          type="button"
-                                          disabled={translatingCommentId === c.id}
-                                          onClick={() => setCommentLangMenuId(cur => (cur === c.id ? null : c.id))}
-                                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer py-0.5"
-                                        >
-                                          <Languages className="w-4 h-4" />
-                                          <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
-                                        </button>
-                                        {commentLangMenuId === c.id && (
-                                          <div className="absolute bottom-full start-0 mb-1.5 z-30 rounded-xl bg-[#191B24] border border-white/[0.14] shadow-2xl p-1 flex flex-wrap gap-1 w-[176px]">
-                                            {COMMENT_TRANSLATE_LANGS.map(lg => (
-                                              <button
-                                                key={lg.code}
-                                                type="button"
-                                                onClick={() => translateCommentText(c.id, c.content, lg.code)}
-                                                className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.18] text-[11px] text-white cursor-pointer"
-                                              >
-                                                {lg.label}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={translatingCommentId === c.id}
+                                        onClick={() => setTranslateTargetComment({ id: c.id, content: c.content })}
+                                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer py-0.5"
+                                      >
+                                        <Languages className="w-4 h-4" />
+                                        <span>{translatingCommentId === c.id ? '...' : t(lang, 'translate')}</span>
+                                      </button>
                                     )}
 
                                     {c.userId === user.id && (
@@ -2864,8 +2804,26 @@ export function SocialView({
                                                   <RichMessageText text={rep.content} maxChars={320} lang={lang} />
                                                 </div>
                                               )}
+                                              {commentTranslations[rep.id] && (
+                                                <div className="mt-1.5 ps-2 border-s-2 border-[#25F4EE]/60 py-0.5 text-[12.5px] text-[#D7E3F0] flex items-start justify-between gap-2">
+                                                  <span>{commentTranslations[rep.id].text}</span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      setCommentTranslations(prev => {
+                                                        const copy = { ...prev };
+                                                        delete copy[rep.id];
+                                                        return copy;
+                                                      })
+                                                    }
+                                                    className="text-[#8DA2BC] hover:text-white cursor-pointer shrink-0"
+                                                  >
+                                                    <X className="w-3.5 h-3.5" />
+                                                  </button>
+                                                </div>
+                                              )}
                                             </div>
-                                            <div className="mt-1.5 px-1 flex items-center gap-4">
+                                            <div className="mt-1.5 px-1 flex items-center gap-4 flex-wrap">
                                               <button
                                                 type="button"
                                                 onClick={() => {
@@ -2884,6 +2842,17 @@ export function SocialView({
                                                 <CornerDownLeft className="w-3.5 h-3.5" />
                                                 <span>{t(lang, 'reply')}</span>
                                               </button>
+                                              {!rep.audioUrl && rep.content.trim() && (
+                                                <button
+                                                  type="button"
+                                                  disabled={translatingCommentId === rep.id}
+                                                  onClick={() => setTranslateTargetComment({ id: rep.id, content: rep.content })}
+                                                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#A6A7B2] hover:text-[#25F4EE] cursor-pointer py-0.5"
+                                                >
+                                                  <Languages className="w-3.5 h-3.5" />
+                                                  <span>{translatingCommentId === rep.id ? '...' : t(lang, 'translate')}</span>
+                                                </button>
+                                              )}
                                               {rep.userId === user.id && (
                                                 <QuickRemovePill onRemove={() => deleteComment(dPost.id, rep.id)} />
                                               )}
@@ -3847,7 +3816,6 @@ export function SocialView({
                   <SmartVoicePill
                     url={quotingPost.musicUrl}
                     title={quotingPost.musicTitle || (lang === 'en' ? 'Attached Audio' : 'مقطع صوتي')}
-                    showSkipButtons
                     compact
                   />
                 </div>
@@ -3881,6 +3849,18 @@ export function SocialView({
           </div>
         </form>
       )}
+
+      {/* Smooth Scrollable Bottom Language Sheet for Comment Translation */}
+      <TranslateSheetModal
+        open={Boolean(translateTargetComment)}
+        lang={lang}
+        onClose={() => setTranslateTargetComment(null)}
+        onSelectLanguage={code => {
+          if (translateTargetComment) {
+            translateCommentText(translateTargetComment.id, translateTargetComment.content, code);
+          }
+        }}
+      />
 
       {/* Universal Discreet Content Reporting Sheet/Modal */}
       <ReportContentModal
